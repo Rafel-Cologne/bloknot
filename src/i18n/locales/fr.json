@@ -1,0 +1,66 @@
+{
+  "nav": { "home": "Accueil", "dashboard": "Tableau de bord", "login": "Se connecter" },
+  "auth": {
+    "signIn": "Se connecter", "signUp": "S'inscrire", "signOut": "Se déconnecter",
+    "forgotPassword": "Mot de passe oublié ?", "resetPassword": "Réinitialiser le mot de passe",
+    "passwordResetSent": "Lien de réinitialisation envoyé à votre email",
+    "newPassword": "Nouveau mot de passe", "confirmPassword": "Confirmer le mot de passe",
+    "email": "Email", "password": "Mot de passe", "name": "Nom", "phone": "Téléphone",
+    "iAmGuest": "Je suis un voyageur", "iAmOwner": "Je suis propriétaire",
+    "emailConfirmation": "Vérifiez votre email pour confirmer l'inscription",
+    "passwordUpdated": "Mot de passe mis à jour avec succès",
+    "errorInvalidCredentials": "Email ou mot de passe incorrect",
+    "errorEmailNotConfirmed": "Email non confirmé. Vérifiez votre boîte de réception",
+    "errorAlreadyRegistered": "Un utilisateur avec cet email est déjà inscrit",
+    "errorPasswordTooShort": "Le mot de passe doit contenir au moins 6 caractères",
+    "errorRateLimit": "Veuillez patienter avant de réessayer",
+    "errorInvalidEmail": "Adresse email invalide"
+  },
+  "hero": {
+    "title": "Votre appartement idéal",
+    "subtitle": "Réservation directe sans intermédiaires. Meilleurs prix, transparence totale."
+  },
+  "features": {
+    "title": "Pourquoi bloknot ?",
+    "verified": "Biens vérifiés", "verifiedDesc": "Tous les appartements sont vérifiés par le propriétaire",
+    "direct": "Réservation directe", "directDesc": "Communiquez directement avec le propriétaire",
+    "transparent": "Prix transparents", "transparentDesc": "Pas de frais cachés"
+  },
+  "apartment": {
+    "from": "À partir de", "perNight": "/ nuit", "guests": "voyageurs", "guest": "voyageur",
+    "details": "Voir les détails →", "amenities": "Équipements", "rules": "Règles de la maison",
+    "book": "Réserver", "availability": "Disponibilité", "bookingForm": "Formulaire de réservation",
+    "startDate": "Date d'arrivée", "endDate": "Date de départ", "guestsCount": "Nombre de voyageurs",
+    "yourName": "Votre nom", "yourPhone": "Votre téléphone", "message": "Message (facultatif)",
+    "loginToBook": "Connectez-vous pour réserver", "bookingSuccess": "Demande envoyée !",
+    "noApartments": "Aucun appartement ajouté"
+  },
+  "dashboard": {
+    "myProperties": "Mes biens", "addProperty": "Ajouter un bien",
+    "editProperty": "Modifier", "photos": "Photos", "calendar": "Calendrier",
+    "pricing": "Tarifs", "stats": "Statistiques", "bookings": "Réservations",
+    "cleaners": "Agents de nettoyage",
+    "calendarHintCycle": "Cliquez pour basculer : Libre → Bloqué → En attente → Libre",
+    "statusBlocked": "Bloqué", "statusPending": "En attente", "statusFree": "Libre",
+    "earnings": "Revenus", "bookingsCount": "Réservations", "nightsRented": "Nuits louées",
+    "periodAll": "Toute la période", "periodYear": "Année", "periodMonth": "Mois",
+    "myBookings": "Mes réservations", "myCleanings": "Mes nettoyages",
+    "users": "Utilisateurs", "allApartments": "Tous les biens", "allBookings": "Toutes les réservations",
+    "applyPrice": "Appliquer", "resetPrice": "Réinitialiser au prix de base",
+    "pricePerNight": "Prix par nuit", "addCleaner": "Ajouter un agent",
+    "completeTask": "Terminer le nettoyage", "title": "Titre", "address": "Adresse",
+    "description": "Description", "maxGuests": "Max. voyageurs", "cleaningFee": "Frais de ménage",
+    "isPublic": "Annonce publique", "uploadPhotos": "Télécharger des photos", "noPhotos": "Pas de photos"
+  },
+  "booking": {
+    "statusPending": "En attente", "statusAccepted": "Accepté",
+    "statusDeclined": "Refusé", "statusCancelled": "Annulé",
+    "accept": "Accepter", "decline": "Refuser", "cancel": "Annuler", "details": "Détails"
+  },
+  "common": {
+    "loading": "Chargement...", "noApartments": "Aucun appartement trouvé", "currency": "€",
+    "save": "Enregistrer", "cancel": "Annuler", "delete": "Supprimer",
+    "confirm": "Confirmer", "close": "Fermer", "error": "Une erreur s'est produite",
+    "success": "Succès", "search": "Rechercher", "all": "Tous"
+  }
+}

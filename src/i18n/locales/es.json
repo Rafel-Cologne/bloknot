@@ -1,0 +1,66 @@
+{
+  "nav": { "home": "Inicio", "dashboard": "Panel", "login": "Iniciar sesión" },
+  "auth": {
+    "signIn": "Iniciar sesión", "signUp": "Registrarse", "signOut": "Cerrar sesión",
+    "forgotPassword": "¿Olvidó su contraseña?", "resetPassword": "Restablecer contraseña",
+    "passwordResetSent": "Enlace de restablecimiento enviado a su email",
+    "newPassword": "Nueva contraseña", "confirmPassword": "Confirmar contraseña",
+    "email": "Email", "password": "Contraseña", "name": "Nombre", "phone": "Teléfono",
+    "iAmGuest": "Soy huésped", "iAmOwner": "Soy propietario",
+    "emailConfirmation": "Revise su email para confirmar el registro",
+    "passwordUpdated": "Contraseña actualizada correctamente",
+    "errorInvalidCredentials": "Email o contraseña incorrectos",
+    "errorEmailNotConfirmed": "Email no confirmado. Revise su bandeja de entrada",
+    "errorAlreadyRegistered": "Ya existe un usuario con este email",
+    "errorPasswordTooShort": "La contraseña debe tener al menos 6 caracteres",
+    "errorRateLimit": "Espere un momento antes de volver a intentarlo",
+    "errorInvalidEmail": "Dirección de email no válida"
+  },
+  "hero": {
+    "title": "Su apartamento perfecto",
+    "subtitle": "Reserva directa sin intermediarios. Los mejores precios, total transparencia."
+  },
+  "features": {
+    "title": "¿Por qué bloknot?",
+    "verified": "Propiedades verificadas", "verifiedDesc": "Todos los apartamentos están verificados por el propietario",
+    "direct": "Reserva directa", "directDesc": "Comuníquese directamente con el propietario",
+    "transparent": "Precios transparentes", "transparentDesc": "Sin cargos ocultos"
+  },
+  "apartment": {
+    "from": "Desde", "perNight": "/ noche", "guests": "huéspedes", "guest": "huésped",
+    "details": "Ver detalles →", "amenities": "Servicios", "rules": "Normas de la casa",
+    "book": "Reservar ahora", "availability": "Disponibilidad", "bookingForm": "Formulario de reserva",
+    "startDate": "Fecha de entrada", "endDate": "Fecha de salida", "guestsCount": "Número de huéspedes",
+    "yourName": "Su nombre", "yourPhone": "Su teléfono", "message": "Mensaje (opcional)",
+    "loginToBook": "Inicie sesión para reservar", "bookingSuccess": "¡Solicitud enviada!",
+    "noApartments": "Aún no hay apartamentos"
+  },
+  "dashboard": {
+    "myProperties": "Mis propiedades", "addProperty": "Añadir propiedad",
+    "editProperty": "Editar", "photos": "Fotos", "calendar": "Calendario",
+    "pricing": "Precios", "stats": "Estadísticas", "bookings": "Reservas",
+    "cleaners": "Limpiadores",
+    "calendarHintCycle": "Clic para cambiar: Libre → Bloqueado → Pendiente → Libre",
+    "statusBlocked": "Bloqueado", "statusPending": "Pendiente", "statusFree": "Libre",
+    "earnings": "Ingresos", "bookingsCount": "Reservas", "nightsRented": "Noches arrendadas",
+    "periodAll": "Todo el tiempo", "periodYear": "Año", "periodMonth": "Mes",
+    "myBookings": "Mis reservas", "myCleanings": "Mis limpiezas",
+    "users": "Usuarios", "allApartments": "Todas las propiedades", "allBookings": "Todas las reservas",
+    "applyPrice": "Aplicar", "resetPrice": "Restablecer precio base",
+    "pricePerNight": "Precio por noche", "addCleaner": "Añadir limpiador",
+    "completeTask": "Completar limpieza", "title": "Título", "address": "Dirección",
+    "description": "Descripción", "maxGuests": "Máx. huéspedes", "cleaningFee": "Tarifa de limpieza",
+    "isPublic": "Listado público", "uploadPhotos": "Subir fotos", "noPhotos": "Sin fotos"
+  },
+  "booking": {
+    "statusPending": "Pendiente", "statusAccepted": "Aceptado",
+    "statusDeclined": "Rechazado", "statusCancelled": "Cancelado",
+    "accept": "Aceptar", "decline": "Rechazar", "cancel": "Cancelar", "details": "Detalles"
+  },
+  "common": {
+    "loading": "Cargando...", "noApartments": "No se encontraron apartamentos", "currency": "€",
+    "save": "Guardar", "cancel": "Cancelar", "delete": "Eliminar",
+    "confirm": "Confirmar", "close": "Cerrar", "error": "Se produjo un error",
+    "success": "Éxito", "search": "Buscar", "all": "Todos"
+  }
+}

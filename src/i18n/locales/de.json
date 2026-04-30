@@ -1,0 +1,66 @@
+{
+  "nav": { "home": "Startseite", "dashboard": "Dashboard", "login": "Anmelden" },
+  "auth": {
+    "signIn": "Anmelden", "signUp": "Registrieren", "signOut": "Abmelden",
+    "forgotPassword": "Passwort vergessen?", "resetPassword": "Passwort zurücksetzen",
+    "passwordResetSent": "Link zum Zurücksetzen wurde gesendet",
+    "newPassword": "Neues Passwort", "confirmPassword": "Passwort bestätigen",
+    "email": "E-Mail", "password": "Passwort", "name": "Name", "phone": "Telefon",
+    "iAmGuest": "Ich bin Gast", "iAmOwner": "Ich bin Eigentümer",
+    "emailConfirmation": "Bitte bestätigen Sie Ihre E-Mail-Adresse",
+    "passwordUpdated": "Passwort erfolgreich aktualisiert",
+    "errorInvalidCredentials": "Ungültige E-Mail oder falsches Passwort",
+    "errorEmailNotConfirmed": "E-Mail nicht bestätigt. Bitte prüfen Sie Ihren Posteingang",
+    "errorAlreadyRegistered": "Ein Benutzer mit dieser E-Mail ist bereits registriert",
+    "errorPasswordTooShort": "Das Passwort muss mindestens 6 Zeichen lang sein",
+    "errorRateLimit": "Bitte warten Sie einen Moment, bevor Sie es erneut versuchen",
+    "errorInvalidEmail": "Ungültige E-Mail-Adresse"
+  },
+  "hero": {
+    "title": "Ihre perfekte Wohnung",
+    "subtitle": "Direktbuchung ohne Zwischenhändler. Beste Preise, volle Transparenz."
+  },
+  "features": {
+    "title": "Warum bloknot?",
+    "verified": "Verifizierte Objekte", "verifiedDesc": "Alle Wohnungen werden vom Eigentümer verifiziert",
+    "direct": "Direktbuchung", "directDesc": "Kommunizieren Sie direkt mit dem Eigentümer",
+    "transparent": "Transparente Preise", "transparentDesc": "Keine versteckten Gebühren"
+  },
+  "apartment": {
+    "from": "Ab", "perNight": "/ Nacht", "guests": "Gäste", "guest": "Gast",
+    "details": "Details →", "amenities": "Ausstattung", "rules": "Hausregeln",
+    "book": "Jetzt buchen", "availability": "Verfügbarkeit", "bookingForm": "Buchungsformular",
+    "startDate": "Anreisedatum", "endDate": "Abreisedatum", "guestsCount": "Anzahl Gäste",
+    "yourName": "Ihr Name", "yourPhone": "Ihr Telefon", "message": "Nachricht (optional)",
+    "loginToBook": "Anmelden zum Buchen", "bookingSuccess": "Anfrage gesendet!",
+    "noApartments": "Noch keine Wohnungen hinzugefügt"
+  },
+  "dashboard": {
+    "myProperties": "Meine Objekte", "addProperty": "Objekt hinzufügen",
+    "editProperty": "Bearbeiten", "photos": "Fotos", "calendar": "Kalender",
+    "pricing": "Preise", "stats": "Statistiken", "bookings": "Buchungen",
+    "cleaners": "Reinigungskräfte",
+    "calendarHintCycle": "Klicken zum Umschalten: Frei → Belegt → Ausstehend → Frei",
+    "statusBlocked": "Belegt", "statusPending": "Ausstehend", "statusFree": "Frei",
+    "earnings": "Einnahmen", "bookingsCount": "Buchungen", "nightsRented": "Vermietete Nächte",
+    "periodAll": "Gesamte Zeit", "periodYear": "Jahr", "periodMonth": "Monat",
+    "myBookings": "Meine Buchungen", "myCleanings": "Meine Reinigungen",
+    "users": "Benutzer", "allApartments": "Alle Objekte", "allBookings": "Alle Buchungen",
+    "applyPrice": "Anwenden", "resetPrice": "Zum Basispreis zurücksetzen",
+    "pricePerNight": "Preis pro Nacht", "addCleaner": "Reinigungskraft hinzufügen",
+    "completeTask": "Reinigung abschließen", "title": "Titel", "address": "Adresse",
+    "description": "Beschreibung", "maxGuests": "Max. Gäste", "cleaningFee": "Reinigungsgebühr",
+    "isPublic": "Öffentlich", "uploadPhotos": "Fotos hochladen", "noPhotos": "Keine Fotos"
+  },
+  "booking": {
+    "statusPending": "Ausstehend", "statusAccepted": "Angenommen",
+    "statusDeclined": "Abgelehnt", "statusCancelled": "Storniert",
+    "accept": "Annehmen", "decline": "Ablehnen", "cancel": "Stornieren", "details": "Details"
+  },
+  "common": {
+    "loading": "Laden...", "noApartments": "Keine Wohnungen gefunden", "currency": "€",
+    "save": "Speichern", "cancel": "Abbrechen", "delete": "Löschen",
+    "confirm": "Bestätigen", "close": "Schließen", "error": "Fehler aufgetreten",
+    "success": "Erfolgreich", "search": "Suchen", "all": "Alle"
+  }
+}

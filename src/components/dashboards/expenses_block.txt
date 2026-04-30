@@ -1,0 +1,372 @@
+// ─── Expenses Section ─────────────────────────────────────────────────────────
+
+type AllExpense = {
+  id: string; apartment_id: string; category_name: string
+  amount: number; paid_date: string; period_note: string | null
+  is_recurring: boolean; notes: string | null; created_at: string
+}
+
+type ExpenseCategory = { id: string; owner_id: string; name: string }
+
+const BUILT_IN_CATS = ['Электричество', 'Вода']
+
+const CAT_META: Record<string, { icon: React.ReactNode; color: string; bg: string }> = {
+  'Электричество': { icon: <Zap size={14} />, color: 'text-amber-500', bg: 'bg-amber-50' },
+  'Вода':          { icon: <Droplets size={14} />, color: 'text-blue-500', bg: 'bg-blue-50' },
+}
+
+const expFieldCls = 'rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring w-full'
+
+function expGetThisMonth() {
+  const d = new Date()
+  return {
+    from: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`,
+    to: d.toISOString().slice(0,10),
+  }
+}
+function expGetLastMonth() {
+  const d = new Date(); d.setDate(1); d.setMonth(d.getMonth()-1)
+  const last = new Date(d.getFullYear(), d.getMonth()+1, 0).getDate()
+  const m = String(d.getMonth()+1).padStart(2,'0')
+  return { from: `${d.getFullYear()}-${m}-01`, to: `${d.getFullYear()}-${m}-${String(last).padStart(2,'0')}` }
+}
+
+function ExpPeriodBar({ from, to, setFrom, setTo }: { from:string; to:string; setFrom:(v:string)=>void; setTo:(v:string)=>void }) {
+  return (
+    <div className="bg-card border border-border rounded-2xl px-4 py-3 flex flex-col gap-3">
+      <div className="flex flex-wrap gap-2">
+        {([
+          { label: 'С начала месяца', fn: expGetThisMonth },
+          { label: 'Прошлый месяц',   fn: expGetLastMonth },
+          { label: 'Всё время',        fn: () => ({ from:'', to:'' }) },
+        ] as const).map(p => (
+          <button key={p.label} onClick={()=>{ const r=p.fn(); setFrom(r.from); setTo(r.to) }}
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-muted hover:bg-primary hover:text-primary-foreground transition-colors">
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground font-medium">С</span>
+          <input type="date" value={from} onChange={e=>setFrom(e.target.value)}
+            className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground font-medium">По</span>
+          <input type="date" value={to} onChange={e=>setTo(e.target.value)}
+            className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
+  const { user } = useAuth()
+  const qc = useQueryClient()
+  const today = new Date().toISOString().slice(0,10)
+  const initPeriod = expGetThisMonth()
+  const [selectedApt, setSelectedApt] = useState(apartments[0]?.id ?? '')
+  const [filterFrom, setFilterFrom] = useState(initPeriod.from)
+  const [filterTo,   setFilterTo]   = useState(initPeriod.to)
+  const [showForm, setShowForm] = useState(false)
+  const [saving,   setSaving]   = useState(false)
+  const [deleting, setDeleting] = useState<string|null>(null)
+  const [editingId, setEditingId] = useState<string|null>(null)
+  const [newCatInput, setNewCatInput] = useState('')
+  const [addingCat, setAddingCat] = useState(false)
+
+  const emptyForm = { category_name:'', amount:'', paid_date:today, period_note:'', is_recurring:false, notes:'' }
+  const [form, setForm] = useState(emptyForm)
+  const [editForm, setEditForm] = useState(emptyForm)
+
+  const { data: userCats = [] } = useQuery({
+    queryKey: ['expense-categories', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('expense_categories').select('*').eq('owner_id', user!.id).order('name')
+      return (data ?? []) as ExpenseCategory[]
+    },
+    enabled: !!user,
+  })
+
+  const { data: allExpenses = [], isLoading } = useQuery({
+    queryKey: ['all-expenses', selectedApt],
+    queryFn: async () => {
+      const { data } = await supabase.from('all_expenses').select('*')
+        .eq('apartment_id', selectedApt).order('paid_date', { ascending: false })
+      return (data ?? []) as AllExpense[]
+    },
+    enabled: !!selectedApt,
+  })
+
+  const expenses = allExpenses.filter(e =>
+    (!filterFrom || e.paid_date >= filterFrom) &&
+    (!filterTo   || e.paid_date <= filterTo)
+  )
+
+  const total = expenses.reduce((s,e) => s + e.amount, 0)
+  const byCategory = expenses.reduce<Record<string,number>>((acc,e) => {
+    acc[e.category_name] = (acc[e.category_name] ?? 0) + e.amount; return acc
+  }, {})
+
+  // Recurring not yet added this month (quick-add)
+  const thisMonthStart = expGetThisMonth().from
+  const alreadyThisMonth = new Set(allExpenses.filter(e => e.paid_date >= thisMonthStart).map(e => e.category_name))
+  const recurringPending = allExpenses
+    .filter(e => e.is_recurring && !alreadyThisMonth.has(e.category_name))
+    .reduce<AllExpense[]>((acc,e) => { if (!acc.find(x => x.category_name === e.category_name)) acc.push(e); return acc }, [])
+
+  const allCats = [...BUILT_IN_CATS, ...userCats.map(c=>c.name).filter(n=>!BUILT_IN_CATS.includes(n))]
+
+  const catMeta = (name: string) => CAT_META[name] ?? { icon: <Receipt size={14} />, color: 'text-violet-500', bg: 'bg-violet-50' }
+
+  const handleAddCat = async () => {
+    const name = newCatInput.trim(); if (!name) return
+    setAddingCat(true)
+    await supabase.from('expense_categories').insert({ owner_id: user!.id, name })
+    qc.invalidateQueries({ queryKey: ['expense-categories', user?.id] })
+    setNewCatInput(''); setAddingCat(false)
+    setForm(f => ({ ...f, category_name: name }))
+  }
+
+  const handleDeleteCat = async (id: string) => {
+    await supabase.from('expense_categories').delete().eq('id', id)
+    qc.invalidateQueries({ queryKey: ['expense-categories', user?.id] })
+  }
+
+  const handleSave = async () => {
+    if (!form.category_name || !form.amount || !form.paid_date) return
+    setSaving(true)
+    await supabase.from('all_expenses').insert({
+      apartment_id: selectedApt, category_name: form.category_name,
+      amount: parseFloat(form.amount.replace(',','.')),
+      paid_date: form.paid_date,
+      period_note: form.period_note.trim() || null,
+      is_recurring: form.is_recurring,
+      notes: form.notes.trim() || null,
+    })
+    qc.invalidateQueries({ queryKey: ['all-expenses', selectedApt] })
+    setForm(emptyForm); setShowForm(false); setSaving(false)
+  }
+
+  const handleQuickAdd = async (template: AllExpense) => {
+    await supabase.from('all_expenses').insert({
+      apartment_id: selectedApt, category_name: template.category_name,
+      amount: template.amount, paid_date: today,
+      period_note: null, is_recurring: true, notes: null,
+    })
+    qc.invalidateQueries({ queryKey: ['all-expenses', selectedApt] })
+  }
+
+  const startEdit = (e: AllExpense) => {
+    setEditingId(e.id)
+    setEditForm({ category_name: e.category_name, amount: String(e.amount), paid_date: e.paid_date,
+      period_note: e.period_note ?? '', is_recurring: e.is_recurring, notes: e.notes ?? '' })
+  }
+
+  const handleUpdate = async (id: string) => {
+    await supabase.from('all_expenses').update({
+      category_name: editForm.category_name,
+      amount: parseFloat(editForm.amount.replace(',','.')),
+      paid_date: editForm.paid_date,
+      period_note: editForm.period_note.trim() || null,
+      is_recurring: editForm.is_recurring,
+      notes: editForm.notes.trim() || null,
+    }).eq('id', id)
+    qc.invalidateQueries({ queryKey: ['all-expenses', selectedApt] })
+    setEditingId(null)
+  }
+
+  const handleDelete = async (id: string) => {
+    setDeleting(id)
+    await supabase.from('all_expenses').delete().eq('id', id)
+    qc.invalidateQueries({ queryKey: ['all-expenses', selectedApt] })
+    setDeleting(null)
+  }
+
+  // Shared form fields component (used for add and edit)
+  const renderFormFields = (f: typeof emptyForm, setF: React.Dispatch<React.SetStateAction<typeof emptyForm>>) => (
+    <div className="grid grid-cols-2 gap-3">
+      <div className="flex flex-col gap-1 col-span-2">
+        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Категория</label>
+        <select value={f.category_name} onChange={e=>setF(p=>({...p, category_name:e.target.value}))} className={expFieldCls}>
+          <option value="">— Выберите —</option>
+          {allCats.map(c=><option key={c} value={c}>{c}</option>)}
+        </select>
+        <div className="flex gap-2 mt-1">
+          <input type="text" placeholder="Новая категория..." value={newCatInput} onChange={e=>setNewCatInput(e.target.value)}
+            onKeyDown={e=>{ if(e.key==='Enter') handleAddCat() }}
+            className="flex-1 rounded-xl border border-dashed border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+          <button onClick={handleAddCat} disabled={!newCatInput.trim()||addingCat}
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-muted hover:bg-primary hover:text-primary-foreground disabled:opacity-50 flex-shrink-0">
+            + Добавить
+          </button>
+        </div>
+        {userCats.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-1">
+            {userCats.map(c=>(
+              <span key={c.id} className="flex items-center gap-1 text-xs bg-secondary border border-border rounded-lg px-2 py-0.5">
+                {c.name}
+                <button onClick={()=>handleDeleteCat(c.id)} className="text-muted-foreground hover:text-destructive ml-0.5"><X size={10}/></button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Сумма, €</label>
+        <input type="text" inputMode="decimal" placeholder="0" value={f.amount} onChange={e=>setF(p=>({...p,amount:e.target.value}))} className={expFieldCls} />
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Дата оплаты</label>
+        <input type="date" value={f.paid_date} onChange={e=>setF(p=>({...p,paid_date:e.target.value}))} className={expFieldCls} />
+      </div>
+      <div className="flex flex-col gap-1 col-span-2">
+        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">За какой период (необязательно)</label>
+        <input type="text" placeholder="напр. 1 кв. 2026, январь 2026..." value={f.period_note} onChange={e=>setF(p=>({...p,period_note:e.target.value}))} className={expFieldCls} />
+      </div>
+      <div className="flex flex-col gap-1 col-span-2">
+        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Заметки</label>
+        <input type="text" placeholder="Необязательно" value={f.notes} onChange={e=>setF(p=>({...p,notes:e.target.value}))} className={expFieldCls} />
+      </div>
+      <div className="col-span-2">
+        <label className="flex items-center gap-2.5 cursor-pointer select-none">
+          <input type="checkbox" checked={f.is_recurring} onChange={e=>setF(p=>({...p,is_recurring:e.target.checked}))}
+            className="w-4 h-4 rounded accent-primary" />
+          <span className="text-sm font-medium">🔄 Ежемесячный платёж (снимается каждый месяц)</span>
+        </label>
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="flex flex-col gap-5 max-w-3xl">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h2 className="text-xl font-display font-semibold">Расходы</h2>
+        {apartments.length > 1 && (
+          <select value={selectedApt} onChange={e=>setSelectedApt(e.target.value)}
+            className="rounded-xl border border-border bg-card px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring">
+            {apartments.map(a=><option key={a.id} value={a.id}>{a.title}</option>)}
+          </select>
+        )}
+      </div>
+
+      {/* Period filter */}
+      <ExpPeriodBar from={filterFrom} to={filterTo} setFrom={setFilterFrom} setTo={setFilterTo} />
+
+      {/* Recurring quick-add banner */}
+      {recurringPending.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex flex-col gap-2">
+          <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide">🔄 Регулярные платежи — не добавлены в этом месяце</p>
+          <div className="flex flex-wrap gap-2">
+            {recurringPending.map(r => (
+              <button key={r.category_name} onClick={()=>handleQuickAdd(r)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-amber-300 rounded-xl text-sm font-medium hover:bg-amber-100 transition-colors">
+                <span className={catMeta(r.category_name).color}>{catMeta(r.category_name).icon}</span>
+                {r.category_name} — €{r.amount.toFixed(2)}
+                <Plus size={13} className="text-amber-600" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-card border border-border rounded-2xl p-4 flex flex-col gap-1 col-span-2 sm:col-span-1">
+          <span className="text-xs text-muted-foreground uppercase tracking-wide">Итого за период</span>
+          <span className="text-2xl font-bold">€{total.toFixed(2)}</span>
+        </div>
+        {Object.entries(byCategory).slice(0,3).map(([cat,amt]) => {
+          const meta = catMeta(cat)
+          return (
+            <div key={cat} className="bg-card border border-border rounded-2xl p-4 flex flex-col gap-1">
+              <span className={`text-xs uppercase tracking-wide font-medium flex items-center gap-1 ${meta.color}`}>
+                {meta.icon} <span className="truncate">{cat}</span>
+              </span>
+              <span className="text-xl font-bold">€{amt.toFixed(2)}</span>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Add button / form */}
+      {!showForm ? (
+        <button onClick={()=>setShowForm(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:opacity-90 w-fit">
+          <Plus size={16}/> Добавить расход
+        </button>
+      ) : (
+        <div className="bg-card border border-border rounded-2xl p-5 flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold">Новый расход</h3>
+            <button onClick={()=>{ setShowForm(false); setForm(emptyForm) }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X size={16}/></button>
+          </div>
+          {renderFormFields(form, setForm)}
+          <div className="flex gap-2 justify-end">
+            <button onClick={()=>{ setShowForm(false); setForm(emptyForm) }} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted">Отмена</button>
+            <button onClick={handleSave} disabled={saving||!form.category_name||!form.amount}
+              className="px-4 py-2 rounded-xl text-sm font-semibold bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50">
+              {saving ? 'Сохраняю...' : 'Сохранить'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Unified expense list */}
+      <div className="bg-card border border-border rounded-2xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+          <Receipt size={14} className="text-muted-foreground"/>
+          <h3 className="font-semibold text-sm">Все расходы</h3>
+          <span className="ml-auto text-xs text-muted-foreground">{expenses.length} зап.</span>
+        </div>
+        {isLoading ? (
+          <div className="p-8 text-center text-muted-foreground text-sm">Загрузка...</div>
+        ) : expenses.length === 0 ? (
+          <div className="p-8 text-center text-muted-foreground text-sm">
+            {allExpenses.length > 0 ? 'Нет расходов за выбранный период.' : 'Пока нет записей. Добавьте первый расход.'}
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {expenses.map(e => {
+              const meta = catMeta(e.category_name)
+              if (editingId === e.id) return (
+                <div key={e.id} className="px-4 py-4 bg-muted/30 flex flex-col gap-3">
+                  {renderFormFields(editForm, setEditForm)}
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={()=>setEditingId(null)} className="px-3 py-1.5 text-sm rounded-lg hover:bg-muted text-muted-foreground">Отмена</button>
+                    <button onClick={()=>handleUpdate(e.id)} className="px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground hover:opacity-90">Сохранить</button>
+                  </div>
+                </div>
+              )
+              return (
+                <div key={e.id} className="px-4 py-3 flex items-start gap-3">
+                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${meta.bg}`}>
+                    <span className={meta.color}>{meta.icon}</span>
+                  </div>
+                  <div className="flex flex-col flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold">{e.category_name}</span>
+                      {e.is_recurring && <span className="text-xs" title="Ежемесячный платёж">🔄</span>}
+                      <span className="text-sm font-bold">€{e.amount.toFixed(2)}</span>
+                      <span className="text-xs text-muted-foreground">{format(parseISO(e.paid_date), 'd MMM yyyy', { locale: ru })}</span>
+                    </div>
+                    {e.period_note && <span className="text-xs text-primary font-medium mt-0.5">📅 {e.period_note}</span>}
+                    {e.notes && <span className="text-xs text-muted-foreground mt-0.5">{e.notes}</span>}
+                  </div>
+                  <div className="flex gap-0.5 flex-shrink-0 mt-0.5">
+                    <button onClick={()=>startEdit(e)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><Pencil size={13}/></button>
+                    <button onClick={()=>handleDelete(e.id)} disabled={deleting===e.id}
+                      className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 size={13}/></button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

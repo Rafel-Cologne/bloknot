@@ -1,0 +1,259 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ── STANDARD theme (default) ─────────────────────── */
+  :root,
+  [data-theme="standard"] {
+    --background: 36 33% 97%;
+    --foreground: 20 14% 18%;
+
+    --primary: 15 45% 32%;
+    --primary-foreground: 36 33% 97%;
+
+    --secondary: 30 25% 88%;
+    --secondary-foreground: 20 14% 18%;
+
+    --muted: 30 20% 92%;
+    --muted-foreground: 20 10% 50%;
+
+    --accent: 28 60% 55%;
+    --accent-foreground: 36 33% 97%;
+
+    --card: 36 30% 99%;
+    --card-foreground: 20 14% 18%;
+
+    --border: 30 20% 86%;
+    --ring: 15 45% 32%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+
+    --radius: 1rem;
+
+    --gradient-warm: linear-gradient(135deg, hsl(36, 33%, 95%) 0%, hsl(28, 40%, 90%) 100%);
+    --gradient-primary: linear-gradient(135deg, hsl(15, 45%, 32%) 0%, hsl(20, 50%, 42%) 100%);
+
+    --shadow-card: 0 2px 16px 0 hsl(20 14% 18% / 0.07), 0 1px 4px 0 hsl(20 14% 18% / 0.04);
+    --shadow-card-hover: 0 8px 32px 0 hsl(20 14% 18% / 0.12), 0 2px 8px 0 hsl(20 14% 18% / 0.06);
+
+    /* Sidebar */
+    --sidebar: 222 38% 15%;
+    --sidebar-fg: 210 30% 82%;
+    --sidebar-border: 222 38% 20%;
+    --sidebar-active-bg: 222 38% 22%;
+    --sidebar-active-fg: 0 0% 100%;
+    --sidebar-hover: 222 38% 20%;
+    --sidebar-logo-fg: 0 0% 100%;
+  }
+
+  /* ── LIGHT theme ──────────────────────────────────── */
+  [data-theme="light"] {
+    --background: 210 33% 96%;
+    --foreground: 222 47% 11%;
+
+    --primary: 221 78% 50%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 30% 90%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 30% 93%;
+    --muted-foreground: 215 20% 46%;
+
+    --accent: 221 78% 55%;
+    --accent-foreground: 0 0% 100%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --border: 214 30% 88%;
+    --ring: 221 78% 50%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+
+    --radius: 1rem;
+
+    --gradient-warm: linear-gradient(135deg, hsl(210, 33%, 94%) 0%, hsl(221, 50%, 90%) 100%);
+    --gradient-primary: linear-gradient(135deg, hsl(221, 78%, 50%) 0%, hsl(230, 70%, 58%) 100%);
+
+    --shadow-card: 0 2px 16px 0 hsl(222 47% 11% / 0.08), 0 1px 4px 0 hsl(222 47% 11% / 0.04);
+    --shadow-card-hover: 0 8px 32px 0 hsl(222 47% 11% / 0.12), 0 2px 8px 0 hsl(222 47% 11% / 0.06);
+
+    /* Sidebar */
+    --sidebar: 213 25% 77%;
+    --sidebar-fg: 222 47% 18%;
+    --sidebar-border: 213 25% 70%;
+    --sidebar-active-bg: 221 78% 50%;
+    --sidebar-active-fg: 0 0% 100%;
+    --sidebar-hover: 213 25% 72%;
+    --sidebar-logo-fg: 222 47% 11%;
+  }
+
+  /* ── BUSINESS theme ───────────────────────────────── */
+  [data-theme="business"] {
+    --background: 224 18% 12%;
+    --foreground: 210 30% 90%;
+
+    --primary: 43 80% 60%;
+    --primary-foreground: 224 18% 10%;
+
+    --secondary: 224 18% 18%;
+    --secondary-foreground: 210 30% 80%;
+
+    --muted: 224 18% 17%;
+    --muted-foreground: 215 16% 52%;
+
+    --accent: 43 80% 60%;
+    --accent-foreground: 224 18% 10%;
+
+    --card: 224 18% 16%;
+    --card-foreground: 210 30% 90%;
+
+    --border: 224 18% 22%;
+    --ring: 43 80% 60%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+
+    --radius: 1rem;
+
+    --gradient-warm: linear-gradient(135deg, hsl(224, 18%, 16%) 0%, hsl(224, 20%, 20%) 100%);
+    --gradient-primary: linear-gradient(135deg, hsl(43, 80%, 55%) 0%, hsl(35, 85%, 60%) 100%);
+
+    --shadow-card: 0 2px 20px 0 hsl(0 0% 0% / 0.35), 0 1px 6px 0 hsl(0 0% 0% / 0.25);
+    --shadow-card-hover: 0 8px 40px 0 hsl(0 0% 0% / 0.5), 0 2px 12px 0 hsl(0 0% 0% / 0.3);
+
+    /* Sidebar */
+    --sidebar: 224 22% 8%;
+    --sidebar-fg: 210 20% 65%;
+    --sidebar-border: 224 18% 14%;
+    --sidebar-active-bg: 43 60% 20%;
+    --sidebar-active-fg: 43 80% 72%;
+    --sidebar-hover: 224 18% 14%;
+    --sidebar-logo-fg: 43 80% 65%;
+  }
+
+  /* ── NOTEBOOK theme ──────────────────────────────── */
+  [data-theme="notebook"] {
+    --background: 33 22% 83%;
+    --foreground: 24 22% 12%;
+
+    --primary: 38 68% 46%;
+    --primary-foreground: 24 22% 8%;
+
+    --secondary: 32 18% 77%;
+    --secondary-foreground: 24 22% 12%;
+
+    --muted: 32 16% 80%;
+    --muted-foreground: 24 14% 40%;
+
+    --accent: 38 68% 48%;
+    --accent-foreground: 24 22% 8%;
+
+    --card: 36 45% 98%;
+    --card-foreground: 24 22% 12%;
+
+    --border: 32 14% 73%;
+    --ring: 38 68% 46%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+
+    --radius: 0.75rem;
+
+    --gradient-warm: linear-gradient(135deg, hsl(33, 22%, 85%) 0%, hsl(30, 20%, 79%) 100%);
+    --gradient-primary: linear-gradient(135deg, hsl(38, 68%, 46%) 0%, hsl(32, 74%, 50%) 100%);
+
+    --shadow-card: 0 1px 6px 0 hsl(24 22% 12% / 0.09), 0 0 1px 0 hsl(24 22% 12% / 0.05);
+    --shadow-card-hover: 0 5px 20px 0 hsl(24 22% 12% / 0.15), 0 2px 5px 0 hsl(24 22% 12% / 0.07);
+
+    /* Sidebar — dark leather notebook cover */
+    --sidebar: 22 20% 8%;
+    --sidebar-fg: 32 14% 55%;
+    --sidebar-border: 22 20% 14%;
+    --sidebar-active-bg: 38 68% 50%;
+    --sidebar-active-fg: 22 20% 8%;
+    --sidebar-hover: 22 20% 14%;
+    --sidebar-logo-fg: 38 68% 70%;
+  }
+
+  * {
+    @apply border-border box-border;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans m-0;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display;
+  }
+
+  #root {
+    @apply min-h-screen flex flex-col;
+    overflow-x: hidden;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary text-primary-foreground hover:opacity-90 transition-opacity px-6 py-2.5 rounded-2xl font-medium cursor-pointer;
+  }
+
+  .card-base {
+    @apply bg-card rounded-2xl shadow-card border border-border;
+  }
+
+  /* Sidebar classes using CSS variables */
+  .sidebar-root {
+    background: hsl(var(--sidebar));
+    border-right: 1px solid hsl(var(--sidebar-border));
+    color: hsl(var(--sidebar-fg));
+  }
+
+  .sidebar-nav-item {
+    color: hsl(var(--sidebar-fg));
+  }
+
+  .sidebar-nav-item:hover {
+    background: hsl(var(--sidebar-hover));
+    color: hsl(var(--sidebar-logo-fg));
+  }
+
+  .sidebar-nav-item.active {
+    background: hsl(var(--sidebar-active-bg));
+    color: hsl(var(--sidebar-active-fg));
+  }
+
+  .sidebar-logo {
+    color: hsl(var(--sidebar-logo-fg));
+  }
+
+  /* Notebook theme: lined paper subtle lines on background */
+  [data-theme="notebook"] body {
+    background-image: repeating-linear-gradient(
+      transparent,
+      transparent 27px,
+      hsl(33 16% 80%) 27px,
+      hsl(33 16% 80%) 28px
+    );
+    background-attachment: fixed;
+  }
+
+  /* Notebook theme: no border-right on sidebar — rings strip acts as separator */
+  [data-theme="notebook"] .sidebar-root {
+    border-right: none;
+  }
+}
