@@ -7,7 +7,14 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:cypress:open": "cypress open",
+    "test:cypress:run": "cypress run",
+    "test:cypress:chrome": "cypress run --browser chrome",
+    "test:cypress:firefox": "cypress run --browser firefox",
+    "test:e2e": "cypress run --spec 'cypress/e2e/translator_critic.cy.js'",
+    "test:e2e:mobile": "cypress run --config viewportWidth=375,viewportHeight=667",
+    "test:e2e:tablet": "cypress run --config viewportWidth=768,viewportHeight=1024"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.11",
@@ -56,6 +63,8 @@
     "globals": "^17.4.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.0",
-    "vite": "^8.0.4"
+    "vite": "^8.0.4",
+    "cypress": "^13.6.0",
+    "cypress-network-idle": "^1.14.0"
   }
 }
