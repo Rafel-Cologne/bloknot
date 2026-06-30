@@ -1,0 +1,16 @@
+{
+  "name": "bloknot-email-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Email agent: reads Gmail, classifies with Claude API, writes to Supabase",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node index.js --dry-run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.35.0",
+    "@supabase/supabase-js": "^2.103.3",
+    "googleapis": "^146.0.0",
+    "pdf-parse": "^1.1.1"
+  }
+}
