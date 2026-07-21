@@ -196,6 +196,7 @@ export interface Database {
           payment_method: CleaningPaymentMethod | null
           payment_status: string
           notes: string | null
+          cleaner_comment: string | null
           completed_at: string | null
           created_at: string
         }
@@ -207,14 +208,39 @@ export interface Database {
           payment_method?: CleaningPaymentMethod | null
           payment_status?: string
           notes?: string | null
+          cleaner_comment?: string | null
         }
         Update: {
           status?: string
           payment_method?: CleaningPaymentMethod | null
           payment_status?: string
           notes?: string | null
+          cleaner_comment?: string | null
           completed_at?: string | null
         }
+      }
+      cash_ledger: {
+        Row: {
+          id: string
+          cleaner_id: string
+          owner_id: string
+          booking_id: string | null
+          cleaning_task_id: string | null
+          type: 'deposit' | 'withdrawal'
+          amount: number
+          note: string | null
+          created_at: string
+        }
+        Insert: {
+          cleaner_id: string
+          owner_id: string
+          booking_id?: string | null
+          cleaning_task_id?: string | null
+          type: 'deposit' | 'withdrawal'
+          amount: number
+          note?: string | null
+        }
+        Update: object
       }
       booking_notes: {
         Row: {

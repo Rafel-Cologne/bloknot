@@ -24,8 +24,9 @@ export default function Dashboard() {
 
   if (!user) return null
 
-  // OwnerDashboard manages its own full-screen layout with sidebar
+  // OwnerDashboard and CleanerDashboard manage their own full-screen layout with sidebar
   if (roles.includes('owner')) return <OwnerDashboard />
+  if (roles.includes('cleaner')) return <CleanerDashboard />
 
   // Other dashboards are simple scroll pages — wrap in a scrollable container
   const ScrollShell = ({ children }: { children: ReactNode }) => (
@@ -33,6 +34,5 @@ export default function Dashboard() {
   )
 
   if (roles.includes('admin')) return <ScrollShell><AdminDashboard /></ScrollShell>
-  if (roles.includes('cleaner')) return <ScrollShell><CleanerDashboard /></ScrollShell>
   return <ScrollShell><GuestDashboard /></ScrollShell>
 }

@@ -40,6 +40,10 @@ import {
   Zap,
   Droplets,
   Receipt,
+  Star,
+  Wallet,
+  Minus,
+  History,
 } from 'lucide-react'
 import {
   format,
@@ -65,7 +69,7 @@ type BookingSourceLocal = 'airbnb' | 'booking' | 'other'
 type ApartmentImage = { id: string; image_url: string; order_index: number }
 
 type Apartment = {
-  id: string; title: string; address: string; description: string
+  id: string; title: string; address: string; full_address: string | null; description: string
   cleaning_fee: number; price_per_night: number; max_guests: number
   is_public: boolean; owner_id: string; cleaner_id: string | null; amenities: string[]
   apartment_images?: ApartmentImage[]
@@ -76,13 +80,14 @@ type CustomPrice = { id: string; date: string; price: number }
 type CleaningTask = {
   id: string; status: string; payment_method: string | null
   payment_status: string; cleaning_fee: number; completed_at: string | null
-  notes: string | null
+  notes: string | null; cleaner_comment: string | null; cleaner_id: string | null
 }
 
 type BookingRow = {
   id: string; apartment_id: string; guest_name: string; guest_phone: string
   start_date: string; end_date: string; guests_count: number; status: string
   source: string; owner_notes: string | null; total_amount: number | null
+  guest_rating: number | null
   apartments: { title: string; address: string }
   cleaning_tasks: CleaningTask[]
 }
@@ -111,6 +116,7 @@ const STATUS_LABELS: Record<string, string> = {
 const SOURCE_PAYMENT: Record<BookingSourceLocal, string> = {
   airbnb: 'owner_transfer', booking: 'owner_transfer', other: 'guest_cash',
 }
+const CLEANER_APT_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#f43f5e', '#0ea5e9', '#d946ef', '#84cc16']
 
 const inputCls = 'rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring w-full'
 
@@ -353,7 +359,7 @@ function AddBookingModal({
 // ─── Apartment Modal ──────────────────────────────────────────────────────────
 
 type AptForm = {
-  title: string; address: string; description: string
+  title: string; address: string; full_address: string; description: string
   price_per_night: number; cleaning_fee: number; max_guests: number; is_public: boolean
 }
 
@@ -361,10 +367,10 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
   initial?: Apartment | null; ownerId: string; onClose: () => void; onSaved: () => void
 }) {
   const [form, setForm] = useState<AptForm>(initial
-    ? { title: initial.title, address: initial.address, description: initial.description,
+    ? { title: initial.title, address: initial.address, full_address: initial.full_address ?? '', description: initial.description,
         price_per_night: initial.price_per_night, cleaning_fee: initial.cleaning_fee,
         max_guests: initial.max_guests, is_public: initial.is_public }
-    : { title: '', address: '', description: '', price_per_night: 0, cleaning_fee: 60, max_guests: 2, is_public: true }
+    : { title: '', address: '', full_address: '', description: '', price_per_night: 0, cleaning_fee: 60, max_guests: 2, is_public: true }
   )
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(
@@ -452,6 +458,13 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
                 required={k === 'title'} className={inputCls} />
             </div>
           ))}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Полный адрес (для распознавания счетов)</label>
+            <input type="text" value={form.full_address}
+              onChange={e => setForm(f => ({ ...f, full_address: e.target.value }))}
+              placeholder="Улица, номер, индекс, город — как в счетах за коммуналку"
+              className={inputCls} />
+          </div>
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Описание</label>
             <textarea rows={2} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
@@ -790,7 +803,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
           nights,
           totalAmount: (b as any).total_amount ?? null,
           cleaningFee,
-          source: b.source ?? 'other',
+          source: (b as any).source ?? 'other',
         }
         d = addDays(d, 1)
         isFirst = false
@@ -1065,7 +1078,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                 const nextDate = addDays(parseISO(dateStr), 1)
                 const prevStr = format(prevDate, 'yyyy-MM-dd')
                 const nextStr = format(nextDate, 'yyyy-MM-dd')
-                const connectLeft = isBooked && di > 0 && dateMap[prevStr]?.bookingId === info?.bookingId
+                const _connectLeft = isBooked && di > 0 && dateMap[prevStr]?.bookingId === info?.bookingId; void _connectLeft
                 const _connectRight = isBooked && di < 6 && dateMap[nextStr]?.bookingId === info?.bookingId; void _connectRight
                 const showName = isBooked && info && info.isStart
 
@@ -1123,8 +1136,8 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                     {/* Check-in: guest name + guests count + nights */}
                     {showName && !isSelected && !isYear && effectiveCount <= 3 && (
                       <div className="flex flex-col gap-0.5 mt-0.5 flex-shrink-0">
-                        <span className={`${compact ? 'text-[9px]' : 'text-xs'} font-bold leading-tight truncate ${isDark ? 'text-rose-400' : 'text-rose-800'}`}>{info!.guestName}</span>
-                        <span className={`text-[9px] leading-tight ${isDark ? 'text-rose-500' : 'text-rose-600'}`}>
+                        <span className={`${compact ? 'text-[11px]' : 'text-sm'} font-bold leading-tight truncate ${isDark ? 'text-rose-400' : 'text-rose-800'}`}>{info!.guestName}</span>
+                        <span className={`${compact ? 'text-[10px]' : 'text-[11px]'} leading-tight ${isDark ? 'text-rose-500' : 'text-rose-600'}`}>
                           {info!.guestsCount} чел · {info!.nights} н.
                         </span>
                       </div>
@@ -1136,8 +1149,8 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                       const fee = info!.cleaningFee
                       return (
                         <div className="flex flex-col gap-0.5 mt-1 flex-shrink-0">
-                          {rent != null && <span className={`text-[10px] font-bold leading-tight ${isDark ? 'text-rose-400' : 'text-rose-700'}`}>{fmtEur(rent)}</span>}
-                          {fee > 0 && <span className={`text-[9px] leading-tight ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>уборка {fmtEur(fee)}</span>}
+                          {rent != null && <span className={`text-sm font-bold leading-tight ${isDark ? 'text-rose-400' : 'text-rose-700'}`}>{fmtEur(rent)}</span>}
+                          {fee > 0 && <span className={`text-[11px] leading-tight ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>уборка {fmtEur(fee)}</span>}
                         </div>
                       )
                     })()}
@@ -1945,11 +1958,11 @@ function DashboardOverview({
         <button onClick={() => setShowRevenueModal(true)}
           className="bg-card border border-border rounded-2xl p-3 md:p-4 text-left hover:shadow-md transition-all shadow-sm flex flex-col min-h-[96px] md:min-h-[116px]">
           <div className="flex items-start justify-between mb-3">
-            <p className="text-xs text-muted-foreground leading-snug">Общий доход за {MONTHS_RU[selMonth].toLowerCase()}</p>
+            <p className="text-xs text-muted-foreground leading-snug">Общий доход с начала {today.getFullYear()} года</p>
             <div className="p-1.5 rounded-lg bg-rose-50 text-rose-500 flex-shrink-0"><BarChart2 size={15} /></div>
           </div>
-          <p className="text-xl md:text-2xl font-bold text-foreground leading-tight">{fmtEur(monthRevenue)}</p>
-          <p className="text-[11px] text-muted-foreground mt-1.5">{monthBookings.length} заезд{monthBookings.length === 1 ? '' : monthBookings.length < 5 ? 'а' : 'ов'}</p>
+          <p className="text-xl md:text-2xl font-bold text-foreground leading-tight">{fmtEur(actualRevenue)}</p>
+          <p className="text-[11px] text-muted-foreground mt-1.5">{completedBookings.length} заезд{completedBookings.length === 1 ? '' : completedBookings.length < 5 ? 'а' : 'ов'}</p>
           <p className="text-[10px] text-transparent select-none mt-0.5">&nbsp;</p>
         </button>
 
@@ -1999,7 +2012,7 @@ function DashboardOverview({
         </button>
 
         {/* Актуальный доход (чистая прибыль) */}
-        <div className="bg-card border border-border rounded-2xl p-3 md:p-4 shadow-sm flex flex-col min-h-[96px] md:min-h-[116px]">
+        <div className="col-span-2 lg:col-span-1 bg-card border border-border rounded-2xl p-3 md:p-4 shadow-sm flex flex-col min-h-[96px] md:min-h-[116px]">
           <div className="flex items-start justify-between mb-3">
             <p className="text-xs text-muted-foreground leading-snug">Чистая прибыль</p>
             <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 flex-shrink-0"><TrendingUp size={15} /></div>
@@ -3822,6 +3835,24 @@ function CleaningSection({ bookings, onRefresh }: { bookings: BookingRow[]; onRe
                   </div>
                 )
               })}
+              {(b.guest_rating || b.cleaning_tasks.some(t => t.cleaner_comment)) && (
+                <div className="rounded-xl px-3 py-2.5 border border-border bg-card">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">От уборщицы</p>
+                  {b.guest_rating ? (
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs text-muted-foreground">Чистота гостя:</span>
+                      <div className="flex items-center gap-0.5">
+                        {[1, 2, 3, 4, 5].map(i => (
+                          <Star key={i} size={13} className={i <= b.guest_rating! ? 'text-amber-400 fill-amber-400' : 'text-muted-foreground/30'} />
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {b.cleaning_tasks.filter(t => t.cleaner_comment).map(t => (
+                    <p key={t.id} className="text-xs text-foreground">📝 {t.cleaner_comment}</p>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -4082,10 +4113,20 @@ function CleaningSection({ bookings, onRefresh }: { bookings: BookingRow[]; onRe
 
 // ─── Cleaner View ─────────────────────────────────────────────────────────────
 
-function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefresh: () => void }) {
+type CashEntry = {
+  id: string
+  type: 'deposit' | 'withdrawal'
+  amount: number
+  booking_id: string | null
+  cleaning_task_id: string | null
+  note: string | null
+  created_at: string
+}
+
+function CleanerView({ bookings, onRefresh, ownerId }: { bookings: BookingRow[]; onRefresh: () => void; ownerId: string }) {
   const today = new Date().toISOString().slice(0, 10)
   const qc = useQueryClient()
-  const [tab, setTab] = useState<'bookings' | 'payment' | 'archive'>('bookings')
+  const [tab, setTab] = useState<'bookings' | 'payment' | 'calendar' | 'archive'>('bookings')
   const [selectedBooking, setSelectedBooking] = useState<BookingRow | null>(null)
   const [payingTaskId, setPayingTaskId] = useState<string | null>(null)
   const [payInput, setPayInput] = useState('')
@@ -4093,6 +4134,61 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
   // bulk selection (task IDs of unpaid bookings)
   const [bulkIds, setBulkIds] = useState<string[]>([])
   const [bulkMethod, setBulkMethod] = useState<'guest_cash' | 'owner_transfer'>('guest_cash')
+  const [aptFilter, setAptFilter] = useState<string>('all')
+  const [rentInput, setRentInput] = useState('')
+  const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1) })
+  const [showCashForm, setShowCashForm] = useState(false)
+  const [cashDirection, setCashDirection] = useState<'deposit' | 'withdrawal'>('deposit')
+  const [cashAmount, setCashAmount] = useState('')
+  const [cashNote, setCashNote] = useState('')
+
+  const { data: ledger } = useQuery({
+    queryKey: ['owner-cash-ledger', ownerId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('cash_ledger').select('*').eq('owner_id', ownerId)
+      if (error) throw error
+      return data as CashEntry[]
+    },
+    enabled: !!ownerId,
+  })
+  const cashBalance = (ledger ?? []).reduce((s, e) => s + (e.type === 'deposit' ? e.amount : -e.amount), 0)
+
+  const depositRent = useMutation({
+    mutationFn: async ({ bookingId, cleanerId, amount }: { bookingId: string; cleanerId: string; amount: number }) => {
+      const { error } = await supabase.from('cash_ledger').insert({
+        cleaner_id: cleanerId, owner_id: ownerId, booking_id: bookingId,
+        type: 'deposit', amount, note: 'Наличными за аренду',
+      })
+      if (error) throw error
+    },
+    onSuccess: () => { setRentInput(''); onRefresh(); qc.invalidateQueries({ queryKey: ['owner-cash-ledger'] }) },
+  })
+
+  const withdrawFromTill = useMutation({
+    mutationFn: async ({ taskId, cleanerId, amount }: { taskId: string; cleanerId: string; amount: number }) => {
+      const { error: ledgerError } = await supabase.from('cash_ledger').insert({
+        cleaner_id: cleanerId, owner_id: ownerId, cleaning_task_id: taskId,
+        type: 'withdrawal', amount, note: 'Списано из кассы за уборку',
+      })
+      if (ledgerError) throw ledgerError
+      const { error: taskError } = await supabase.from('cleaning_tasks').update({ payment_status: 'paid' } as never).eq('id', taskId)
+      if (taskError) throw taskError
+    },
+    onSuccess: () => { onRefresh(); qc.invalidateQueries({ queryKey: ['owner-cash-ledger'] }); qc.invalidateQueries({ queryKey: ['owner-bookings-full'] }) },
+  })
+
+  const manualCashEntry = useMutation({
+    mutationFn: async ({ cleanerId, type, amount, note }: { cleanerId: string; type: 'deposit' | 'withdrawal'; amount: number; note: string | null }) => {
+      const { error } = await supabase.from('cash_ledger').insert({
+        cleaner_id: cleanerId, owner_id: ownerId, type, amount, note,
+      })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      setShowCashForm(false); setCashAmount(''); setCashNote('')
+      qc.invalidateQueries({ queryKey: ['owner-cash-ledger'] })
+    },
+  })
 
   const openPay = (task: CleaningTask) => {
     const owed = Math.max(0, task.cleaning_fee - getPaidAmt(task))
@@ -4165,6 +4261,34 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
   const totalEarned = totalOwed + totalPaid
   const pct         = totalEarned > 0 ? Math.round((totalPaid / totalEarned) * 100) : 0
 
+  // Stable apartment list + colors (for the calendar and the payment filter)
+  const apartments = (() => {
+    const seen = new Set<string>()
+    const list: { id: string; title: string }[] = []
+    all.forEach(b => {
+      if (!seen.has(b.apartment_id)) { seen.add(b.apartment_id); list.push({ id: b.apartment_id, title: b.apartments.title }) }
+    })
+    return list
+  })()
+  const aptColorOf = (id: string) => {
+    const i = apartments.findIndex(a => a.id === id)
+    return CLEANER_APT_COLORS[i >= 0 ? i % CLEANER_APT_COLORS.length : 0]
+  }
+  const byApartment = (b: BookingRow) => aptFilter === 'all' || b.apartment_id === aptFilter
+
+  // Describe a cash ledger entry — which apartment/booking it relates to, or "manual"
+  const describeCashEntry = (e: CashEntry) => {
+    if (e.cleaning_task_id) {
+      const b = all.find(x => x.cleaning_tasks.some(t => t.id === e.cleaning_task_id))
+      if (b) return { title: b.apartments.title, sub: e.note ?? 'Списано за уборку' }
+    }
+    if (e.booking_id) {
+      const b = all.find(x => x.id === e.booking_id)
+      if (b) return { title: b.apartments.title, sub: e.note ?? 'Наличными за аренду' }
+    }
+    return { title: e.type === 'deposit' ? 'Пополнение вручную' : 'Списание вручную', sub: e.note ?? '' }
+  }
+
   // ── render: inline pay panel (plain function) ──────────────────────────────────
   const renderPayPanel = (task: CleaningTask) => {
     const owed       = Math.max(0, task.cleaning_fee - getPaidAmt(task))
@@ -4228,43 +4352,55 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
     const isCur     = b.start_date <= today && b.end_date > today
     const isUp      = b.start_date > today
     const nights    = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
+    const color     = aptColorOf(b.apartment_id)
 
     return (
       <button key={b.id} onClick={() => setSelectedBooking(b)}
-        className={`bg-card border rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md hover:border-primary/30 ${isCur ? 'border-primary/40 ring-1 ring-primary/20' : 'border-border'}`}>
+        className={`bg-card border rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md hover:border-primary/30 ${isCur ? 'ring-1 ring-primary/20' : 'border-border'}`}
+        style={isCur ? { borderColor: color } : undefined}>
         <div className="flex items-center gap-4 px-5 py-4">
           {/* Date */}
-          <div className={`flex-shrink-0 text-center rounded-xl px-3 py-2 min-w-[50px] ${isCur ? 'bg-primary text-primary-foreground' : 'bg-secondary'}`}>
-            <div className="text-sm font-bold leading-tight">{b.end_date.slice(8)}</div>
-            <div className={`text-[9px] uppercase font-medium ${isCur ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
-              {format(parseISO(b.end_date), 'MMM', { locale: ru })}
+          <div className="flex-shrink-0 text-center rounded-xl px-3 py-2 w-[80px] text-white" style={{ backgroundColor: color }}>
+            <div className="text-base font-bold leading-tight">{b.start_date.slice(8)}</div>
+            <div className="text-[10px] uppercase font-semibold text-white/85 whitespace-nowrap">
+              {format(parseISO(b.start_date), 'LLLL', { locale: ru })}
             </div>
           </div>
           {/* Info */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-              <p className="text-sm font-bold text-foreground">{b.apartments.title}</p>
-              {isCur && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">● Сейчас</span>}
-              {isUp  && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold">Предстоящий</span>}
-              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${SOURCE_COLOR[b.source] ?? 'bg-muted text-muted-foreground'}`}>
+              <p className="text-base font-bold text-foreground">{b.apartments.title}</p>
+              {isCur && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">● Сейчас</span>}
+              {isUp  && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold">Предстоящий</span>}
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${SOURCE_COLOR[b.source] ?? 'bg-muted text-muted-foreground'}`}>
                 {SOURCE_LABELS[b.source] ?? b.source}
               </span>
+              {task?.status === 'done'
+                ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 font-semibold">✓ Убрано</span>
+                : !isUp && !isCur
+                  ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">🧹 Нужна уборка</span>
+                  : null}
             </div>
-            <p className="text-sm text-muted-foreground">{b.guest_name} · {nights} н.</p>
-            <p className="text-xs text-muted-foreground/60 mt-0.5">
+            <p className="text-sm text-foreground/80 flex items-center gap-1.5 flex-wrap mt-0.5">
+              <span>{b.guest_name} · {nights} н.</span>
+              <span className="inline-flex items-center gap-0.5 text-sm text-foreground/80">
+                <Users size={13} /> {b.guests_count}
+              </span>
+            </p>
+            <p className="text-xs text-muted-foreground mt-1 font-medium">
               {format(parseISO(b.start_date), 'd MMM', { locale: ru })} — {format(parseISO(b.end_date), 'd MMM yyyy', { locale: ru })}
             </p>
           </div>
           {/* Fee + status */}
           <div className="flex-shrink-0 flex flex-col items-end gap-1.5 min-w-[80px] max-w-[110px]">
             <p className="text-lg font-bold text-foreground">{fmtEur(fee)}</p>
-            {isPaid    && <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">✓ Оплачено</span>}
+            {isPaid    && <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">✓ Оплачено</span>}
             {isPartial && <>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-semibold">Частично {fmtEur(paid)}</span>
-              <span className="text-[9px] text-red-500 font-medium">осталось {fmtEur(owed)}</span>
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-semibold">Частично {fmtEur(paid)}</span>
+              <span className="text-[10px] text-red-500 font-medium">осталось {fmtEur(owed)}</span>
             </>}
-            {!isPaid && !isPartial && <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-semibold">Не оплачено</span>}
-            <p className="text-[9px] text-muted-foreground">{task?.payment_method === 'owner_transfer' ? '🏦 Перевод' : task?.payment_method === 'guest_cash' ? '💵 Наличные' : ''}</p>
+            {!isPaid && !isPartial && <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-semibold">Не оплачено</span>}
+            <p className="text-[10px] text-muted-foreground font-medium">{task?.payment_method === 'owner_transfer' ? '🏦 Перевод' : task?.payment_method === 'guest_cash' ? '💵 Наличные' : ''}</p>
           </div>
           <ChevronRight size={14} className="text-muted-foreground/40 flex-shrink-0" />
         </div>
@@ -4285,9 +4421,11 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
     const isChecked  = bulkIds.includes(task.id)
     const isCur      = b.start_date <= today && b.end_date > today
     const nights     = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
+    const color      = aptColorOf(b.apartment_id)
 
     return (
-      <div key={b.id} className={`bg-card border rounded-2xl shadow-sm overflow-hidden transition-all ${isChecked ? 'border-emerald-400 ring-1 ring-emerald-300' : isCur ? 'border-primary/40 ring-1 ring-primary/20' : 'border-border'}`}>
+      <div key={b.id} className={`bg-card border rounded-2xl shadow-sm overflow-hidden transition-all ${isChecked ? 'border-emerald-400 ring-1 ring-emerald-300' : isCur ? 'ring-1 ring-primary/20' : 'border-border'}`}
+        style={isCur && !isChecked ? { borderColor: color } : undefined}>
         <div className="flex items-center gap-3 px-4 py-4">
           {/* Checkbox for bulk (only for unpaid) */}
           {!isPaid && (
@@ -4298,22 +4436,25 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
           )}
           {isPaid && <div className="flex-shrink-0 w-5 h-5" />}
           {/* Date */}
-          <div className={`flex-shrink-0 text-center rounded-xl px-3 py-2 min-w-[50px] ${isCur ? 'bg-primary text-primary-foreground' : 'bg-secondary'}`}>
-            <div className="text-sm font-bold leading-tight">{b.end_date.slice(8)}</div>
-            <div className={`text-[9px] uppercase font-medium ${isCur ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
-              {format(parseISO(b.end_date), 'MMM', { locale: ru })}
+          <div className="flex-shrink-0 text-center rounded-xl px-3 py-2 w-[80px] text-white" style={{ backgroundColor: color }}>
+            <div className="text-base font-bold leading-tight">{b.start_date.slice(8)}</div>
+            <div className="text-[10px] uppercase font-semibold text-white/85 whitespace-nowrap">
+              {format(parseISO(b.start_date), 'LLLL', { locale: ru })}
             </div>
           </div>
           {/* Info */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-              <p className="text-sm font-bold text-foreground">{b.apartments.title}</p>
-              {isCur && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">● Сейчас</span>}
-              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${SOURCE_COLOR[b.source] ?? 'bg-muted text-muted-foreground'}`}>
+              <p className="text-base font-bold text-foreground">{b.apartments.title}</p>
+              {isCur && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">● Сейчас</span>}
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${SOURCE_COLOR[b.source] ?? 'bg-muted text-muted-foreground'}`}>
                 {SOURCE_LABELS[b.source] ?? b.source}
               </span>
+              {task.status === 'done' && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 font-semibold">✓ Убрано</span>
+              )}
             </div>
-            <p className="text-sm text-muted-foreground">{b.guest_name} · {nights} н.</p>
+            <p className="text-sm text-foreground/80">{b.guest_name} · {nights} н.</p>
           </div>
           {/* Fee + actions */}
           <div className="flex-shrink-0 flex flex-col items-end gap-1.5 min-w-[110px]">
@@ -4347,144 +4488,154 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
     )
   }
 
-  // ── mini calendar helpers ─────────────────────────────────────────────────────
-  const buildMonthCal = (base: Date) => {
-    const first    = startOfMonth(base)
-    const total    = getDaysInMonth(base)
-    const offset   = (getDay(first) + 6) % 7   // Mon-based (0=Mon … 6=Sun)
-    const cells: (number | null)[] = Array(offset).fill(null)
-    for (let d = 1; d <= total; d++) cells.push(d)
-    return { cells, year: first.getFullYear(), month: first.getMonth() }
-  }
-
-  const dayStatus = (y: number, m: number, d: number) => {
-    const ds = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-    let ci = false, co = false, occ = false
-    for (const b of all) {
-      if (b.start_date === ds) ci = true
-      if (b.end_date   === ds) co = true
-      if (ds > b.start_date && ds < b.end_date) occ = true
-    }
-    return { ci, co, occ, ds }
-  }
-
-  const renderMiniCalendar = (base: Date) => {
-    const { cells, year, month } = buildMonthCal(base)
-    const WDAYS = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
-    const rows: (number | null)[][] = []
-    for (let i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7))
+  // ── section content ───────────────────────────────────────────────────────────
+  const renderBookings = () => {
+    const curF = currentStays.filter(byApartment)
+    const upF  = upcoming.filter(byApartment)
+    const daysToNext = upF.length > 0
+      ? Math.max(0, Math.round((parseISO(upF[0].start_date).getTime() - new Date().setHours(0,0,0,0)) / 86400000))
+      : null
 
     return (
-      <div className="bg-card border border-border rounded-2xl p-4 shadow-sm">
-        <p className="text-sm font-bold text-foreground mb-3 capitalize">
-          {format(startOfMonth(base), 'LLLL yyyy', { locale: ru })}
-        </p>
-        {/* Week header */}
-        <div className="grid grid-cols-7 mb-1">
-          {WDAYS.map(w => (
-            <div key={w} className="text-center text-[10px] text-muted-foreground font-semibold py-0.5">{w}</div>
-          ))}
-        </div>
-        {/* Day cells */}
-        {rows.map((row, ri) => (
-          <div key={ri} className="grid grid-cols-7">
-            {row.map((d, ci2) => {
-              if (!d) return <div key={`e-${ci2}`} className="h-7" />
-              const { ci, co, occ, ds } = dayStatus(year, month, d)
-              const isToday = ds === today
-              return (
-                <div key={d}
-                  className={`relative h-7 flex items-center justify-center text-xs font-medium rounded-lg mx-0.5 my-0.5
-                    ${ci  ? 'bg-emerald-500 text-white' : ''}
-                    ${co  ? 'bg-orange-400 text-white' : ''}
-                    ${occ && !ci && !co ? 'bg-emerald-100 text-emerald-900' : ''}
-                    ${!ci && !co && !occ ? 'text-foreground hover:bg-muted/60' : ''}
-                  `}>
-                  {d}
-                  {isToday && !ci && !co && (
-                    <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary" />
-                  )}
-                </div>
-              )
-            })}
+      <div className="flex flex-col gap-5">
+        {apartments.length > 1 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground font-medium">Квартира:</span>
+            <select value={aptFilter} onChange={e => setAptFilter(e.target.value)}
+              className="text-xs rounded-xl border border-border bg-card px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-ring">
+              <option value="all">Все квартиры</option>
+              {apartments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
+            </select>
           </div>
-        ))}
+        )}
+        {/* Stats row */}
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center">
+            <p className="text-2xl font-bold text-primary">{curF.length + upF.length}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">заездов впереди</p>
+          </div>
+          <div className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center">
+            <p className="text-2xl font-bold text-foreground">{curF.length}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">сейчас заселено</p>
+          </div>
+          <div className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center">
+            {daysToNext !== null
+              ? <><p className="text-2xl font-bold text-foreground">{daysToNext}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">{daysToNext === 0 ? 'заезд сегодня!' : 'дней до заезда'}</p></>
+              : <><p className="text-2xl font-bold text-muted-foreground">—</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">нет заездов</p></>}
+          </div>
+        </div>
+
+        {/* Current stays */}
+        {curF.length > 0 && (
+          <div>
+            <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Сейчас заселены</h3>
+            <div className="flex flex-col gap-2">{curF.map(b => renderCard(b))}</div>
+          </div>
+        )}
+        {/* Upcoming */}
+        {upF.length > 0 && (
+          <div>
+            <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Предстоящие — {upF.length}</h3>
+            <div className="flex flex-col gap-2">{upF.map(b => renderCard(b))}</div>
+          </div>
+        )}
+        {/* Empty */}
+        {curF.length === 0 && upF.length === 0 && (
+          <div className="bg-card border border-border rounded-2xl p-10 text-center">
+            <p className="text-3xl mb-2">🧹</p>
+            <p className="text-sm text-muted-foreground">Нет предстоящих заездов</p>
+          </div>
+        )}
       </div>
     )
   }
 
-  // ── section content ───────────────────────────────────────────────────────────
-  const renderBookings = () => {
-    const daysToNext = upcoming.length > 0
-      ? Math.max(0, Math.round((parseISO(upcoming[0].start_date).getTime() - new Date().setHours(0,0,0,0)) / 86400000))
-      : null
+  // ── render: calendar tab — full stay-range bars, one row per apartment ────────
+  const CAL_ROW_H = 15
+  const renderCalendar = () => {
+    const month = calMonth
+    const setMonth = setCalMonth
+    const weeks = (() => {
+      const year = month.getFullYear(), mo = month.getMonth()
+      const firstDow = (new Date(year, mo, 1).getDay() + 6) % 7
+      const daysInMonth = getDaysInMonth(month)
+      const cells: (number | null)[] = Array(firstDow).fill(null)
+      for (let d = 1; d <= daysInMonth; d++) cells.push(d)
+      while (cells.length % 7 !== 0) cells.push(null)
+      const wks: (number | null)[][] = []
+      for (let i = 0; i < cells.length; i += 7) wks.push(cells.slice(i, i + 7))
+      return wks
+    })()
+    const byApt = new Map<string, BookingRow[]>()
+    all.forEach(b => {
+      if (!byApt.has(b.apartment_id)) byApt.set(b.apartment_id, [])
+      byApt.get(b.apartment_id)!.push(b)
+    })
+    const bookingOnDay = (aptId: string, dateStr: string) =>
+      (byApt.get(aptId) ?? []).find(b => b.start_date <= dateStr && dateStr <= b.end_date)
 
     return (
-      <div className="flex flex-col md:grid md:gap-5" style={{ gridTemplateColumns: '1fr 240px', alignItems: 'start' }}>
-        {/* ── LEFT: stats + cards ── */}
-        <div className="flex flex-col gap-5">
-          {/* Stats row */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center">
-              <p className="text-2xl font-bold text-primary">{currentStays.length + upcoming.length}</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">заездов впереди</p>
-            </div>
-            <div className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center">
-              <p className="text-2xl font-bold text-foreground">{currentStays.length}</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">сейчас заселено</p>
-            </div>
-            <div className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center">
-              {daysToNext !== null
-                ? <><p className="text-2xl font-bold text-foreground">{daysToNext}</p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">{daysToNext === 0 ? 'заезд сегодня!' : 'дней до заезда'}</p></>
-                : <><p className="text-2xl font-bold text-muted-foreground">—</p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">нет заездов</p></>}
-            </div>
-          </div>
-
-          {/* Current stays */}
-          {currentStays.length > 0 && (
-            <div>
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">Сейчас заселены</h3>
-              <div className="flex flex-col gap-2">{currentStays.map(b => renderCard(b))}</div>
-            </div>
-          )}
-          {/* Upcoming */}
-          {upcoming.length > 0 && (
-            <div>
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">Предстоящие — {upcoming.length}</h3>
-              <div className="flex flex-col gap-2">{upcoming.map(b => renderCard(b))}</div>
-            </div>
-          )}
-          {/* Empty */}
-          {currentStays.length === 0 && upcoming.length === 0 && (
-            <div className="bg-card border border-border rounded-2xl p-10 text-center">
-              <p className="text-3xl mb-2">🧹</p>
-              <p className="text-sm text-muted-foreground">Нет предстоящих заездов</p>
-            </div>
-          )}
+      <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
+            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronLeft size={15} /></button>
+          <p className="text-sm font-semibold capitalize">{format(month, 'LLLL yyyy', { locale: ru })}</p>
+          <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronRight size={15} /></button>
         </div>
-
-        {/* ── RIGHT: calendars (sticky on desktop, normal flow on mobile) ── */}
-        <div className="flex flex-col gap-3 mt-5 md:mt-0" style={{ position: 'sticky', top: '1.5rem' }}>
-          {renderMiniCalendar(new Date())}
-          {renderMiniCalendar(addMonths(new Date(), 1))}
-          {/* Legend */}
-          <div className="bg-card border border-border rounded-2xl px-4 py-3 shadow-sm flex flex-col gap-2">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="w-3 h-3 rounded-sm bg-emerald-500 flex-shrink-0" />
-              Заезд
-            </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="w-3 h-3 rounded-sm bg-orange-400 flex-shrink-0" />
-              Выезд / уборка
-            </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="w-3 h-3 rounded-sm bg-emerald-100 border border-emerald-200 flex-shrink-0" />
-              Занято
-            </div>
-          </div>
+        <div className="grid grid-cols-7 border-b border-border">
+          {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(d => (
+            <div key={d} className="text-center text-[10px] font-bold text-muted-foreground uppercase py-1.5">{d}</div>
+          ))}
         </div>
+        <div className="divide-y divide-border">
+          {weeks.map((week, wi) => {
+            const cellMinH = 26 + Math.max(1, apartments.length) * (CAL_ROW_H + 2)
+            return (
+              <div key={wi} className="grid grid-cols-7 divide-x divide-border">
+                {week.map((day, di) => {
+                  if (day === null) return <div key={di} className="bg-gray-50/60" style={{ minHeight: cellMinH }} />
+                  const dateStr = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+                  const isToday = dateStr === today
+                  return (
+                    <div key={di} className="p-1 flex flex-col gap-[2px] overflow-hidden" style={{ minHeight: cellMinH }}>
+                      <span className={`text-[10px] font-semibold w-4 h-4 flex items-center justify-center rounded-full flex-shrink-0 ${isToday ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}>
+                        {day}
+                      </span>
+                      {apartments.map(apt => {
+                        const b = bookingOnDay(apt.id, dateStr)
+                        if (!b) return <div key={apt.id} style={{ height: CAL_ROW_H }} />
+                        const isStart = b.start_date === dateStr
+                        const isEnd = b.end_date === dateStr
+                        const task = b.cleaning_tasks[0]
+                        return (
+                          <span key={apt.id}
+                            title={`${apt.title} · ${b.guests_count} чел · ${task ? fmtEur(task.cleaning_fee) : ''} · ${task?.payment_status === 'paid' ? 'оплачено' : 'не оплачено'}`}
+                            className={`flex items-center text-[8px] leading-none text-white overflow-hidden ${isStart ? 'rounded-l-full pl-1.5' : '-ml-1'} ${isEnd ? 'rounded-r-full pr-1' : '-mr-1'}`}
+                            style={{ height: CAL_ROW_H, backgroundColor: aptColorOf(apt.id), opacity: task?.payment_status === 'paid' ? 0.5 : 0.9 }}>
+                            {isStart && <span className="truncate font-semibold">{apt.title}{b.guests_count ? ` · ${b.guests_count}` : ''}</span>}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })}
+        </div>
+        {apartments.length > 0 && (
+          <div className="flex items-center gap-3 flex-wrap px-4 py-2.5 border-t border-border">
+            {apartments.map(apt => (
+              <div key={apt.id} className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: aptColorOf(apt.id) }} />
+                <span className="text-[11px] text-muted-foreground font-medium">{apt.title}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     )
   }
@@ -4492,25 +4643,103 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
   const renderPayment = () => (
     <div className="flex flex-col gap-6">
       {/* Balance cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-        <div className="bg-card border border-border rounded-2xl p-4 sm:p-5 shadow-sm">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div className="bg-card border border-border rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center">
           <p className="text-xs text-muted-foreground mb-2">Всего заработано</p>
-          <p className="text-2xl sm:text-3xl font-bold text-foreground">{fmtEur(totalEarned)}</p>
+          <p className="text-xl sm:text-2xl font-bold text-foreground whitespace-nowrap">{fmtEur(totalEarned)}</p>
           <p className="text-xs text-muted-foreground mt-1">{all.length} уборок</p>
         </div>
-        <div className={`bg-card border rounded-2xl p-4 sm:p-5 shadow-sm ${totalOwed > 0 ? 'border-red-200' : 'border-emerald-200'}`}>
+        <div className={`bg-card border rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center ${totalOwed > 0 ? 'border-red-200' : 'border-emerald-200'}`}>
           <p className="text-xs text-muted-foreground mb-2">Задолженность</p>
-          <p className={`text-2xl sm:text-3xl font-bold ${totalOwed > 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtEur(totalOwed)}</p>
+          <p className={`text-xl sm:text-2xl font-bold whitespace-nowrap ${totalOwed > 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtEur(totalOwed)}</p>
           <p className="text-xs text-muted-foreground mt-1">{totalOwed > 0 ? 'ожидает перевода' : 'долгов нет 🎉'}</p>
         </div>
-        <div className="bg-card border border-emerald-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+        <div className="bg-card border border-emerald-200 rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center">
           <p className="text-xs text-muted-foreground mb-2">Получено</p>
-          <p className="text-2xl sm:text-3xl font-bold text-emerald-600">{fmtEur(totalPaid)}</p>
+          <p className="text-xl sm:text-2xl font-bold text-emerald-600 whitespace-nowrap">{fmtEur(totalPaid)}</p>
           <p className="text-xs text-muted-foreground mt-1">
             {all.filter(b => b.cleaning_tasks.some(t => t.payment_status === 'paid')).length} оплачено
           </p>
         </div>
+        <div className="bg-card border border-purple-200 rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center">
+          <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1"><Wallet size={12} /> Касса (наличные)</p>
+          <p className="text-xl sm:text-2xl font-bold text-purple-700 whitespace-nowrap">{fmtEur(cashBalance)}</p>
+          <button onClick={() => setShowCashForm(p => !p)}
+            className="text-[11px] text-primary font-semibold hover:underline mt-1">
+            Изменить кассу
+          </button>
+        </div>
       </div>
+
+      {showCashForm && (
+        <div className="bg-card border border-border rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col gap-3">
+          <p className="text-sm font-semibold text-foreground">Изменить сумму в кассе</p>
+          <div className="flex gap-2">
+            <button onClick={() => setCashDirection('deposit')}
+              className={`flex-1 py-1.5 rounded-xl text-xs font-semibold border transition-colors flex items-center justify-center gap-1 ${cashDirection === 'deposit' ? 'bg-emerald-600 text-white border-emerald-600' : 'border-border text-muted-foreground hover:bg-muted'}`}>
+              <Plus size={13} /> Пополнить
+            </button>
+            <button onClick={() => setCashDirection('withdrawal')}
+              className={`flex-1 py-1.5 rounded-xl text-xs font-semibold border transition-colors flex items-center justify-center gap-1 ${cashDirection === 'withdrawal' ? 'bg-red-600 text-white border-red-600' : 'border-border text-muted-foreground hover:bg-muted'}`}>
+              <Minus size={13} /> Списать
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5 border border-border bg-background rounded-xl px-3 py-2 focus-within:ring-2 focus-within:ring-primary/40">
+            <input type="text" inputMode="decimal" value={cashAmount} onChange={e => setCashAmount(e.target.value)}
+              placeholder="Сумма" className="flex-1 bg-transparent outline-none text-sm font-semibold min-w-0" />
+            <span className="text-muted-foreground font-semibold text-sm flex-shrink-0">€</span>
+          </div>
+          <input type="text" value={cashNote} onChange={e => setCashNote(e.target.value)}
+            placeholder="Комментарий (необязательно)"
+            className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring" />
+          <div className="flex gap-2">
+            <button onClick={() => setShowCashForm(false)}
+              className="flex-1 py-2 rounded-xl border border-border text-sm text-muted-foreground hover:bg-muted transition-colors">
+              Отмена
+            </button>
+            <button
+              onClick={() => {
+                const v = Number(cashAmount)
+                const anyCleanerId = all.flatMap(b => b.cleaning_tasks).find(t => t.cleaner_id)?.cleaner_id
+                if (anyCleanerId && cashAmount !== '' && !isNaN(v) && v > 0) {
+                  manualCashEntry.mutate({ cleanerId: anyCleanerId, type: cashDirection, amount: v, note: cashNote.trim() || null })
+                }
+              }}
+              disabled={manualCashEntry.isPending || cashAmount === '' || isNaN(Number(cashAmount)) || Number(cashAmount) <= 0}
+              className="flex-1 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity">
+              {manualCashEntry.isPending ? 'Сохранение…' : 'Сохранить'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(ledger?.length ?? 0) > 0 && (
+        <div>
+          <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3 flex items-center gap-1.5">
+            <History size={13} /> История кассы — {ledger!.length}
+          </h3>
+          <div className="flex flex-col gap-2">
+            {ledger!.map(e => {
+              const info = describeCashEntry(e)
+              const isDeposit = e.type === 'deposit'
+              return (
+                <div key={e.id} className="bg-card border border-border rounded-2xl px-4 py-3 flex items-center gap-3">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${isDeposit ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                    {isDeposit ? <Plus size={15} /> : <Minus size={15} />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate">{info.title}</p>
+                    <p className="text-xs text-muted-foreground truncate">{info.sub || (isDeposit ? 'Пополнение' : 'Списание')} · {format(parseISO(e.created_at.slice(0, 10)), 'd MMM yyyy', { locale: ru })}</p>
+                  </div>
+                  <p className={`text-sm font-bold flex-shrink-0 ${isDeposit ? 'text-emerald-700' : 'text-red-600'}`}>
+                    {isDeposit ? '+' : '−'}{fmtEur(e.amount)}
+                  </p>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Progress bar */}
       {totalEarned > 0 && (
@@ -4525,10 +4754,22 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
         </div>
       )}
 
+      {/* Apartment filter */}
+      {apartments.length > 1 && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground font-medium">Квартира:</span>
+          <select value={aptFilter} onChange={e => setAptFilter(e.target.value)}
+            className="text-xs rounded-xl border border-border bg-card px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-ring">
+            <option value="all">Все квартиры</option>
+            {apartments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
+          </select>
+        </div>
+      )}
+
       {/* Unpaid / partial list */}
       {(() => {
-        const unpaidList = all.filter(b => b.cleaning_tasks.some(t => t.payment_status !== 'paid'))
-        const paidList   = all.filter(b => b.cleaning_tasks.every(t => t.payment_status === 'paid'))
+        const unpaidList = all.filter(b => byApartment(b) && b.cleaning_tasks.some(t => t.payment_status !== 'paid'))
+        const paidList   = all.filter(b => byApartment(b) && b.cleaning_tasks.every(t => t.payment_status === 'paid'))
         const bulkTotal  = bulkIds.reduce((s, id) => {
           const task = all.flatMap(b => b.cleaning_tasks).find(t => t.id === id)
           return s + (task ? Math.max(0, task.cleaning_fee - getPaidAmt(task)) : 0)
@@ -4542,7 +4783,7 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
               <div>
                 {/* Section header with select-all */}
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">
+                  <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label">
                     Долг — {unpaidList.length} уборок
                   </h3>
                   <button onClick={() => allSelected ? clearBulk() : setBulkIds(allUnpaidIds)}
@@ -4557,7 +4798,7 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
             )}
             {paidList.length > 0 && (
               <div>
-                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">
+                <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">
                   Оплачено — {paidList.length} уборок
                 </h3>
                 <div className="flex flex-col gap-2">
@@ -4629,9 +4870,10 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
 
   // ── nav items ─────────────────────────────────────────────────────────────────
   const NAV: { id: typeof tab; label: string; icon: React.ReactNode; count?: number }[] = [
-    { id: 'bookings', label: 'Заезды',  icon: <CalendarDays size={16} />, count: currentStays.length + upcoming.length },
-    { id: 'payment',  label: 'Оплата',  icon: <Banknote size={16} />,    count: totalOwed > 0 ? undefined : undefined },
-    { id: 'archive',  label: 'Архив',   icon: <FileText size={16} />,     count: archive.length },
+    { id: 'bookings', label: 'Заезды',    icon: <CalendarDays size={16} />, count: currentStays.length + upcoming.length },
+    { id: 'payment',  label: 'Оплата',    icon: <Banknote size={16} />,    count: totalOwed > 0 ? undefined : undefined },
+    { id: 'calendar', label: 'Календарь', icon: <CalendarDays size={16} /> },
+    { id: 'archive',  label: 'Архив',     icon: <FileText size={16} />,     count: archive.length },
   ]
 
   return (
@@ -4693,10 +4935,10 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
         }}>
 
         {/* Mobile top tab bar */}
-        <div className="md:hidden flex-shrink-0 flex items-center gap-1 px-3 pt-3 pb-1">
+        <div className="md:hidden flex-shrink-0 flex items-center gap-1 px-3 pt-3 pb-1 overflow-x-auto">
           {NAV.map(item => (
             <button key={item.id} onClick={() => setTab(item.id)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs font-semibold transition-colors ${tab === item.id ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${tab === item.id ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
               {item.icon}
               {item.label}
               {item.id === 'payment' && totalOwed > 0 && (
@@ -4706,20 +4948,22 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
           ))}
         </div>
 
-        <div className={`px-3 py-4 md:px-8 md:py-8 flex-1 ${tab === 'bookings' ? 'max-w-5xl' : 'max-w-3xl'} w-full`}>
+        <div className={`px-3 py-4 md:px-8 md:py-8 flex-1 ${tab === 'bookings' || tab === 'calendar' ? 'max-w-5xl' : 'max-w-3xl'} w-full`}>
           {/* Page title */}
           <div className="mb-4 md:mb-6">
             <h1 className="text-xl md:text-2xl font-display font-bold text-foreground">
-              {tab === 'bookings' ? 'Заезды' : tab === 'payment' ? 'Оплата' : 'Архив заездов'}
+              {tab === 'bookings' ? 'Заезды' : tab === 'payment' ? 'Оплата' : tab === 'calendar' ? 'Календарь' : 'Архив заездов'}
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
               {tab === 'bookings' ? `${currentStays.length} сейчас · ${upcoming.length} предстоящих` :
                tab === 'payment'  ? `Заработано ${fmtEur(totalEarned)} · получено ${fmtEur(totalPaid)}` :
+               tab === 'calendar' ? 'Все заезды по всем квартирам' :
                `${archive.length} завершённых заездов`}
             </p>
           </div>
           {tab === 'bookings' && renderBookings()}
           {tab === 'payment'  && renderPayment()}
+          {tab === 'calendar' && renderCalendar()}
           {tab === 'archive'  && renderArchive()}
         </div>
       </div>
@@ -4736,15 +4980,15 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
           const nights    = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
           const isCur     = b.start_date <= today && b.end_date > today
           return (
-            <>
-              <motion.div key="cleaner-modal-backdrop"
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/40 z-40 backdrop-blur-sm"
-                onClick={() => setSelectedBooking(null)} />
+            <motion.div key="cleaner-modal-backdrop"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
+              onClick={() => setSelectedBooking(null)}>
               <motion.div key="cleaner-modal-panel"
-                initial={{ opacity: 0, y: 32, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 24, scale: 0.97 }} transition={{ type: 'spring', damping: 28, stiffness: 380 }}
-                className="fixed inset-x-0 bottom-0 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 z-50 w-full sm:max-w-md bg-card rounded-t-3xl sm:rounded-3xl shadow-2xl border border-border p-6 flex flex-col gap-4">
+                initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 16, scale: 0.97 }} transition={{ type: 'spring', damping: 28, stiffness: 380 }}
+                onClick={e => e.stopPropagation()}
+                className="w-full max-w-md max-h-[90vh] overflow-y-auto bg-card rounded-3xl shadow-2xl border border-border p-6 flex flex-col gap-4">
                 {/* Header */}
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
@@ -4803,14 +5047,79 @@ function CleanerView({ bookings, onRefresh }: { bookings: BookingRow[]; onRefres
                       <span className="text-foreground text-xs">{task.payment_method === 'owner_transfer' ? '🏦 Перевод' : '💵 Наличные'}</span>
                     </div>
                   )}
+                  <div className="flex items-center justify-between gap-2 text-sm">
+                    <span className="text-muted-foreground">Уборка выполнена</span>
+                    <span>
+                      {task?.status === 'done'
+                        ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-green-100 text-green-800 font-semibold">✓ Убрано</span>
+                        : <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">🧹 Ещё нет</span>}
+                    </span>
+                  </div>
                 </div>
+
+                {/* From cleaner: rating + comment */}
+                {(b.guest_rating || task?.cleaner_comment) && (
+                  <div className="flex flex-col gap-1.5 bg-secondary/50 rounded-2xl p-4">
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">От уборщицы</p>
+                    {b.guest_rating ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">Чистота гостя:</span>
+                        <div className="flex items-center gap-0.5">
+                          {[1, 2, 3, 4, 5].map(i => (
+                            <Star key={i} size={13} className={i <= b.guest_rating! ? 'text-amber-400 fill-amber-400' : 'text-muted-foreground/30'} />
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {task?.cleaner_comment && (
+                      <p className="text-xs text-foreground">📝 {task.cleaner_comment}</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Cash till: guest paid rent in cash (private bookings) */}
+                {b.source === 'other' && task?.cleaner_id && (
+                  <div className="bg-secondary/50 rounded-2xl p-4 flex flex-col gap-2">
+                    <span className="text-xs font-medium text-foreground">💰 Гость отдал наличными за аренду</span>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 flex-1 border border-border bg-card rounded-xl px-3 py-2 focus-within:ring-2 focus-within:ring-primary/40">
+                        <input type="text" inputMode="decimal" value={rentInput} onChange={e => setRentInput(e.target.value)}
+                          placeholder={String(b.total_amount ?? '')}
+                          className="flex-1 bg-transparent outline-none text-sm font-semibold min-w-0" />
+                        <span className="text-muted-foreground font-semibold text-sm flex-shrink-0">€</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const v = Number(rentInput)
+                          if (rentInput !== '' && !isNaN(v) && v > 0) depositRent.mutate({ bookingId: b.id, cleanerId: task.cleaner_id!, amount: v })
+                        }}
+                        disabled={depositRent.isPending || rentInput === '' || isNaN(Number(rentInput)) || Number(rentInput) <= 0}
+                        className="px-3 py-2 rounded-xl bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 disabled:opacity-50 transition-colors whitespace-nowrap">
+                        {depositRent.isPending ? 'Сохранение…' : 'В кассу'}
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">Пойдёт в кассу уборщицы — можно будет списывать за будущие уборки</p>
+                  </div>
+                )}
+                {task && task.payment_method === 'owner_transfer' && task.payment_status !== 'paid' && task.cleaner_id && (
+                  cashBalance >= task.cleaning_fee ? (
+                    <button
+                      onClick={() => withdrawFromTill.mutate({ taskId: task.id, cleanerId: task.cleaner_id!, amount: task.cleaning_fee })}
+                      disabled={withdrawFromTill.isPending}
+                      className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-2xl bg-amber-100 text-amber-900 text-sm font-semibold hover:bg-amber-200 transition-colors disabled:opacity-60">
+                      <Wallet size={15} /> Списать {fmtEur(task.cleaning_fee)} из кассы
+                    </button>
+                  ) : (
+                    <p className="text-[10px] text-muted-foreground text-center">Касса: {fmtEur(cashBalance)} — недостаточно, чтобы списать эту уборку</p>
+                  )
+                )}
 
                 <button onClick={() => setSelectedBooking(null)}
                   className="w-full py-2.5 rounded-2xl bg-secondary text-sm font-medium text-foreground hover:bg-muted transition-colors">
                   Закрыть
                 </button>
               </motion.div>
-            </>
+            </motion.div>
           )
         })()}
       </AnimatePresence>
@@ -5910,7 +6219,6 @@ const NAV_ITEMS: Array<{ id: Section; label: string; icon: React.ReactNode }> = 
   { id: 'dashboard', label: 'Дашборд', icon: <LayoutDashboard size={16} /> },
   { id: 'bookings', label: 'Бронирования', icon: <CalendarCheck size={16} /> },
   { id: 'calendar', label: 'Календарь', icon: <CalendarDays size={16} /> },
-  { id: 'cleaning', label: 'Уборка', icon: <Brush size={16} /> },
   { id: 'expenses', label: 'Расходы', icon: <Receipt size={16} /> },
   { id: 'apartments', label: 'Апартаменты', icon: <Building2 size={16} /> },
   { id: 'settings', label: 'Настройки', icon: <Settings size={16} /> },
@@ -6099,7 +6407,7 @@ export default function OwnerDashboard() {
         {/* Content area — cleaner view */}
         {topView === 'cleaner' && (
           <main className="flex-1 flex overflow-hidden">
-            <CleanerView bookings={bookings} onRefresh={invalidate} />
+            <CleanerView bookings={bookings} onRefresh={invalidate} ownerId={user.id} />
           </main>
         )}
         <main className={`flex-1 relative min-h-0 ${topView === 'cleaner' ? 'hidden' : ''} ${section === 'dashboard' || section === 'calendar' ? 'overflow-y-auto xl:overflow-hidden flex flex-col' : 'overflow-y-auto'}`}

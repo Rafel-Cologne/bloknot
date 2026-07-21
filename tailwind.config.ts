@@ -42,6 +42,7 @@ const config: Config = {
       fontFamily: {
         display: ['Playfair Display', 'Georgia', 'serif'],
         sans: ['Inter', 'system-ui', 'sans-serif'],
+        label: ['Manrope', 'Inter', 'system-ui', 'sans-serif'],
       },
       boxShadow: {
         card: 'var(--shadow-card)',
