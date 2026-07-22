@@ -1981,19 +1981,18 @@ function DashboardOverview({
     b.status === 'accepted' && b.end_date <= todayStr && b.start_date >= revenueFromDate)
   const actualRevenue = completedBookings.reduce((sum, b) => sum + calcRevenue(b), 0)
 
-  // Current active booking (guest staying now)
-  const currentBooking = bookings.find(b =>
-    b.status === 'accepted' && b.start_date <= todayStr && b.end_date > todayStr) ?? null
-  const currentApt = currentBooking
-    ? apartments.find(a => a.id === currentBooking.apartment_id) ?? null : null
-  const currentAptImage = (currentApt as Apartment & { apartment_images?: ApartmentImage[] } | null)
-    ?.apartment_images?.[0]?.image_url ?? null
-  const currentProgress = currentBooking ? (() => {
-    const total = Math.round(
-      (parseISO(currentBooking.end_date).getTime() - parseISO(currentBooking.start_date).getTime()) / 86400000)
-    const passed = Math.max(0, Math.round((today.getTime() - parseISO(currentBooking.start_date).getTime()) / 86400000))
-    return { total, passed, pct: total > 0 ? Math.round((passed / total) * 100) : 0 }
-  })() : null
+  // Current active bookings (guests staying right now — can be more than one apartment at once)
+  const currentBookings = bookings.filter(b =>
+    b.status === 'accepted' && b.start_date <= todayStr && b.end_date > todayStr)
+  const currentStaysInfo = currentBookings.map(b => {
+    const apt = apartments.find(a => a.id === b.apartment_id) ?? null
+    const image = (apt as Apartment & { apartment_images?: ApartmentImage[] } | null)
+      ?.apartment_images?.[0]?.image_url ?? null
+    const total = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
+    const passed = Math.max(0, Math.round((today.getTime() - parseISO(b.start_date).getTime()) / 86400000))
+    const progress = { total, passed, pct: total > 0 ? Math.min(100, Math.round((passed / total) * 100)) : 0 }
+    return { booking: b, apt, image, progress }
+  })
 
   // Tomorrow check-ins
   const tomorrowCheckIns = bookings.filter(b => b.status === 'accepted' && b.start_date === tomorrowStr)
@@ -2120,10 +2119,10 @@ function DashboardOverview({
       </div>
 
       {/* ── Row 3: Line chart + Events ── */}
-      <div className="flex flex-col xl:flex-row gap-3 xl:flex-[4] xl:min-h-0 relative z-10">
+      <div className="flex flex-col xl:flex-row gap-3 xl:flex-[3] xl:min-h-0 relative z-10">
 
         {/* Line chart */}
-        <div className="xl:flex-[3] bg-card border border-border rounded-2xl shadow-sm flex flex-col overflow-hidden min-w-0 min-h-[220px] xl:min-h-0">
+        <div className="xl:flex-[3] bg-card border border-border rounded-2xl shadow-sm flex flex-col overflow-hidden min-w-0 min-h-[190px] xl:min-h-0">
           <div className="flex items-center gap-2 px-5 pt-4 pb-2 flex-shrink-0">
             <button onClick={prevMonth} className="p-1 rounded-lg hover:bg-muted text-muted-foreground transition-colors"><ChevronLeft size={14} /></button>
             <p className="text-sm font-semibold text-foreground flex-1">
@@ -2359,7 +2358,7 @@ function DashboardOverview({
         </div>
 
         {/* Ближайшие события */}
-        <div className="xl:flex-[2] bg-card border border-border rounded-2xl shadow-sm flex flex-col overflow-hidden min-h-[180px] xl:min-h-0">
+        <div className="xl:flex-[2] bg-card border border-border rounded-2xl shadow-sm flex flex-col overflow-hidden min-h-[150px] xl:min-h-0">
           <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
             <p className="text-sm font-semibold text-foreground">Ближайшие события</p>
             <CalendarCheck size={15} className="text-muted-foreground" />
@@ -2448,47 +2447,44 @@ function DashboardOverview({
       {/* ── Row 4: Current apartment + Quick actions ── */}
       <div className="flex flex-col md:flex-row gap-3 md:flex-[1.5] md:min-h-0 relative z-10">
 
-        {/* Текущая квартира */}
+        {/* Текущая квартира / квартиры */}
         <div className="md:flex-[3] bg-card border border-border rounded-2xl shadow-sm flex flex-col overflow-hidden min-w-0 min-h-[100px] md:min-h-0">
-          <p className="text-sm font-semibold px-5 pt-4 pb-0 flex-shrink-0">Текущая квартира</p>
-          {currentBooking && currentApt ? (
-            <div className="flex gap-4 p-4 flex-1 min-h-0">
-              <div className="w-28 rounded-xl overflow-hidden flex-shrink-0 bg-secondary self-stretch">
-                {currentAptImage
-                  ? <img src={currentAptImage} alt={currentApt.title} className="w-full h-full object-cover" />
-                  : <div className="w-full h-full flex items-center justify-center text-3xl opacity-20">🏠</div>
-                }
-              </div>
-              <div className="flex-1 min-w-0 flex flex-col justify-center gap-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <p className="text-sm font-bold text-foreground">{currentApt.title}</p>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-semibold">Сейчас заселена</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span>{format(parseISO(currentBooking.start_date), 'd MMM.', { locale: ru })}</span>
-                  <div className="flex-1 border-t border-dashed border-border" />
-                  <span>{format(parseISO(currentBooking.end_date), 'd MMM.', { locale: ru })}</span>
-                </div>
-                {currentProgress && (
-                  <>
-                    <div className="relative h-5 bg-muted rounded-full overflow-hidden">
+          <p className="text-sm font-semibold px-5 pt-4 pb-0 flex-shrink-0">
+            {currentStaysInfo.length > 1 ? 'Текущие квартиры' : 'Текущая квартира'}
+          </p>
+          {currentStaysInfo.length > 0 ? (
+            <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 p-4">
+              {currentStaysInfo.map(({ booking, apt, image, progress }) => (
+                <div key={booking.id} className="flex gap-4">
+                  <div className="w-24 rounded-xl overflow-hidden flex-shrink-0 bg-secondary self-stretch">
+                    {image
+                      ? <img src={image} alt={apt?.title} className="w-full h-full object-cover" />
+                      : <div className="w-full h-full flex items-center justify-center text-2xl opacity-20">🏠</div>
+                    }
+                  </div>
+                  <div className="flex-1 min-w-0 flex flex-col justify-center gap-1.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-bold text-foreground">{apt?.title}</p>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-semibold">Сейчас заселена</span>
+                    </div>
+                    <div className="relative h-4 bg-muted rounded-full overflow-hidden">
                       <div className="absolute inset-y-0 left-0 rounded-full"
-                        style={{ width: `${currentProgress.pct}%`, background: 'hsl(var(--primary) / 0.85)' }} />
-                      <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white mix-blend-normal">
-                        {currentProgress.pct}%
+                        style={{ width: `${progress.pct}%`, background: 'hsl(var(--primary) / 0.85)' }} />
+                      <span className="absolute inset-0 flex items-center justify-center text-[9px] font-bold text-white mix-blend-normal">
+                        {progress.pct}%
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                      <span>{currentProgress.total} {currentProgress.total === 1 ? 'ночь' : currentProgress.total < 5 ? 'ночи' : 'ночей'}</span>
-                      <span>{currentProgress.total - currentProgress.passed} {currentProgress.total - currentProgress.passed === 1 ? 'ночь' : 'ночи'} осталось</span>
+                      <span>{progress.total} {progress.total === 1 ? 'ночь' : progress.total < 5 ? 'ночи' : 'ночей'}</span>
+                      <span>{progress.total - progress.passed} {progress.total - progress.passed === 1 ? 'ночь' : 'ночи'} осталось</span>
                     </div>
-                  </>
-                )}
-                <div className="flex gap-4 text-[10px] text-muted-foreground">
-                  <span>📅 Заезд: {format(parseISO(currentBooking.start_date), 'd MMM. yyyy', { locale: ru })}</span>
-                  <span>📅 Выезд: {format(parseISO(currentBooking.end_date), 'd MMM. yyyy', { locale: ru })}</span>
+                    <div className="flex gap-4 text-[10px] text-muted-foreground">
+                      <span>📅 Заезд: {format(parseISO(booking.start_date), 'd MMM. yyyy', { locale: ru })}</span>
+                      <span>📅 Выезд: {format(parseISO(booking.end_date), 'd MMM. yyyy', { locale: ru })}</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              ))}
             </div>
           ) : (
             <div className="flex-1 flex items-center justify-center">
