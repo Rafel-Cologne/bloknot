@@ -704,13 +704,6 @@ type CalDayInfo = {
   turnoverGuestName?: string
 }
 
-function hexToRgba(hex: string, alpha: number): string {
-  const h = hex.replace('#', '')
-  const r = parseInt(h.substring(0, 2), 16)
-  const g = parseInt(h.substring(2, 4), 16)
-  const b = parseInt(h.substring(4, 6), 16)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
 // Светлая пастельная версия цвета (для фона ячейки — чтобы насыщенный текст того же
 // цвета оставался читаемым, как раньше с розовым: светлая заливка + тёмный текст).
 function tintHex(hex: string, amount: number): string {
@@ -1157,7 +1150,6 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                 const nextStr = format(nextDate, 'yyyy-MM-dd')
                 const _connectLeft = isBooked && di > 0 && dateMap[prevStr]?.bookingId === info?.bookingId; void _connectLeft
                 const _connectRight = isBooked && di < 6 && dateMap[nextStr]?.bookingId === info?.bookingId; void _connectRight
-                const showName = isBooked && info && info.isStart
 
                 const inPreview = !!abkPreview && dateStr >= abkPreview.from && dateStr <= abkPreview.to
                 const isAnchor = abkAnchor === dateStr
@@ -1181,7 +1173,6 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
 
                 const isYear = effectiveCount > 6
                 const isTurnover = isBooked && !!info!.turnoverGuestName
-                const aptTextColor = isDark ? '#e2e8f0' : '#1e293b'
 
                 return (
                   <div
@@ -1191,24 +1182,48 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                     className={`flex flex-col min-h-0 relative select-none overflow-hidden cursor-pointer transition-colors ${isYear ? 'p-0.5' : compact ? 'px-1 pt-1 pb-0.5' : 'px-2 pt-2 pb-1'} ${cellBg}`}
                   >
 
-                    {/* Booking stripe — цвет квартиры. В день стыковки (выезд+заезд в один день)
-                        ячейка делится пополам с зазором, чтобы две брони не сливались в одну. */}
+                    {/* Booking bar — Airbnb-style: a solid pill anchored to the bottom of the cell,
+                        continuous edge-to-edge across the days it spans, rounded only at the
+                        booking's true start/end. В день стыковки (выезд+заезд в один день)
+                        бар делится пополам, чтобы две брони не сливались в одну. */}
                     {isBooked && !isSelected && (
                       isTurnover ? (
-                        <div className="absolute inset-y-0 left-0 right-0 flex pointer-events-none">
-                          <div className="flex-1 rounded-l-xl mr-px" style={{ backgroundColor: isDark ? hexToRgba(aptColor, 0.32) : tintHex(aptColor, 0.72) }} />
-                          <div className="flex-1 rounded-r-xl ml-px" style={{ backgroundColor: isDark ? hexToRgba(aptColor, 0.14) : tintHex(aptColor, 0.88) }} />
+                        <div className={`absolute left-0 right-0 flex pointer-events-none ${isYear ? 'bottom-0.5 h-1.5' : compact ? 'bottom-1 h-5' : 'bottom-1.5 h-8'}`}>
+                          <div className="flex-1 rounded-l-full mr-px" style={{ backgroundColor: aptColor }} />
+                          <div className="flex-1 rounded-r-full ml-px flex items-center pl-1.5 overflow-hidden" style={{ backgroundColor: tintHex(aptColor, 0.3) }}>
+                            {!isYear && !compact && (
+                              <span className="text-[10px] font-bold text-white truncate">→ {info!.turnoverGuestName}</span>
+                            )}
+                          </div>
                         </div>
                       ) : (
-                        <div className={`absolute inset-y-0 pointer-events-none ${
-                          info!.isStart && info!.isEnd
-                            ? 'left-1 right-1 rounded-xl'
-                            : info!.isStart
-                              ? 'left-1 right-0 rounded-l-xl'
-                              : info!.isEnd
-                                ? 'left-0 right-1 rounded-r-xl'
-                                : 'left-0 right-0'
-                        }`} style={{ backgroundColor: isDark ? hexToRgba(aptColor, 0.25) : tintHex(aptColor, 0.8) }} />
+                        <div
+                          className={`absolute flex items-center pointer-events-none overflow-hidden ${isYear ? 'bottom-0.5 h-1.5' : compact ? 'bottom-1 h-5' : 'bottom-1.5 h-8'} ${
+                            info!.isStart && info!.isEnd ? 'left-0.5 right-0.5 rounded-full'
+                            : info!.isStart ? 'left-0.5 right-0 rounded-l-full'
+                            : info!.isEnd ? 'left-0 right-0.5 rounded-r-full'
+                            : 'left-0 right-0'
+                          }`}
+                          style={{ backgroundColor: aptColor }}
+                        >
+                          {info!.isStart && !isYear && (
+                            <div className="flex items-center gap-1 min-w-0 px-1.5">
+                              {!compact && (
+                                <span className="w-4 h-4 rounded-full bg-white/25 flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0">
+                                  {(info!.guestName || '?').trim().charAt(0).toUpperCase()}
+                                </span>
+                              )}
+                              <span className={`${compact ? 'text-[9px]' : 'text-[11px]'} font-bold text-white truncate`}>
+                                {info!.guestName}{info!.guestsCount > 1 ? ` +${info!.guestsCount - 1}` : ''}
+                              </span>
+                            </div>
+                          )}
+                          {info!.isEnd && !info!.isStart && !isYear && !compact && info!.totalAmount != null && (
+                            <span className="ml-auto mr-2 text-[11px] font-bold text-white/95 flex-shrink-0">
+                              {fmtEur(info!.totalAmount)}
+                            </span>
+                          )}
+                        </div>
                       )
                     )}
 
@@ -1216,59 +1231,26 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                     {/* Day number — top left */}
                     <div className={`rounded-full flex items-center justify-center flex-shrink-0 ${isYear ? 'w-3.5 h-3.5' : compact ? 'w-5 h-5' : 'w-6 h-6'} ${isToday ? 'bg-primary' : ''}`}>
                       <span
-                        className={`font-bold leading-none ${isYear ? 'text-[8px]' : compact ? 'text-xs' : 'text-sm'} ${isToday ? 'text-white' : isSelected ? (isDark ? 'text-amber-300' : 'text-amber-900') : isBooked ? '' : isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400') : (isDark ? 'text-slate-100' : 'text-foreground')}`}
-                        style={isBooked && !isSelected && !isToday ? { color: aptTextColor } : undefined}
+                        className={`font-bold leading-none ${isYear ? 'text-[8px]' : compact ? 'text-xs' : 'text-sm'} ${
+                          isToday ? 'text-white'
+                          : isSelected ? (isDark ? 'text-amber-300' : 'text-amber-900')
+                          : isBlocked && !isBooked ? `line-through ${isDark ? 'text-slate-500' : 'text-slate-400'}`
+                          : (isDark ? 'text-slate-100' : 'text-foreground')
+                        }`}
                       >
                         {day}
                       </span>
                     </div>
-
-                    {/* Turnover: incoming guest name on the right (lighter) half */}
-                    {isTurnover && !isSelected && !isYear && effectiveCount <= 3 && (
-                      <span className="absolute top-0 right-0 text-[11px] font-bold leading-tight truncate max-w-[48%] text-right" style={{ color: aptTextColor }}>
-                        → {info!.turnoverGuestName}
-                      </span>
-                    )}
-
-                    {/* Check-in: guest name + guests count + nights */}
-                    {showName && !isSelected && !isYear && effectiveCount <= 3 && (
-                      <div className="flex flex-col gap-0.5 mt-0.5 flex-shrink-0">
-                        <span className={`${compact ? 'text-sm' : 'text-base'} font-bold leading-tight truncate`} style={{ color: aptTextColor }}>{info!.guestName}</span>
-                        <span className={`${compact ? 'text-xs' : 'text-xs'} font-semibold leading-tight`} style={{ color: aptTextColor }}>
-                          {info!.guestsCount} чел · {info!.nights} н.
-                        </span>
-                      </div>
-                    )}
-
-                    {/* Middle-of-stay days: repeat a small guest name so long stays don't read as a blank block */}
-                    {isBooked && !info!.isStart && !isSelected && !isYear && effectiveCount <= 3 && (
-                      <span className="text-xs font-bold leading-tight truncate mt-0.5 flex-shrink-0" style={{ color: aptTextColor }}>
-                        {info!.guestName}
-                      </span>
-                    )}
-
-                    {/* Check-out: rent amount + cleaning fee separately */}
-                    {isBooked && info!.isEnd && !isSelected && !compact && (() => {
-                      const rent = info!.totalAmount
-                      const fee = info!.cleaningFee
-                      return (
-                        <div className="flex flex-col gap-0.5 mt-1 flex-shrink-0">
-                          {rent != null && <span className="text-base font-bold leading-tight" style={{ color: aptTextColor }}>{fmtEur(rent)}</span>}
-                          {fee > 0 && <span className={`text-xs font-semibold leading-tight ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>уборка {fmtEur(fee)}</span>}
-                        </div>
-                      )
-                    })()}
 
                     {/* Lock icon */}
                     {isBlocked && !isBooked && !isSelected && (
                       <Lock size={isYear ? 7 : compact ? 8 : 10} className={`mt-0.5 flex-shrink-0 ${isDark ? 'text-slate-500' : 'text-slate-400'}`} />
                     )}
 
-                    {/* Price — bottom right */}
-                    {price !== undefined && !isSelected && !(isBooked && info?.source !== 'airbnb' && info?.source !== 'booking' && info?.totalAmount != null) && (
+                    {/* Price — bottom right, free/blocked days only (booked days show info in the bar instead) */}
+                    {price !== undefined && !isSelected && !isBooked && (
                       <span
-                        className={`mt-auto self-end leading-none ${isYear ? 'text-[8px]' : compact ? 'text-[10px]' : 'text-xs'} font-bold ${isBooked ? '' : isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400') : (hasCustomPrice ? (isDark ? 'text-emerald-300' : 'text-emerald-600') : (isDark ? 'text-slate-300' : 'text-gray-400'))}`}
-                        style={isBooked ? { color: aptTextColor } : undefined}
+                        className={`mt-auto self-end leading-none ${isYear ? 'text-[8px]' : compact ? 'text-[10px]' : 'text-xs'} font-bold ${isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400') : (hasCustomPrice ? (isDark ? 'text-emerald-300' : 'text-emerald-600') : (isDark ? 'text-slate-300' : 'text-gray-400'))}`}
                       >
                         {price} €
                       </span>
