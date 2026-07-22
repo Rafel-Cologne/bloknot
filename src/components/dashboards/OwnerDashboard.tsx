@@ -1237,7 +1237,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                           isToday ? 'text-white'
                           : isSelected ? (isDark ? 'text-amber-300' : 'text-amber-900')
                           : isBlocked && !isBooked ? `line-through ${isDark ? 'text-slate-500' : 'text-slate-400'}`
-                          : (isDark ? 'text-slate-100' : 'text-foreground')
+                          : (isDark ? 'text-slate-100' : 'text-gray-700')
                         }`}
                       >
                         {day}
@@ -1252,7 +1252,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                     {/* Price — bottom right, free/blocked days only (booked days show info in the bar instead) */}
                     {price !== undefined && !isSelected && !isBooked && (
                       <span
-                        className={`mt-auto self-end leading-none ${isYear ? 'text-[8px]' : compact ? 'text-[10px]' : 'text-xs'} font-bold ${isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400') : (hasCustomPrice ? (isDark ? 'text-emerald-300' : 'text-emerald-600') : (isDark ? 'text-slate-300' : 'text-gray-400'))}`}
+                        className={`mt-auto self-end leading-none ${isYear ? 'text-[8px]' : compact ? 'text-[10px]' : 'text-xs'} font-bold ${isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400') : (hasCustomPrice ? (isDark ? 'text-emerald-300' : 'text-emerald-600') : (isDark ? 'text-slate-300' : 'text-gray-700'))}`}
                       >
                         {price} €
                       </span>
