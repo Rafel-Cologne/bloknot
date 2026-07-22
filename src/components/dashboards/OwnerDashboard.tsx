@@ -721,6 +721,16 @@ function tintHex(hex: string, amount: number): string {
   const mix = (c: number) => Math.round(c + (255 - c) * amount)
   return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`
 }
+// Затемнённая версия цвета квартиры — для текста поверх пастельной заливки,
+// чтобы он читался тёмным и контрастным, а не самим базовым (более светлым) цветом.
+function shadeHex(hex: string, amount: number): string {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.substring(0, 2), 16)
+  const g = parseInt(h.substring(2, 4), 16)
+  const b = parseInt(h.substring(4, 6), 16)
+  const mix = (c: number) => Math.round(c * (1 - amount))
+  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`
+}
 
 function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartments: Apartment[]; selectedApt: string; setSelectedApt: (id: string) => void }) {
   const qc = useQueryClient()
@@ -1182,7 +1192,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
 
                 const isYear = effectiveCount > 6
                 const isTurnover = isBooked && !!info!.turnoverGuestName
-                const aptTextColor = isDark ? tintHex(aptColor, 0.4) : aptColor
+                const aptTextColor = isDark ? tintHex(aptColor, 0.55) : shadeHex(aptColor, 0.42)
 
                 return (
                   <div
@@ -1217,7 +1227,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                     {/* Day number — top left */}
                     <div className={`rounded-full flex items-center justify-center flex-shrink-0 ${isYear ? 'w-3.5 h-3.5' : compact ? 'w-5 h-5' : 'w-6 h-6'} ${isToday ? 'bg-primary' : ''}`}>
                       <span
-                        className={`font-bold leading-none ${isYear ? 'text-[8px]' : compact ? 'text-[10px]' : 'text-xs'} ${isToday ? 'text-white' : isSelected ? (isDark ? 'text-amber-300' : 'text-amber-900') : isBooked ? '' : isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400') : (isDark ? 'text-slate-100' : 'text-foreground')}`}
+                        className={`font-bold leading-none ${isYear ? 'text-[8px]' : compact ? 'text-xs' : 'text-sm'} ${isToday ? 'text-white' : isSelected ? (isDark ? 'text-amber-300' : 'text-amber-900') : isBooked ? '' : isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400') : (isDark ? 'text-slate-100' : 'text-foreground')}`}
                         style={isBooked && !isSelected && !isToday ? { color: aptTextColor } : undefined}
                       >
                         {day}
@@ -1226,7 +1236,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
 
                     {/* Turnover: incoming guest name on the right (lighter) half */}
                     {isTurnover && !isSelected && !isYear && effectiveCount <= 3 && (
-                      <span className="absolute top-0 right-0 text-[9px] font-bold leading-tight truncate max-w-[48%] text-right" style={{ color: aptTextColor }}>
+                      <span className="absolute top-0 right-0 text-[11px] font-bold leading-tight truncate max-w-[48%] text-right" style={{ color: aptTextColor }}>
                         → {info!.turnoverGuestName}
                       </span>
                     )}
@@ -1234,8 +1244,8 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                     {/* Check-in: guest name + guests count + nights */}
                     {showName && !isSelected && !isYear && effectiveCount <= 3 && (
                       <div className="flex flex-col gap-0.5 mt-0.5 flex-shrink-0">
-                        <span className={`${compact ? 'text-[11px]' : 'text-sm'} font-bold leading-tight truncate`} style={{ color: aptTextColor }}>{info!.guestName}</span>
-                        <span className={`${compact ? 'text-[10px]' : 'text-[11px]'} leading-tight opacity-80`} style={{ color: aptTextColor }}>
+                        <span className={`${compact ? 'text-sm' : 'text-base'} font-bold leading-tight truncate`} style={{ color: aptTextColor }}>{info!.guestName}</span>
+                        <span className={`${compact ? 'text-xs' : 'text-xs'} font-semibold leading-tight`} style={{ color: aptTextColor }}>
                           {info!.guestsCount} чел · {info!.nights} н.
                         </span>
                       </div>
@@ -1243,7 +1253,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
 
                     {/* Middle-of-stay days: repeat a small guest name so long stays don't read as a blank block */}
                     {isBooked && !info!.isStart && !isSelected && !isYear && effectiveCount <= 3 && (
-                      <span className="text-[9px] font-semibold leading-tight truncate mt-0.5 flex-shrink-0 opacity-75" style={{ color: aptTextColor }}>
+                      <span className="text-xs font-bold leading-tight truncate mt-0.5 flex-shrink-0" style={{ color: aptTextColor }}>
                         {info!.guestName}
                       </span>
                     )}
@@ -1254,8 +1264,8 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                       const fee = info!.cleaningFee
                       return (
                         <div className="flex flex-col gap-0.5 mt-1 flex-shrink-0">
-                          {rent != null && <span className="text-sm font-bold leading-tight" style={{ color: aptTextColor }}>{fmtEur(rent)}</span>}
-                          {fee > 0 && <span className={`text-[11px] leading-tight ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>уборка {fmtEur(fee)}</span>}
+                          {rent != null && <span className="text-base font-bold leading-tight" style={{ color: aptTextColor }}>{fmtEur(rent)}</span>}
+                          {fee > 0 && <span className={`text-xs font-semibold leading-tight ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>уборка {fmtEur(fee)}</span>}
                         </div>
                       )
                     })()}
