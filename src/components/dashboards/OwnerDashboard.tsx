@@ -47,7 +47,6 @@ import {
   ShieldCheck,
   AlertCircle,
   Upload,
-  Download,
   Check,
   ClipboardList,
   RotateCcw,
@@ -68,7 +67,6 @@ import {
   parseISO,
 } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import { supabase } from '@/integrations/supabase/client'
 import { useTheme, type AppTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/hooks/useAuth'
@@ -5374,7 +5372,6 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
   )
   const [filterTo, setFilterTo] = useState(today)
   const [showAdd, setShowAdd] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
 
   // Pending count for badge
   const { data: pendingExpenses = [] } = useQuery({
@@ -5743,7 +5740,7 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
       </div>
 
       {/* Per-apartment tables */}
-      {aptData.map(({ apt, totalIncome, totalDays, totalExpenses, depreciation,
+      {aptData.map(({ apt, totalIncome, totalDays,
         rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome, expByCategory, bookingsCount }) => (
         <div key={apt.id} className="bg-card border border-border rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-border bg-muted/30">
@@ -5840,7 +5837,6 @@ type UserProfile = { id: string; name: string; email: string | null; is_active: 
 
 function AdminSection() {
   const [tab, setTab] = useState<'users' | 'agent' | 'restore'>('users')
-  const { user } = useAuth()
   const qc = useQueryClient()
 
   const { data: profiles = [] } = useQuery({
