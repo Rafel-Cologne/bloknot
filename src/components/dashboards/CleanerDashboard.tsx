@@ -2,14 +2,14 @@ import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  CalendarDays, Banknote, FileText, Star, X, ChevronRight, Brush, LogOut,
+  CalendarDays, Banknote, FileText, Star, X, ChevronRight, ChevronLeft, Brush, LogOut,
   CheckCircle2, Wallet, Users, Plus, Minus, History, ClipboardList, Archive, User,
 } from 'lucide-react'
-import { format, parseISO } from 'date-fns'
+import { format, parseISO, getDaysInMonth } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { supabase } from '@/integrations/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
-import { CalendarSection, type Apartment } from './OwnerDashboard'
+import { type Apartment } from './OwnerDashboard'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -65,6 +65,7 @@ const APT_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#f43f5e', '#0ea5e9', '#d94
 
 const fmtEur = (n: number) =>
   n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
+const pad = (n: number) => String(n).padStart(2, '0')
 
 // Minimal phone → country lookup
 const DIAL_CODES: [string, string, string][] = [
@@ -425,6 +426,105 @@ function TaskCard({ task, onSelect, aptColor }: { task: TaskRow; onSelect: () =>
   )
 }
 
+// ─── Calendar — full stay-range bars, one row per apartment ────────────────────
+
+const ROW_H = 15
+
+function CleanerCalendar({ tasks, aptColor }: { tasks: TaskRow[]; aptColor: (id: string) => string }) {
+  const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1) })
+  const todayStr = new Date().toISOString().slice(0, 10)
+
+  const { aptOrder, byApt } = useMemo(() => {
+    const order: { id: string; title: string }[] = []
+    const map = new Map<string, TaskRow[]>()
+    tasks.forEach(t => {
+      const apt = t.bookings?.apartments
+      if (!apt) return
+      if (!map.has(apt.id)) { map.set(apt.id, []); order.push({ id: apt.id, title: apt.title }) }
+      map.get(apt.id)!.push(t)
+    })
+    return { aptOrder: order, byApt: map }
+  }, [tasks])
+
+  const taskOnDay = (aptId: string, dateStr: string) =>
+    (byApt.get(aptId) ?? []).find(t => t.bookings.start_date <= dateStr && dateStr <= t.bookings.end_date)
+
+  const weeks = useMemo(() => {
+    const year = month.getFullYear(), mo = month.getMonth()
+    const firstDow = (new Date(year, mo, 1).getDay() + 6) % 7
+    const daysInMonth = getDaysInMonth(month)
+    const cells: (number | null)[] = Array(firstDow).fill(null)
+    for (let d = 1; d <= daysInMonth; d++) cells.push(d)
+    while (cells.length % 7 !== 0) cells.push(null)
+    const wks: (number | null)[][] = []
+    for (let i = 0; i < cells.length; i += 7) wks.push(cells.slice(i, i + 7))
+    return wks
+  }, [month])
+
+  return (
+    <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
+          className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronLeft size={15} /></button>
+        <p className="text-sm font-semibold capitalize">{format(month, 'LLLL yyyy', { locale: ru })}</p>
+        <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+          className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronRight size={15} /></button>
+      </div>
+      <div className="grid grid-cols-7 border-b border-border">
+        {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(d => (
+          <div key={d} className="text-center text-[10px] font-bold text-muted-foreground uppercase py-1.5">{d}</div>
+        ))}
+      </div>
+      <div className="divide-y divide-border">
+        {weeks.map((week, wi) => {
+          const cellMinH = 26 + Math.max(1, aptOrder.length) * (ROW_H + 2)
+          return (
+            <div key={wi} className="grid grid-cols-7 divide-x divide-border">
+              {week.map((day, di) => {
+                if (day === null) return <div key={di} className="bg-gray-50/60" style={{ minHeight: cellMinH }} />
+                const dateStr = `${month.getFullYear()}-${pad(month.getMonth() + 1)}-${pad(day)}`
+                const isToday = dateStr === todayStr
+                return (
+                  <div key={di} className="p-1 flex flex-col gap-[2px] overflow-hidden" style={{ minHeight: cellMinH }}>
+                    <span className={`text-[10px] font-bold w-4 h-4 flex items-center justify-center rounded-full flex-shrink-0 ${isToday ? 'bg-primary text-primary-foreground' : 'text-gray-700'}`}>
+                      {day}
+                    </span>
+                    {aptOrder.map(apt => {
+                      const t = taskOnDay(apt.id, dateStr)
+                      if (!t) return <div key={apt.id} style={{ height: ROW_H }} />
+                      const isStart = t.bookings.start_date === dateStr
+                      const isEnd = t.bookings.end_date === dateStr
+                      const guests = t.bookings.guests_count
+                      return (
+                        <span key={apt.id}
+                          title={`${apt.title} · ${guests ? `${guests} чел · ` : ''}€${t.cleaning_fee} · ${t.payment_status === 'paid' ? 'оплачено' : 'не оплачено'}`}
+                          className={`flex items-center text-[8px] leading-none text-gray-800 overflow-hidden ${isStart ? 'rounded-l-full pl-1.5' : '-ml-1'} ${isEnd ? 'rounded-r-full pr-1' : '-mr-1'}`}
+                          style={{ height: ROW_H, backgroundColor: aptColor(apt.id), opacity: t.payment_status === 'paid' ? 0.5 : 0.9 }}>
+                          {isStart && <span className="truncate font-bold">{apt.title}{guests ? ` · ${guests}` : ''}</span>}
+                        </span>
+                      )
+                    })}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })}
+      </div>
+      {aptOrder.length > 0 && (
+        <div className="flex items-center gap-3 flex-wrap px-4 py-2.5 border-t border-border">
+          {aptOrder.map(apt => (
+            <div key={apt.id} className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: aptColor(apt.id) }} />
+              <span className="text-[11px] text-muted-foreground font-medium">{apt.title}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function CleanerDashboard() {
@@ -437,7 +537,6 @@ export default function CleanerDashboard() {
   const [cashDirection, setCashDirection] = useState<'deposit' | 'withdrawal'>('deposit')
   const [cashAmount, setCashAmount] = useState('')
   const [cashNote, setCashNote] = useState('')
-  const [calSelectedApt, setCalSelectedApt] = useState('')
 
   // Full apartment rows for the calendar tab (same component/visualization as the owner's calendar)
   const { data: calApartments = [] } = useQuery({
@@ -545,12 +644,8 @@ export default function CleanerDashboard() {
     return { title: e.type === 'deposit' ? 'Пополнение вручную' : 'Списание вручную', sub: e.note ?? '' }
   }
 
-  // Actual/upcoming check-ins for the apartment currently shown in the calendar tab
-  const effectiveCalApt = (calSelectedApt || calApartments[0]?.id) ?? ''
-  const calUpcomingTasks = all
-    .filter(t => t.bookings.apartments.id === effectiveCalApt && t.bookings.end_date > today)
-    .sort((a, b) => a.bookings.start_date.localeCompare(b.bookings.start_date))
-    .slice(0, 6)
+  // Apartment photo lookup for the "actual/nearest check-in" summary card
+  const calAptImage = (aptId: string) => calApartments.find(a => a.id === aptId)?.apartment_images?.[0]?.image_url ?? null
 
   const NAV = [
     { id: 'bookings' as const, label: 'Заезды', icon: <CalendarDays size={16} />, count: currentStays.length + upcoming.length + overdue.length },
@@ -711,34 +806,90 @@ export default function CleanerDashboard() {
             </div>
             )
           })() : tab === 'calendar' ? (
-            calApartments.length > 0 ? (
-              <div className="flex flex-col gap-4">
-                <CalendarSection
-                  apartments={calApartments}
-                  selectedApt={effectiveCalApt}
-                  setSelectedApt={setCalSelectedApt}
-                  readOnly
-                />
+            <div className="flex flex-col gap-4">
+              <CleanerCalendar tasks={all} aptColor={aptColor} />
+
+              {currentStays.length > 0 ? (
                 <div>
                   <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">
-                    Актуальные и ближайшие заезды
+                    {currentStays.length === 1 ? 'Актуальный заезд' : 'Актуальные заезды'}
                   </h3>
-                  {calUpcomingTasks.length === 0 ? (
-                    <div className="bg-card border border-border rounded-2xl p-6 text-center text-muted-foreground text-sm">
-                      Нет предстоящих заездов
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-2">
-                      {calUpcomingTasks.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} />)}
-                    </div>
-                  )}
+                  <div className="flex flex-col gap-3">
+                    {currentStays.map(t => {
+                      const b = t.bookings
+                      const img = calAptImage(b.apartments.id)
+                      const nights = Math.max(1, Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000))
+                      const passed = Math.max(0, Math.round((new Date().getTime() - parseISO(b.start_date).getTime()) / 86400000))
+                      const pct = nights > 0 ? Math.min(100, Math.round((passed / nights) * 100)) : 0
+                      const left = Math.max(0, nights - passed)
+                      return (
+                        <div key={t.id} className="bg-card border border-border rounded-2xl shadow-sm flex gap-4 p-4">
+                          <div className="w-24 rounded-xl overflow-hidden flex-shrink-0 bg-secondary self-stretch">
+                            {img
+                              ? <img src={img} alt={b.apartments.title} className="w-full h-full object-cover" />
+                              : <div className="w-full h-full flex items-center justify-center text-2xl opacity-20">🏠</div>}
+                          </div>
+                          <div className="flex-1 min-w-0 flex flex-col justify-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-bold text-foreground">{b.apartments.title}</p>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-semibold">Сейчас заселена</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">{b.guest_name}</p>
+                            <div className="relative h-4 bg-muted rounded-full overflow-hidden">
+                              <div className="absolute inset-y-0 left-0 rounded-full"
+                                style={{ width: `${pct}%`, background: 'hsl(var(--primary) / 0.85)' }} />
+                              <span className="absolute inset-0 flex items-center justify-center text-[9px] font-bold text-white">{pct}%</span>
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                              <span>{nights} {nights === 1 ? 'ночь' : nights < 5 ? 'ночи' : 'ночей'}</span>
+                              <span>{left} {left === 1 ? 'ночь' : left < 5 ? 'ночи' : 'ночей'} осталось</span>
+                            </div>
+                            <div className="flex gap-4 text-[10px] text-muted-foreground">
+                              <span>📅 Заезд: {format(parseISO(b.start_date), 'd MMM. yyyy', { locale: ru })}</span>
+                              <span>📅 Выезд: {format(parseISO(b.end_date), 'd MMM. yyyy', { locale: ru })}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="bg-card border border-border rounded-2xl p-10 text-center text-muted-foreground text-sm">
-                Нет назначенных квартир
-              </div>
-            )
+              ) : upcoming.length > 0 ? (() => {
+                const t = upcoming[0]
+                const b = t.bookings
+                const img = calAptImage(b.apartments.id)
+                const daysUntil = Math.max(0, Math.round((parseISO(b.start_date).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000))
+                return (
+                  <div>
+                    <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Ближайший заезд</h3>
+                    <div className="bg-card border border-border rounded-2xl shadow-sm flex gap-4 p-4">
+                      <div className="w-24 rounded-xl overflow-hidden flex-shrink-0 bg-secondary self-stretch">
+                        {img
+                          ? <img src={img} alt={b.apartments.title} className="w-full h-full object-cover" />
+                          : <div className="w-full h-full flex items-center justify-center text-2xl opacity-20">🏠</div>}
+                      </div>
+                      <div className="flex-1 min-w-0 flex flex-col justify-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-bold text-foreground">{b.apartments.title}</p>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold">
+                            {daysUntil === 0 ? 'Заезд сегодня' : `Через ${daysUntil} ${daysUntil === 1 ? 'день' : daysUntil < 5 ? 'дня' : 'дней'}`}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{b.guest_name}</p>
+                        <div className="flex gap-4 text-[10px] text-muted-foreground">
+                          <span>📅 Заезд: {format(parseISO(b.start_date), 'd MMM. yyyy', { locale: ru })}</span>
+                          <span>📅 Выезд: {format(parseISO(b.end_date), 'd MMM. yyyy', { locale: ru })}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })() : (
+                <div className="bg-card border border-border rounded-2xl p-6 text-center text-muted-foreground text-sm">
+                  Нет предстоящих заездов
+                </div>
+              )}
+            </div>
           ) : tab === 'payment' ? (
             <div className="flex flex-col gap-6">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
