@@ -721,17 +721,6 @@ function tintHex(hex: string, amount: number): string {
   const mix = (c: number) => Math.round(c + (255 - c) * amount)
   return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`
 }
-// Затемнённая версия цвета квартиры — для текста поверх пастельной заливки,
-// чтобы он читался тёмным и контрастным, а не самим базовым (более светлым) цветом.
-function shadeHex(hex: string, amount: number): string {
-  const h = hex.replace('#', '')
-  const r = parseInt(h.substring(0, 2), 16)
-  const g = parseInt(h.substring(2, 4), 16)
-  const b = parseInt(h.substring(4, 6), 16)
-  const mix = (c: number) => Math.round(c * (1 - amount))
-  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`
-}
-
 function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartments: Apartment[]; selectedApt: string; setSelectedApt: (id: string) => void }) {
   const qc = useQueryClient()
   const { theme } = useTheme()
@@ -1192,7 +1181,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
 
                 const isYear = effectiveCount > 6
                 const isTurnover = isBooked && !!info!.turnoverGuestName
-                const aptTextColor = isDark ? tintHex(aptColor, 0.55) : shadeHex(aptColor, 0.42)
+                const aptTextColor = isDark ? '#e2e8f0' : '#1e293b'
 
                 return (
                   <div
