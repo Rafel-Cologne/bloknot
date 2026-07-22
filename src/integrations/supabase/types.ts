@@ -4,6 +4,24 @@ export type BookingSource = 'platform' | 'airbnb' | 'booking' | 'other'
 export type CleaningPaymentMethod = 'guest_cash' | 'owner_transfer' | 'paypal'
 export type BlockedDateReason = 'blocked' | 'pending'
 
+// ── New types (Migration 005) ──────────────────────────────────────────────
+export type ExpenseSource = 'manual' | 'email_agent'
+export type ExpenseStatus = 'pending_confirmation' | 'confirmed' | 'rejected'
+export type AgentRunStatus = 'success' | 'partial' | 'failed'
+
+export type ExpenseCategory =
+  | 'water'
+  | 'electricity'
+  | 'gas'
+  | 'internet'
+  | 'repair'
+  | 'furniture'
+  | 'appliances'
+  | 'insurance'
+  | 'ibi'
+  | 'cleaning'
+  | 'other'
+
 export interface Database {
   public: {
     Tables: {
@@ -59,6 +77,10 @@ export interface Database {
           max_guests: number
           is_public: boolean
           cleaner_id: string | null
+          // ── Migration 005 ──
+          cadastral_reference: string | null
+          construction_value: number | null
+          full_address: string | null
           created_at: string
           updated_at: string
         }
@@ -74,6 +96,9 @@ export interface Database {
           max_guests?: number
           is_public?: boolean
           cleaner_id?: string | null
+          cadastral_reference?: string | null
+          construction_value?: number | null
+          full_address?: string | null
         }
         Update: {
           title?: string
@@ -86,6 +111,9 @@ export interface Database {
           max_guests?: number
           is_public?: boolean
           cleaner_id?: string | null
+          cadastral_reference?: string | null
+          construction_value?: number | null
+          full_address?: string | null
         }
       }
       apartment_images: {
@@ -124,6 +152,10 @@ export interface Database {
           share_contact_with_cleaner: boolean
           guest_rating: number | null
           owner_notes: string | null
+          // ── Migration 005 ──
+          external_booking_id: string | null
+          deleted_at: string | null
+          created_by_agent: boolean
           created_at: string
           updated_at: string
         }
@@ -142,6 +174,9 @@ export interface Database {
           offer_price?: number | null
           share_contact_with_cleaner?: boolean
           owner_notes?: string | null
+          external_booking_id?: string | null
+          deleted_at?: string | null
+          created_by_agent?: boolean
         }
         Update: {
           status?: BookingStatus
@@ -150,6 +185,9 @@ export interface Database {
           share_contact_with_cleaner?: boolean
           guest_rating?: number | null
           owner_notes?: string | null
+          external_booking_id?: string | null
+          deleted_at?: string | null
+          created_by_agent?: boolean
         }
       }
       blocked_dates: {
@@ -299,11 +337,154 @@ export interface Database {
           read?: boolean
         }
       }
+      // ── Migration 005: new tables ──────────────────────────────────────
+      expenses: {
+        Row: {
+          id: string
+          apartment_id: string
+          owner_id: string
+          category: string            // ExpenseCategory или произвольная строка
+          amount: number
+          invoice_period_start: string | null
+          invoice_period_end: string | null
+          expense_date: string
+          provider: string | null
+          description: string | null
+          source: ExpenseSource
+          status: ExpenseStatus
+          attachment_url: string | null
+          deleted_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          apartment_id: string
+          owner_id: string
+          category: string
+          amount: number
+          invoice_period_start?: string | null
+          invoice_period_end?: string | null
+          expense_date: string
+          provider?: string | null
+          description?: string | null
+          source?: ExpenseSource
+          status?: ExpenseStatus
+          attachment_url?: string | null
+          deleted_at?: string | null
+        }
+        Update: {
+          category?: string
+          amount?: number
+          invoice_period_start?: string | null
+          invoice_period_end?: string | null
+          expense_date?: string
+          provider?: string | null
+          description?: string | null
+          source?: ExpenseSource
+          status?: ExpenseStatus
+          attachment_url?: string | null
+          deleted_at?: string | null
+        }
+      }
+      agent_logs: {
+        Row: {
+          id: string
+          run_at: string
+          emails_checked: number
+          bookings_created: number
+          bookings_updated: number
+          expenses_created: number
+          skipped: number
+          errors: Record<string, unknown>[] | null  // [{email_id, error, stage}]
+          status: AgentRunStatus
+        }
+        Insert: {
+          run_at?: string
+          emails_checked?: number
+          bookings_created?: number
+          bookings_updated?: number
+          expenses_created?: number
+          skipped?: number
+          errors?: Record<string, unknown>[] | null
+          status?: AgentRunStatus
+        }
+        Update: {
+          emails_checked?: number
+          bookings_created?: number
+          bookings_updated?: number
+          expenses_created?: number
+          skipped?: number
+          errors?: Record<string, unknown>[] | null
+          status?: AgentRunStatus
+        }
+      }
+      user_email_aliases: {
+        Row: {
+          id: string
+          user_id: string
+          alias: string
+          created_at: string
+        }
+        Insert: {
+          user_id: string
+          alias: string
+        }
+        Update: {
+          alias?: string
+        }
+      }
+      // ── Legacy tables (pre-005, kept for backwards compatibility) ──────
+      expense_categories: {
+        Row: {
+          id: string
+          owner_id: string
+          name: string
+        }
+        Insert: {
+          owner_id: string
+          name: string
+        }
+        Update: {
+          name?: string
+        }
+      }
+    }
+    Views: {
+      // all_expenses — legacy view/table, используется старым кодом расходов
+      all_expenses: {
+        Row: {
+          id: string
+          apartment_id: string
+          category_name: string
+          amount: number
+          paid_date: string
+          period_note: string | null
+          is_recurring: boolean
+          notes: string | null
+          created_at: string
+        }
+      }
     }
     Functions: {
       has_role: {
         Args: { _user_id: string; _role: AppRole }
         Returns: boolean
+      }
+      is_owner_of_apartment: {
+        Args: { _apartment_id: string }
+        Returns: boolean
+      }
+      is_owner_of_booking: {
+        Args: { _booking_id: string }
+        Returns: boolean
+      }
+      restore_booking: {
+        Args: { _booking_id: string }
+        Returns: void
+      }
+      restore_expense: {
+        Args: { _expense_id: string }
+        Returns: void
       }
     }
     Enums: {

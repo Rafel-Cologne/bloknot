@@ -1,0 +1,54 @@
+name: Bloknot Email Agent
+
+on:
+  # Отключено: используем Supabase Edge Function (process-invoice-emails, 1 раз/день) как основной агент.
+  # schedule:
+  #   - cron: '*/20 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (no DB writes)'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  run-agent:
+    name: Process emails
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: agent/package.json
+
+      - name: Install dependencies
+        working-directory: agent
+        run: npm install
+
+      - name: Run agent
+        working-directory: agent
+        env:
+          GMAIL_CLIENT_ID:            ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET:        ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_REFRESH_TOKEN:        ${{ secrets.GMAIL_REFRESH_TOKEN }}
+          ANTHROPIC_API_KEY:          ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL:               ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY:  ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            node index.js --dry-run
+          else
+            node index.js
+          fi
+
+      - name: Notify on failure
+        if: failure()
+        run: echo "::warning::Email agent run failed — check agent_logs in Supabase"

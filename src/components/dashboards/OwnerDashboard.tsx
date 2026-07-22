@@ -44,6 +44,18 @@ import {
   Wallet,
   Minus,
   History,
+  ShieldCheck,
+  AlertCircle,
+  Upload,
+  Download,
+  Check,
+  ClipboardList,
+  RotateCcw,
+  FileSpreadsheet,
+  Printer,
+  UserCircle,
+  Bot,
+  PackageCheck,
 } from 'lucide-react'
 import {
   format,
@@ -63,7 +75,7 @@ import { useAuth } from '@/hooks/useAuth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Section = 'dashboard' | 'apartments' | 'bookings' | 'calendar' | 'cleaning' | 'expenses' | 'settings'
+type Section = 'dashboard' | 'apartments' | 'bookings' | 'calendar' | 'cleaning' | 'expenses' | 'tax_report' | 'admin' | 'settings'
 type BookingSourceLocal = 'airbnb' | 'booking' | 'other'
 
 type ApartmentImage = { id: string; image_url: string; order_index: number }
@@ -72,6 +84,7 @@ type Apartment = {
   id: string; title: string; address: string; full_address: string | null; description: string
   cleaning_fee: number; price_per_night: number; max_guests: number
   is_public: boolean; owner_id: string; cleaner_id: string | null; amenities: string[]
+  cadastral_reference: string | null; construction_value: number | null
   apartment_images?: ApartmentImage[]
 }
 
@@ -361,6 +374,7 @@ function AddBookingModal({
 type AptForm = {
   title: string; address: string; full_address: string; description: string
   price_per_night: number; cleaning_fee: number; max_guests: number; is_public: boolean
+  cadastral_reference: string; construction_value: string
 }
 
 function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
@@ -369,8 +383,11 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
   const [form, setForm] = useState<AptForm>(initial
     ? { title: initial.title, address: initial.address, full_address: initial.full_address ?? '', description: initial.description,
         price_per_night: initial.price_per_night, cleaning_fee: initial.cleaning_fee,
-        max_guests: initial.max_guests, is_public: initial.is_public }
-    : { title: '', address: '', full_address: '', description: '', price_per_night: 0, cleaning_fee: 60, max_guests: 2, is_public: true }
+        max_guests: initial.max_guests, is_public: initial.is_public,
+        cadastral_reference: initial.cadastral_reference ?? '',
+        construction_value: initial.construction_value != null ? String(initial.construction_value) : '' }
+    : { title: '', address: '', full_address: '', description: '', price_per_night: 0, cleaning_fee: 60, max_guests: 2, is_public: true,
+        cadastral_reference: '', construction_value: '' }
   )
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(
@@ -388,7 +405,14 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setSaving(true); setError(null)
-    const payload = { ...form, owner_id: ownerId }
+    const payload = {
+      title: form.title, address: form.address, description: form.description,
+      price_per_night: form.price_per_night, cleaning_fee: form.cleaning_fee,
+      max_guests: form.max_guests, is_public: form.is_public, owner_id: ownerId,
+      cadastral_reference: form.cadastral_reference.trim() || null,
+      construction_value: form.construction_value ? parseFloat(form.construction_value) : null,
+      full_address: form.full_address.trim() || null,
+    }
 
     let aptId = initial?.id ?? ''
     if (initial) {
@@ -459,13 +483,6 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
             </div>
           ))}
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Полный адрес (для распознавания счетов)</label>
-            <input type="text" value={form.full_address}
-              onChange={e => setForm(f => ({ ...f, full_address: e.target.value }))}
-              placeholder="Улица, номер, индекс, город — как в счетах за коммуналку"
-              className={inputCls} />
-          </div>
-          <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Описание</label>
             <textarea rows={2} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
               className={`${inputCls} resize-none`} />
@@ -484,6 +501,31 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
               className="w-4 h-4 rounded accent-primary" />
             <span className="text-sm">Опубликовать объект</span>
           </label>
+
+          {/* Налоговые / кадастровые поля */}
+          <div className="border-t border-border pt-3 flex flex-col gap-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Данные для налогового отчёта (IRPF)</p>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Referencia catastral</label>
+              <input type="text" value={form.cadastral_reference}
+                onChange={e => setForm(f => ({ ...f, cadastral_reference: e.target.value }))}
+                placeholder="9872023 VH5797S 0001 WX" className={inputCls} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Стоимость строения, € (без земли)</label>
+              <input type="number" min={0} value={form.construction_value}
+                onChange={e => setForm(f => ({ ...f, construction_value: e.target.value }))}
+                placeholder="150000" className={inputCls} />
+              <p className="text-[11px] text-muted-foreground">Используется для расчёта амортизации 3%/год</p>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Полный адрес (для сопоставления счетов)</label>
+              <input type="text" value={form.full_address}
+                onChange={e => setForm(f => ({ ...f, full_address: e.target.value }))}
+                placeholder="Calle Ejemplo 12, 03181 Torrevieja, Alicante" className={inputCls} />
+            </div>
+          </div>
+
           {error && <p className="text-xs text-destructive bg-destructive/10 rounded-xl px-3 py-2">{error}</p>}
           <div className="flex gap-2 justify-end pt-1">
             <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-sm bg-muted text-muted-foreground hover:bg-muted/70">Отмена</button>
@@ -1601,8 +1643,10 @@ function DashboardOverview({
     queryKey: ['dash-expenses', ownerId, aptIds.join(',')],
     queryFn: async () => {
       if (!aptIds.length) return []
-      const { data } = await supabase.from('all_expenses').select('amount,paid_date,apartment_id').in('apartment_id', aptIds)
-      return (data ?? []) as { amount: number; paid_date: string; apartment_id: string }[]
+      const { data } = await supabase.from('expenses')
+        .select('amount,expense_date,apartment_id')
+        .eq('status', 'confirmed').is('deleted_at', null).in('apartment_id', aptIds)
+      return (data ?? []).map(e => ({ ...e, paid_date: e.expense_date })) as { amount: number; paid_date: string; apartment_id: string }[]
     },
     enabled: aptIds.length > 0,
   })
@@ -5129,32 +5173,104 @@ function CleanerView({ bookings, onRefresh, ownerId }: { bookings: BookingRow[];
 
 // ─── Expenses Section ─────────────────────────────────────────────────────────
 
-type AllExpense = {
-  id: string; apartment_id: string; category_name: string
-  amount: number; paid_date: string; period_note: string | null
-  is_recurring: boolean; notes: string | null; created_at: string
+type Expense = {
+  id: string
+  apartment_id: string
+  owner_id: string
+  category: string
+  amount: number
+  invoice_period_start: string | null
+  invoice_period_end: string | null
+  expense_date: string
+  provider: string | null
+  description: string | null
+  source: 'manual' | 'email_agent'
+  status: 'pending_confirmation' | 'confirmed' | 'rejected'
+  attachment_url: string | null
+  deleted_at: string | null
+  created_at: string
 }
 
-type ExpenseCategory = { id: string; owner_id: string; name: string }
-
-const BUILT_IN_CATS = ['Электричество', 'Вода']
-
-const CAT_META: Record<string, { icon: React.ReactNode; color: string; bg: string }> = {
-  'Электричество': { icon: <Zap size={14} />, color: 'text-amber-500', bg: 'bg-amber-50' },
-  'Вода':          { icon: <Droplets size={14} />, color: 'text-blue-500', bg: 'bg-blue-50' },
+const EXP_CATEGORIES: Record<string, { label: string; icon: React.ReactNode; color: string; bg: string }> = {
+  electricity: { label: 'Электричество', icon: <Zap size={14} />,         color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-950/30' },
+  water:       { label: 'Вода',          icon: <Droplets size={14} />,     color: 'text-blue-500',  bg: 'bg-blue-50 dark:bg-blue-950/30' },
+  gas:         { label: 'Газ',           icon: <Zap size={14} />,          color: 'text-orange-500',bg: 'bg-orange-50 dark:bg-orange-950/30' },
+  internet:    { label: 'Интернет',      icon: <Bot size={14} />,          color: 'text-indigo-500',bg: 'bg-indigo-50 dark:bg-indigo-950/30' },
+  repair:      { label: 'Ремонт',        icon: <ClipboardList size={14} />,color: 'text-rose-500',  bg: 'bg-rose-50 dark:bg-rose-950/30' },
+  furniture:   { label: 'Мебель',        icon: <Home size={14} />,         color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-950/30' },
+  appliances:  { label: 'Техника',       icon: <PackageCheck size={14} />, color: 'text-purple-500',bg: 'bg-purple-50 dark:bg-purple-950/30' },
+  insurance:   { label: 'Страховка',     icon: <ShieldCheck size={14} />,  color: 'text-cyan-500',  bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
+  ibi:         { label: 'IBI (налог)',   icon: <FileText size={14} />,     color: 'text-red-500',   bg: 'bg-red-50 dark:bg-red-950/30' },
+  cleaning:    { label: 'Уборка',        icon: <Brush size={14} />,        color: 'text-teal-500',  bg: 'bg-teal-50 dark:bg-teal-950/30' },
+  other:       { label: 'Прочее',        icon: <Receipt size={14} />,      color: 'text-slate-500', bg: 'bg-slate-50 dark:bg-slate-950/30' },
 }
 
-const CHART_COLORS = ['#6366f1','#22c55e','#f59e0b','#ef4444','#06b6d4','#ec4899','#8b5cf6','#14b8a6','#f97316','#84cc16']
+const expFld = 'rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring w-full'
 
-const EXP_MONTH_NAMES = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
-const EXP_MONTH_SHORT = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
+type ExpForm = {
+  apartment_id: string; category: string; amount: string
+  expense_date: string; invoice_period_start: string; invoice_period_end: string
+  provider: string; description: string; file: File | null
+}
 
-const expFieldCls = 'rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring w-full'
+function useExpenseForm(apartments: Apartment[]): [ExpForm, React.Dispatch<React.SetStateAction<ExpForm>>, () => void] {
+  const today = new Date().toISOString().slice(0, 10)
+  const empty: ExpForm = {
+    apartment_id: apartments[0]?.id ?? '',
+    category: 'electricity', amount: '',
+    expense_date: today,
+    invoice_period_start: '', invoice_period_end: '',
+    provider: '', description: '', file: null,
+  }
+  const [form, setForm] = useState<ExpForm>(empty)
+  const reset = () => setForm({ ...empty, apartment_id: form.apartment_id })
+  return [form, setForm, reset]
+}
 
-function ExpModal({ title, onClose, onSave, canSave, saving, children }: {
-  title: string; onClose: () => void; onSave: () => void
-  canSave: boolean; saving?: boolean; children: React.ReactNode
-}) {
+function AddExpenseModal({
+  apartments, onClose, onSaved,
+}: { apartments: Apartment[]; onClose: () => void; onSaved: () => void }) {
+  const { user } = useAuth()
+  const [form, setForm, reset] = useExpenseForm(apartments)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const set = <K extends keyof ExpForm>(k: K, v: ExpForm[K]) => setForm(f => ({ ...f, [k]: v }))
+
+  const handleSave = async () => {
+    if (!form.amount || !form.expense_date || !form.apartment_id) { setError('Заполните обязательные поля'); return }
+    setSaving(true); setError(null)
+    let attachment_url: string | null = null
+
+    if (form.file && user) {
+      const ext = form.file.name.split('.').pop() ?? 'pdf'
+      const path = `${user.id}/${Date.now()}.${ext}`
+      const { error: upErr } = await supabase.storage.from('expense-attachments').upload(path, form.file)
+      if (!upErr) {
+        const { data } = supabase.storage.from('expense-attachments').getPublicUrl(path)
+        attachment_url = data.publicUrl
+      }
+    }
+
+    const { error: err } = await supabase.from('expenses').insert({
+      apartment_id: form.apartment_id,
+      owner_id: user!.id,
+      category: form.category,
+      amount: parseFloat(form.amount.replace(',', '.')),
+      expense_date: form.expense_date,
+      invoice_period_start: form.invoice_period_start || null,
+      invoice_period_end: form.invoice_period_end || null,
+      provider: form.provider.trim() || null,
+      description: form.description.trim() || null,
+      source: 'manual',
+      status: 'confirmed',
+      attachment_url,
+    })
+
+    setSaving(false)
+    if (err) { setError(err.message); return }
+    reset(); onSaved(); onClose()
+  }
+
   return (
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -5162,13 +5278,80 @@ function ExpModal({ title, onClose, onSave, canSave, saving, children }: {
       <motion.div className="relative bg-card border border-border rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl"
         initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}>
         <div className="px-5 py-4 border-b border-border flex items-center justify-between sticky top-0 bg-card z-10">
-          <h3 className="font-semibold">{title}</h3>
+          <h3 className="font-semibold">Добавить расход</h3>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X size={16} /></button>
         </div>
-        <div className="p-5">{children}</div>
+        <div className="p-5 flex flex-col gap-4">
+          {apartments.length > 1 && (
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Квартира *</label>
+              <select value={form.apartment_id} onChange={e => set('apartment_id', e.target.value)} className={expFld}>
+                {apartments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
+              </select>
+            </div>
+          )}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Категория *</label>
+            <div className="grid grid-cols-3 gap-1.5">
+              {Object.entries(EXP_CATEGORIES).map(([k, v]) => (
+                <button key={k} type="button" onClick={() => set('category', k)}
+                  className={`flex items-center gap-1.5 px-2 py-2 rounded-xl border text-xs font-medium transition-all ${
+                    form.category === k
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border bg-background text-muted-foreground hover:border-primary/40'
+                  }`}>
+                  <span className={form.category === k ? 'text-primary' : v.color}>{v.icon}</span>
+                  {v.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Сумма, € *</label>
+              <input type="text" inputMode="decimal" placeholder="0.00" value={form.amount}
+                onChange={e => set('amount', e.target.value)} className={expFld} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Дата оплаты *</label>
+              <input type="date" value={form.expense_date} onChange={e => set('expense_date', e.target.value)} className={expFld} />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Период счёта (необязательно)</label>
+            <div className="grid grid-cols-2 gap-2">
+              <input type="date" value={form.invoice_period_start} onChange={e => set('invoice_period_start', e.target.value)}
+                placeholder="с" className={expFld} />
+              <input type="date" value={form.invoice_period_end} onChange={e => set('invoice_period_end', e.target.value)}
+                placeholder="по" className={expFld} />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Поставщик</label>
+            <input type="text" placeholder="Iberdrola, Endesa..." value={form.provider}
+              onChange={e => set('provider', e.target.value)} className={expFld} />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Примечание</label>
+            <input type="text" placeholder="Необязательно" value={form.description}
+              onChange={e => set('description', e.target.value)} className={expFld} />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Квитанция / счёт (PDF или фото)</label>
+            <label className="flex items-center gap-2 cursor-pointer px-3 py-2.5 rounded-xl border border-dashed border-border hover:border-primary/50 transition-colors bg-background">
+              <Upload size={14} className="text-muted-foreground flex-shrink-0" />
+              <span className="text-sm text-muted-foreground truncate">
+                {form.file ? form.file.name : 'Выбрать файл...'}
+              </span>
+              <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" className="hidden"
+                onChange={e => set('file', e.target.files?.[0] ?? null)} />
+            </label>
+          </div>
+          {error && <p className="text-xs text-destructive bg-destructive/10 rounded-xl px-3 py-2">{error}</p>}
+        </div>
         <div className="px-5 py-4 border-t border-border flex gap-2 justify-end sticky bottom-0 bg-card">
           <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted">Отмена</button>
-          <button onClick={onSave} disabled={!canSave}
+          <button onClick={handleSave} disabled={saving || !form.amount || !form.expense_date}
             className="px-4 py-2 rounded-xl text-sm font-semibold bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50">
             {saving ? 'Сохраняю...' : 'Сохранить'}
           </button>
@@ -5181,867 +5364,770 @@ function ExpModal({ title, onClose, onSave, canSave, saving, children }: {
 function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
   const { user } = useAuth()
   const qc = useQueryClient()
-  const now = new Date()
-  const todayStr = now.toISOString().slice(0, 10)
-  const thisYear = now.getFullYear()
+  const today = new Date().toISOString().slice(0, 10)
+  const curYear = new Date().getFullYear()
+  const curMonth = new Date().getMonth()
 
-  // Period selector (controls table + donut chart)
-  const [periodYear, setPeriodYear] = useState(thisYear)
-  const [periodMonth, setPeriodMonth] = useState(now.getMonth() + 1) // 1-based
+  const [filterApt, setFilterApt] = useState('all')
+  const [filterFrom, setFilterFrom] = useState(
+    `${curYear}-${String(curMonth + 1).padStart(2, '0')}-01`
+  )
+  const [filterTo, setFilterTo] = useState(today)
+  const [showAdd, setShowAdd] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
 
-  // Table filters
-  const [catFilter, setCatFilter] = useState('')
-  const [aptFilter, setAptFilter] = useState('')
-  const [search, setSearch] = useState('')
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
-
-  // Add / edit modals
-  const [showAddModal, setShowAddModal] = useState(false)
-  const [editingExp, setEditingExp] = useState<AllExpense | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState<string | null>(null)
-  const [newCatInput, setNewCatInput] = useState('')
-  const [addingCat, setAddingCat] = useState(false)
-
-  // Quick-view modals
-  const [expMonthModal, setExpMonthModal] = useState(false)
-  const [barClickMonth, setBarClickMonth] = useState<number | null>(null) // 0-based month index
-  const [yearViewYear, setYearViewYear] = useState(thisYear)
-  const [yearViewModal, setYearViewModal] = useState(false)
-
-  type ExpForm = { category_name: string; amount: string; paid_date: string; period_note: string; is_recurring: boolean; notes: string; apartment_id: string }
-  // Default date: today if selected period is current month, otherwise 1st of selected period month
-  const periodDefaultDate = (periodYear === thisYear && periodMonth === now.getMonth() + 1)
-    ? todayStr
-    : `${periodYear}-${String(periodMonth).padStart(2, '0')}-01`
-  const emptyForm: ExpForm = { category_name: '', amount: '', paid_date: periodDefaultDate, period_note: '', is_recurring: false, notes: '', apartment_id: getLastAptId() || apartments[0]?.id || '' }
-  const [form, setForm] = useState<ExpForm>(emptyForm)
-  const [editForm, setEditForm] = useState<ExpForm>(emptyForm)
-
-  // Period navigation
-  const prevPeriod = () => {
-    if (periodMonth === 1) { setPeriodYear((y: number) => y - 1); setPeriodMonth(12) }
-    else setPeriodMonth((m: number) => m - 1)
-    setPage(1)
-  }
-  const nextPeriod = () => {
-    if (periodMonth === 12) { setPeriodYear((y: number) => y + 1); setPeriodMonth(1) }
-    else setPeriodMonth((m: number) => m + 1)
-    setPage(1)
-  }
-
-  // Fetch ALL apartments' expenses
-  const { data: allExpenses = [], isLoading } = useQuery({
-    queryKey: ['all-expenses-all', apartments.map(a => a.id).join(',')],
+  // Pending count for badge
+  const { data: pendingExpenses = [] } = useQuery({
+    queryKey: ['expenses-pending', user?.id],
     queryFn: async () => {
-      const aptIds = apartments.map(a => a.id)
-      if (!aptIds.length) return []
-      const { data } = await supabase.from('all_expenses').select('*')
-        .in('apartment_id', aptIds).order('paid_date', { ascending: false })
-      return (data ?? []) as AllExpense[]
-    },
-    enabled: apartments.length > 0,
-  })
-
-  const { data: userCats = [] } = useQuery({
-    queryKey: ['expense-categories', user?.id],
-    queryFn: async () => {
-      const { data } = await supabase.from('expense_categories').select('*').eq('owner_id', user!.id).order('name')
-      return (data ?? []) as ExpenseCategory[]
+      const { data } = await supabase.from('expenses').select('*')
+        .eq('owner_id', user!.id).eq('status', 'pending_confirmation').is('deleted_at', null)
+        .order('created_at', { ascending: false })
+      return (data ?? []) as Expense[]
     },
     enabled: !!user,
   })
 
-  const allCats = [...BUILT_IN_CATS, ...userCats.map(c => c.name).filter(n => !BUILT_IN_CATS.includes(n))]
-  const catMeta = (name: string) => CAT_META[name] ?? { icon: <Receipt size={14} />, color: 'text-violet-500', bg: 'bg-violet-50' }
-
-  // ── Year-view stat computations ──
-  const yearViewYearStr        = String(yearViewYear)
-  const yearViewExps           = allExpenses.filter(e => e.paid_date.startsWith(yearViewYearStr))
-  const totalYearView          = yearViewExps.reduce((s, e) => s + e.amount, 0)
-  const distinctMonthsYearView = new Set(yearViewExps.map(e => e.paid_date.slice(0, 7))).size
-  const avgMonthYearView       = distinctMonthsYearView > 0 ? totalYearView / distinctMonthsYearView : 0
-
-  // ── Bar chart: 12 months of periodYear ──
-  const barData = Array.from({ length: 12 }, (_, i) => {
-    const ms = `${periodYear}-${String(i + 1).padStart(2, '0')}`
-    return {
-      month: EXP_MONTH_SHORT[i],
-      value: allExpenses.filter(e => e.paid_date.startsWith(ms)).reduce((s, e) => s + e.amount, 0),
-    }
+  const { data: confirmedExpenses = [], isLoading } = useQuery({
+    queryKey: ['expenses-confirmed', user?.id, filterApt, filterFrom, filterTo],
+    queryFn: async () => {
+      let q = supabase.from('expenses').select('*')
+        .eq('owner_id', user!.id).eq('status', 'confirmed').is('deleted_at', null)
+        .order('expense_date', { ascending: false })
+      if (filterApt !== 'all') q = q.eq('apartment_id', filterApt)
+      if (filterFrom) q = q.gte('expense_date', filterFrom)
+      if (filterTo) q = q.lte('expense_date', filterTo)
+      const { data } = await q
+      return (data ?? []) as Expense[]
+    },
+    enabled: !!user,
   })
 
-  // ── Donut chart: by category for selected period month ──
-  const periodStr      = `${periodYear}-${String(periodMonth).padStart(2, '0')}`
-  const periodExpenses = allExpenses.filter(e => e.paid_date.startsWith(periodStr))
-  const byCat          = periodExpenses.reduce<Record<string, number>>((acc, e) => {
-    acc[e.category_name] = (acc[e.category_name] ?? 0) + e.amount; return acc
-  }, {})
-  const donutData  = Object.entries(byCat)
-    .map(([name, value], i) => ({ name, value, color: CHART_COLORS[i % CHART_COLORS.length] }))
-    .sort((a, b) => b.value - a.value)
-  const donutTotal = donutData.reduce((s, d) => s + d.value, 0)
-
-  // ── Table filtering ──
-  const filteredExpenses = useMemo(() => {
-    return allExpenses.filter(e => {
-      if (!e.paid_date.startsWith(periodStr)) return false
-      if (catFilter && e.category_name !== catFilter) return false
-      if (aptFilter && e.apartment_id !== aptFilter) return false
-      if (search) {
-        const q = search.toLowerCase()
-        const aptName = apartments.find(a => a.id === e.apartment_id)?.title ?? ''
-        if (!e.category_name.toLowerCase().includes(q) &&
-            !(e.notes ?? '').toLowerCase().includes(q) &&
-            !aptName.toLowerCase().includes(q)) return false
-      }
-      return true
-    })
-  }, [allExpenses, periodStr, catFilter, aptFilter, search, apartments])
-
-  // Group by apartment when "all" selected and multiple apartments exist
-  const showGrouped = apartments.length > 1 && !aptFilter
-  const groupedExpenses = showGrouped
-    ? apartments
-        .map(a => ({
-          apt: a,
-          expenses: filteredExpenses.filter(e => e.apartment_id === a.id),
-          total: filteredExpenses.filter(e => e.apartment_id === a.id).reduce((s, e) => s + e.amount, 0),
-        }))
-        .filter(g => g.expenses.length > 0)
-    : null
-
-  const totalPages = Math.max(1, Math.ceil(filteredExpenses.length / pageSize))
-  const paginated  = filteredExpenses.slice((page - 1) * pageSize, page * pageSize)
-
-  // ── Handlers ──
-  const handleAddCat = async () => {
-    const name = newCatInput.trim(); if (!name) return
-    setAddingCat(true)
-    await supabase.from('expense_categories').insert({ owner_id: user!.id, name })
-    qc.invalidateQueries({ queryKey: ['expense-categories', user?.id] })
-    setNewCatInput(''); setAddingCat(false)
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['expenses-confirmed', user?.id] })
+    qc.invalidateQueries({ queryKey: ['expenses-pending', user?.id] })
   }
 
-  const handleDeleteCat = async (id: string) => {
-    await supabase.from('expense_categories').delete().eq('id', id)
-    qc.invalidateQueries({ queryKey: ['expense-categories', user?.id] })
+  const handleConfirm = async (id: string) => {
+    await supabase.from('expenses').update({ status: 'confirmed' }).eq('id', id)
+    invalidate()
   }
-
-  const invalidateAll = () => qc.invalidateQueries({ queryKey: ['all-expenses-all'] })
-
-  const handleSave = async () => {
-    if (!form.category_name || !form.amount || !form.paid_date || !form.apartment_id) return
-    setSaving(true)
-    await supabase.from('all_expenses').insert({
-      apartment_id: form.apartment_id,
-      category_name: form.category_name,
-      amount: parseFloat(form.amount.replace(',', '.')),
-      paid_date: form.paid_date,
-      period_note: form.period_note.trim() || null,
-      is_recurring: form.is_recurring,
-      notes: form.notes.trim() || null,
-    })
-    invalidateAll()
-    setForm(emptyForm)
-    setShowAddModal(false); setSaving(false)
+  const handleReject = async (id: string) => {
+    await supabase.from('expenses').update({ status: 'rejected' }).eq('id', id)
+    invalidate()
   }
-
-  const startEdit = (e: AllExpense) => {
-    setEditingExp(e)
-    setEditForm({
-      category_name: e.category_name, amount: String(e.amount),
-      paid_date: e.paid_date, period_note: e.period_note ?? '',
-      is_recurring: e.is_recurring, notes: e.notes ?? '',
-      apartment_id: e.apartment_id,
-    })
-  }
-
-  const handleUpdate = async () => {
-    if (!editingExp) return
-    await supabase.from('all_expenses').update({
-      apartment_id: editForm.apartment_id,
-      category_name: editForm.category_name,
-      amount: parseFloat(editForm.amount.replace(',', '.')),
-      paid_date: editForm.paid_date,
-      period_note: editForm.period_note.trim() || null,
-      is_recurring: editForm.is_recurring,
-      notes: editForm.notes.trim() || null,
-    }).eq('id', editingExp.id)
-    invalidateAll(); setEditingExp(null)
-  }
-
   const handleDelete = async (id: string) => {
-    setDeleting(id)
-    await supabase.from('all_expenses').delete().eq('id', id)
-    invalidateAll(); setDeleting(null)
+    await supabase.from('expenses').update({ deleted_at: new Date().toISOString() }).eq('id', id)
+    invalidate()
   }
 
-  // ── Bar-click month data (computed inline, no hook needed) ──
-  const clickedMs        = barClickMonth !== null ? `${periodYear}-${String(barClickMonth + 1).padStart(2, '0')}` : ''
-  const clickedExps      = barClickMonth !== null ? allExpenses.filter(e => e.paid_date.startsWith(clickedMs)) : []
-  const clickedTotal     = clickedExps.reduce((s, e) => s + e.amount, 0)
-  const clickedMonthName = barClickMonth !== null ? EXP_MONTH_NAMES[barClickMonth] : ''
+  const totalConfirmed = confirmedExpenses.reduce((s, e) => s + e.amount, 0)
+  const byCategory = confirmedExpenses.reduce<Record<string, number>>((acc, e) => {
+    acc[e.category] = (acc[e.category] ?? 0) + e.amount; return acc
+  }, {})
 
-  // ── Period-month modal data (reuse periodExpenses already defined above) ──
-  const periodMonthTotal = periodExpenses.reduce((s, e) => s + e.amount, 0)
+  const aptName = (id: string) => apartments.find(a => a.id === id)?.title ?? '—'
 
-  const renderFormFields = (f: ExpForm, setF: React.Dispatch<React.SetStateAction<ExpForm>>) => (
-    <div className="grid grid-cols-2 gap-3">
-      {apartments.length > 1 && (
-        <div className="flex flex-col gap-1 col-span-2">
-          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Квартира</label>
-          <select value={f.apartment_id}
-            onChange={e => { setF(p => ({ ...p, apartment_id: e.target.value })); saveLastAptId(e.target.value) }}
-            className={expFieldCls}>
-            {apartments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
-          </select>
+  const setQuickPeriod = (months: number) => {
+    const d = new Date()
+    if (months === 0) { setFilterFrom(''); setFilterTo(''); return }
+    const from = new Date(d.getFullYear(), d.getMonth() - months + 1, 1)
+    setFilterFrom(from.toISOString().slice(0, 10))
+    setFilterTo(today)
+  }
+
+  return (
+    <div className="flex flex-col gap-5 max-w-3xl">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-xl font-display font-semibold flex items-center gap-2">
+            Расходы
+            {pendingExpenses.length > 0 && (
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                {pendingExpenses.length}
+              </span>
+            )}
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">Коммунальные услуги, ремонт и прочие расходы</p>
+        </div>
+        <button onClick={() => setShowAdd(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:opacity-90">
+          <Plus size={16} /> Добавить расход
+        </button>
+      </div>
+
+      {/* Pending confirmation block */}
+      {pendingExpenses.length > 0 && (
+        <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-amber-200 dark:border-amber-800 flex items-center gap-2">
+            <AlertCircle size={15} className="text-amber-600" />
+            <span className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+              Ожидают подтверждения: {pendingExpenses.length}
+            </span>
+          </div>
+          <div className="divide-y divide-amber-100 dark:divide-amber-900">
+            {pendingExpenses.map(e => {
+              const cat = EXP_CATEGORIES[e.category] ?? EXP_CATEGORIES.other
+              return (
+                <div key={e.id} className="px-4 py-3 flex items-start gap-3">
+                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${cat.bg}`}>
+                    <span className={cat.color}>{cat.icon}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold">{cat.label}</span>
+                      <span className="text-sm font-bold text-amber-700 dark:text-amber-400">€{e.amount.toFixed(2)}</span>
+                      <span className="text-xs text-muted-foreground">{aptName(e.apartment_id)}</span>
+                    </div>
+                    {e.provider && <p className="text-xs text-muted-foreground">{e.provider}</p>}
+                    {e.invoice_period_start && (
+                      <p className="text-xs text-primary font-medium">
+                        📅 {e.invoice_period_start} — {e.invoice_period_end ?? '?'}
+                      </p>
+                    )}
+                    {e.attachment_url && (
+                      <a href={e.attachment_url} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-0.5">
+                        <FileText size={11} /> Просмотреть квитанцию
+                      </a>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <button onClick={() => handleConfirm(e.id)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs font-semibold hover:bg-green-200 transition-colors">
+                      <Check size={12} /> Подтвердить
+                    </button>
+                    <button onClick={() => handleReject(e.id)}
+                      className="p-1.5 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-500 hover:bg-red-100 transition-colors" title="Отклонить">
+                      <XCircle size={14} />
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
-      <div className="flex flex-col gap-1 col-span-2">
-        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Категория</label>
-        <select value={f.category_name} onChange={e => {
-          const cat = e.target.value
-          setF(p => {
-            // Auto-fill amount from last recurring expense when category is selected and amount is empty
-            if (cat && !p.amount) {
-              const last = allExpenses.find(ex => ex.category_name === cat && ex.is_recurring && ex.apartment_id === p.apartment_id)
-              if (last) return { ...p, category_name: cat, amount: String(last.amount) }
-            }
-            return { ...p, category_name: cat }
-          })
-        }} className={expFieldCls}>
-          <option value="">— Выберите —</option>
-          {allCats.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <div className="flex gap-2 mt-1">
-          <input type="text" placeholder="Новая категория..." value={newCatInput} onChange={e => setNewCatInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') handleAddCat() }}
-            className="flex-1 rounded-xl border border-dashed border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-          <button onClick={handleAddCat} disabled={!newCatInput.trim() || addingCat}
-            className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-muted hover:bg-primary hover:text-primary-foreground disabled:opacity-50 flex-shrink-0">
-            + Добавить
-          </button>
+
+      {/* Filters */}
+      <div className="bg-card border border-border rounded-2xl px-4 py-3 flex flex-col gap-3">
+        <div className="flex flex-wrap gap-2">
+          {[['1 мес', 1], ['3 мес', 3], ['6 мес', 6], ['Весь год', 12], ['Всё время', 0]].map(([l, m]) => (
+            <button key={l as string} onClick={() => setQuickPeriod(m as number)}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-muted hover:bg-primary hover:text-primary-foreground transition-colors">
+              {l}
+            </button>
+          ))}
+          {apartments.length > 1 && (
+            <select value={filterApt} onChange={e => setFilterApt(e.target.value)}
+              className="ml-auto rounded-xl border border-border bg-background px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring">
+              <option value="all">Все квартиры</option>
+              {apartments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
+            </select>
+          )}
         </div>
-        {userCats.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-1">
-            {userCats.map(c => (
-              <span key={c.id} className="flex items-center gap-1 text-xs bg-secondary border border-border rounded-lg px-2 py-0.5">
-                {c.name}
-                <button onClick={() => handleDeleteCat(c.id)} className="text-muted-foreground hover:text-destructive ml-0.5"><X size={10} /></button>
-              </span>
-            ))}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">С</span>
+            <input type="date" value={filterFrom} onChange={e => setFilterFrom(e.target.value)}
+              className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">По</span>
+            <input type="date" value={filterTo} onChange={e => setFilterTo(e.target.value)}
+              className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+          </div>
+        </div>
+      </div>
+
+      {/* Summary */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-card border border-border rounded-2xl p-4 col-span-2 sm:col-span-1">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide">Итого за период</p>
+          <p className="text-2xl font-bold mt-1">€{totalConfirmed.toFixed(2)}</p>
+          <p className="text-xs text-muted-foreground">{confirmedExpenses.length} записей</p>
+        </div>
+        {Object.entries(byCategory).slice(0, 3).map(([cat, amt]) => {
+          const meta = EXP_CATEGORIES[cat] ?? EXP_CATEGORIES.other
+          return (
+            <div key={cat} className="bg-card border border-border rounded-2xl p-4">
+              <p className={`text-xs uppercase tracking-wide font-medium flex items-center gap-1 ${meta.color}`}>
+                {meta.icon} <span className="truncate">{meta.label}</span>
+              </p>
+              <p className="text-xl font-bold mt-1">€{amt.toFixed(2)}</p>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Expense list */}
+      <div className="bg-card border border-border rounded-2xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+          <Receipt size={14} className="text-muted-foreground" />
+          <span className="font-semibold text-sm">Подтверждённые расходы</span>
+          <span className="ml-auto text-xs text-muted-foreground">{confirmedExpenses.length} зап.</span>
+        </div>
+        {isLoading ? (
+          <div className="p-8 text-center text-muted-foreground text-sm">Загрузка...</div>
+        ) : confirmedExpenses.length === 0 ? (
+          <div className="p-8 text-center text-muted-foreground text-sm">
+            Нет расходов за выбранный период
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {confirmedExpenses.map(e => {
+              const cat = EXP_CATEGORIES[e.category] ?? EXP_CATEGORIES.other
+              return (
+                <div key={e.id} className="px-4 py-3 flex items-start gap-3">
+                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${cat.bg}`}>
+                    <span className={cat.color}>{cat.icon}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold">{cat.label}</span>
+                      {e.source === 'email_agent' && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-medium">
+                          AI
+                        </span>
+                      )}
+                      <span className="text-sm font-bold">€{e.amount.toFixed(2)}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {format(parseISO(e.expense_date), 'd MMM yyyy', { locale: ru })}
+                      </span>
+                      {apartments.length > 1 && (
+                        <span className="text-xs text-muted-foreground">{aptName(e.apartment_id)}</span>
+                      )}
+                    </div>
+                    {e.provider && <p className="text-xs text-muted-foreground">{e.provider}</p>}
+                    {e.invoice_period_start && (
+                      <p className="text-xs text-primary font-medium">
+                        📅 {e.invoice_period_start} — {e.invoice_period_end ?? '?'}
+                      </p>
+                    )}
+                    {e.description && <p className="text-xs text-muted-foreground mt-0.5">{e.description}</p>}
+                    {e.attachment_url && (
+                      <a href={e.attachment_url} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-0.5">
+                        <FileText size={11} /> Квитанция
+                      </a>
+                    )}
+                  </div>
+                  <button onClick={() => handleDelete(e.id)}
+                    className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive flex-shrink-0 mt-0.5">
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Сумма, €</label>
-        <input type="text" inputMode="decimal" placeholder="0" value={f.amount}
-          onChange={e => setF(p => ({ ...p, amount: e.target.value }))} className={expFieldCls} />
-        {(() => {
-          const lastExp = f.category_name
-            ? allExpenses.find(ex => ex.category_name === f.category_name && ex.is_recurring && ex.apartment_id === f.apartment_id)
-            : null
-          if (!lastExp) return null
-          const lastStr = String(lastExp.amount)
-          return (
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="text-xs text-muted-foreground">Последний: {fmtEur(lastExp.amount)}</span>
-              {f.amount !== lastStr && f.amount !== lastExp.amount.toFixed(2) && (
-                <button type="button"
-                  onClick={() => setF(p => ({ ...p, amount: String(lastExp.amount) }))}
-                  className="text-xs text-primary hover:underline font-medium">
-                  Вернуть
-                </button>
-              )}
-            </div>
-          )
-        })()}
-      </div>
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Дата оплаты</label>
-        <input type="date" value={f.paid_date} onChange={e => setF(p => ({ ...p, paid_date: e.target.value }))} className={expFieldCls} />
-      </div>
-      <div className="flex flex-col gap-1 col-span-2">
-        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">За какой период (необязательно)</label>
-        <input type="text" placeholder="напр. 1 кв. 2026, январь 2026..." value={f.period_note} onChange={e => setF(p => ({ ...p, period_note: e.target.value }))} className={expFieldCls} />
-      </div>
-      <div className="flex flex-col gap-1 col-span-2">
-        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Заметки</label>
-        <input type="text" placeholder="Необязательно" value={f.notes} onChange={e => setF(p => ({ ...p, notes: e.target.value }))} className={expFieldCls} />
-      </div>
-      <div className="col-span-2">
-        <label className="flex items-center gap-2.5 cursor-pointer select-none">
-          <input type="checkbox" checked={f.is_recurring} onChange={e => {
-            const checked = e.target.checked
-            setF(p => {
-              if (checked && p.category_name && !p.amount) {
-                const last = allExpenses.find(ex => ex.category_name === p.category_name && ex.is_recurring && ex.apartment_id === p.apartment_id)
-                if (last) return { ...p, is_recurring: checked, amount: String(last.amount) }
-              }
-              return { ...p, is_recurring: checked }
-            })
-          }} className="w-4 h-4 rounded accent-primary" />
-          <span className="text-sm font-medium">Ежемесячный платёж</span>
-        </label>
-      </div>
+
+      {/* Add expense modal */}
+      <AnimatePresence>
+        {showAdd && <AddExpenseModal apartments={apartments} onClose={() => setShowAdd(false)} onSaved={invalidate} />}
+      </AnimatePresence>
     </div>
   )
+}
+
+
+// ─── Tax Report Section ───────────────────────────────────────────────────────
+
+function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; bookings: BookingRow[] }) {
+  const [year, setYear] = useState(new Date().getFullYear())
+  const [aptFilter, setAptFilter] = useState('all')
+  const { user } = useAuth()
+
+  const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i)
+
+  const { data: expenses = [] } = useQuery({
+    queryKey: ['tax-expenses', user?.id, year],
+    queryFn: async () => {
+      const { data } = await supabase.from('expenses').select('*')
+        .eq('owner_id', user!.id).eq('status', 'confirmed').is('deleted_at', null)
+        .gte('expense_date', `${year}-01-01`).lte('expense_date', `${year}-12-31`)
+      return (data ?? []) as Expense[]
+    },
+    enabled: !!user,
+  })
+
+  const filteredApts = aptFilter === 'all' ? apartments : apartments.filter(a => a.id === aptFilter)
+
+  const aptData = filteredApts.map(apt => {
+    const aptBookings = bookings.filter(b =>
+      b.apartment_id === apt.id &&
+      b.status === 'accepted' &&
+      b.start_date >= `${year}-01-01` &&
+      b.start_date <= `${year}-12-31`
+    )
+    const aptExpenses = expenses.filter(e => e.apartment_id === apt.id)
+
+    const totalIncome = aptBookings.reduce((s, b) => s + (b.total_amount ?? 0), 0)
+    const totalDays = aptBookings.reduce((s, b) => {
+      const d1 = new Date(b.start_date), d2 = new Date(b.end_date)
+      return s + Math.max(0, Math.round((d2.getTime() - d1.getTime()) / 86400000))
+    }, 0)
+    const totalExpenses = aptExpenses.reduce((s, e) => s + e.amount, 0)
+
+    // Амортизация: 3% от стоимости строения
+    const depreciation = apt.construction_value ? apt.construction_value * 0.03 : 0
+
+    // Пропорция дней аренды от 365
+    const rentalRatio = Math.min(totalDays / 365, 1)
+    const deductibleExpenses = totalExpenses * rentalRatio
+    const deductibleDepreciation = depreciation * rentalRatio
+
+    const netIncome = totalIncome - deductibleExpenses - deductibleDepreciation
+
+    const expByCategory = aptExpenses.reduce<Record<string, number>>((acc, e) => {
+      acc[e.category] = (acc[e.category] ?? 0) + e.amount; return acc
+    }, {})
+
+    return {
+      apt, totalIncome, totalDays, totalExpenses, depreciation,
+      rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome,
+      expByCategory, bookingsCount: aptBookings.length,
+    }
+  })
+
+  const grandIncome = aptData.reduce((s, d) => s + d.totalIncome, 0)
+  const grandExpenses = aptData.reduce((s, d) => s + d.deductibleExpenses, 0)
+  const grandDepreciation = aptData.reduce((s, d) => s + d.deductibleDepreciation, 0)
+  const grandNet = aptData.reduce((s, d) => s + d.netIncome, 0)
+
+  const handlePrint = () => window.print()
 
   return (
-    <div className="flex flex-col gap-5">
-
-      {/* ── Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="flex flex-col gap-5 max-w-4xl">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-xl font-display font-semibold">Расходы</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">Управление всеми расходами по квартирам</p>
+          <h2 className="text-xl font-display font-semibold flex items-center gap-2">
+            <FileSpreadsheet size={20} className="text-primary" /> Налоговый отчёт IRPF
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">Modelo 100 — данные для декларации о доходах</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Month navigator */}
-          <div className="flex items-center gap-0.5 bg-card border border-border rounded-xl px-1 py-1">
-            <button onClick={prevPeriod} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors"><ChevronLeft size={14} /></button>
-            <span className="text-sm font-medium px-2 min-w-[120px] text-center">
-              {EXP_MONTH_NAMES[periodMonth - 1]} {periodYear}
-            </span>
-            <button onClick={nextPeriod} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors"><ChevronRight size={14} /></button>
-          </div>
-          <button
-            onClick={() => { setForm(emptyForm); setShowAddModal(true) }}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:opacity-90 whitespace-nowrap">
-            <Plus size={16} /> Добавить расход
+        <div className="flex gap-2">
+          <select value={year} onChange={e => setYear(Number(e.target.value))}
+            className="rounded-xl border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          {apartments.length > 1 && (
+            <select value={aptFilter} onChange={e => setAptFilter(e.target.value)}
+              className="rounded-xl border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+              <option value="all">Все квартиры</option>
+              {apartments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
+            </select>
+          )}
+          <button onClick={handlePrint}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:opacity-90">
+            <Printer size={15} /> Печать / PDF
           </button>
         </div>
       </div>
 
-      {/* ── Stat cards ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {/* 1. В этом месяце — shows selected period, clickable */}
-        <button onClick={() => setExpMonthModal(true)}
-          className="bg-card border border-border rounded-2xl p-4 flex flex-col gap-2 text-left hover:bg-muted/30 transition-colors">
-          <span className="text-xs text-muted-foreground font-medium">В этом месяце</span>
-          <span className="text-2xl font-bold leading-none">{fmtEur(periodMonthTotal)}</span>
-          <span className="text-xs text-muted-foreground">{periodExpenses.length} расход{periodExpenses.length === 1 ? '' : periodExpenses.length < 5 ? 'а' : 'ов'}</span>
-        </button>
-        {/* 2. В этом году — year selector on click */}
-        <button onClick={() => setYearViewModal(true)}
-          className="bg-card border border-border rounded-2xl p-4 flex flex-col gap-2 text-left hover:bg-muted/30 transition-colors">
-          <span className="text-xs text-muted-foreground font-medium">В этом году</span>
-          <span className="text-2xl font-bold leading-none">{fmtEur(totalYearView)}</span>
-          <span className="text-xs text-muted-foreground">{yearViewYear} год · {yearViewExps.length} записей</span>
-        </button>
-        {/* 3. Средний в месяц — from yearViewYear data */}
-        <div className="bg-card border border-border rounded-2xl p-4 flex flex-col gap-2">
-          <span className="text-xs text-muted-foreground font-medium">Средний в месяц</span>
-          <span className="text-2xl font-bold leading-none">{fmtEur(avgMonthYearView)}</span>
-          <span className="text-xs text-muted-foreground">за {yearViewYear} год · {distinctMonthsYearView} мес.</span>
-        </div>
+      {/* Summary banner */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: 'Доходы (casilla 0102)', value: grandIncome, color: 'text-green-600' },
+          { label: 'Расходы вычитаемые', value: grandExpenses, color: 'text-red-500' },
+          { label: 'Амортизация (3%)', value: grandDepreciation, color: 'text-orange-500' },
+          { label: 'Чистый доход', value: grandNet, color: grandNet >= 0 ? 'text-primary' : 'text-destructive' },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="bg-card border border-border rounded-2xl p-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide leading-tight">{label}</p>
+            <p className={`text-xl font-bold mt-1 ${color}`}>€{Math.abs(value).toFixed(2)}</p>
+          </div>
+        ))}
       </div>
 
-      {/* ── Charts row ── */}
-      <div className="grid md:grid-cols-2 gap-4">
-
-        {/* Bar chart — Динамика расходов */}
-        <div className="bg-card border border-border rounded-2xl p-4">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-sm">Динамика расходов</h3>
-            <span className="text-xs text-muted-foreground">{periodYear}</span>
-          </div>
-          <div onMouseDown={e => e.preventDefault()} style={{ userSelect: 'none' }}>
-          <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={barData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }} style={{ outline: 'none' }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-              <XAxis dataKey="month" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
-              <RechartTooltip
-                content={({ active, payload, label }) => {
-                  if (!active || !payload?.length || !payload[0].value) return null
-                  return (
-                    <div className="bg-card border border-border rounded-xl px-3 py-2 shadow-lg text-xs">
-                      <div className="font-semibold text-foreground">{label}</div>
-                      <div className="text-primary font-bold mt-0.5">{fmtEur(Number(payload[0].value))}</div>
-                    </div>
-                  )
-                }}
-                cursor={{ fill: 'hsl(var(--muted))', radius: 4 }}
-              />
-              <Bar dataKey="value" fill="#6366f1" radius={[4, 4, 0, 0]} maxBarSize={32}
-                onClick={(_data, index) => { if (barData[index]?.value > 0) setBarClickMonth(index) }}
-                style={{ cursor: 'pointer' }} />
-            </BarChart>
-          </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Donut chart — Расходы по категориям */}
-        <div className="bg-card border border-border rounded-2xl p-4">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-sm">Расходы по категориям</h3>
-            <span className="text-xs text-muted-foreground">{EXP_MONTH_NAMES[periodMonth - 1]}</span>
-          </div>
-          {donutData.length === 0 ? (
-            <div className="h-[160px] flex items-center justify-center text-muted-foreground text-sm">
-              Нет данных за период
-            </div>
-          ) : (
-            <div className="flex items-center gap-4">
-              <div className="relative flex-shrink-0" style={{ width: 140, height: 140 }}>
-                <PieChart width={140} height={140}>
-                  <Pie data={donutData} cx={65} cy={65} innerRadius={44} outerRadius={62}
-                    dataKey="value" stroke="none" startAngle={90} endAngle={-270}>
-                    {donutData.map((entry, index) => (
-                      <Cell key={index} fill={entry.color} />
-                    ))}
-                  </Pie>
-                </PieChart>
-                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                  <span className="text-[10px] text-muted-foreground leading-tight">Итого</span>
-                  <span className="text-sm font-bold leading-tight">{fmtEur(donutTotal)}</span>
-                </div>
+      {/* Per-apartment tables */}
+      {aptData.map(({ apt, totalIncome, totalDays, totalExpenses, depreciation,
+        rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome, expByCategory, bookingsCount }) => (
+        <div key={apt.id} className="bg-card border border-border rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-border bg-muted/30">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <h3 className="font-semibold">{apt.title}</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">{apt.full_address ?? apt.address}</p>
+                {apt.cadastral_reference && (
+                  <p className="text-xs text-muted-foreground">Ref. catastral: <span className="font-mono">{apt.cadastral_reference}</span></p>
+                )}
               </div>
-              <div className="flex flex-col gap-2 flex-1 min-w-0">
-                {donutData.slice(0, 7).map(d => (
-                  <div key={d.name} className="flex items-center gap-2">
-                    <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: d.color }} />
-                    <span className="text-xs text-muted-foreground truncate flex-1">{d.name}</span>
-                    <span className="text-xs font-semibold flex-shrink-0">{fmtEur(d.value)}</span>
-                  </div>
-                ))}
+              <div className="flex gap-4 text-right">
+                <div><p className="text-xs text-muted-foreground">Бронирований</p><p className="font-bold">{bookingsCount}</p></div>
+                <div><p className="text-xs text-muted-foreground">Дней аренды</p><p className="font-bold">{totalDays}</p></div>
+                <div><p className="text-xs text-muted-foreground">% использ.</p><p className="font-bold">{(rentalRatio * 100).toFixed(1)}%</p></div>
               </div>
             </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Expense list table ── */}
-      <div className="bg-card border border-border rounded-2xl overflow-hidden">
-        {/* Table header + filters */}
-        <div className="px-4 py-4 border-b border-border">
-          <h3 className="font-semibold mb-3">Список расходов</h3>
-          <div className="flex flex-wrap gap-2">
-            <select value={catFilter} onChange={e => { setCatFilter(e.target.value); setPage(1) }}
-              className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
-              <option value="">Все категории</option>
-              {allCats.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-            {apartments.length > 1 && (
-              <select value={aptFilter} onChange={e => { setAptFilter(e.target.value); setPage(1) }}
-                className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
-                <option value="">Все квартиры</option>
-                {apartments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
-              </select>
-            )}
-            <div className="relative flex-1 min-w-[160px]">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <input type="text" placeholder="Поиск расходов" value={search}
-                onChange={e => { setSearch(e.target.value); setPage(1) }}
-                className="w-full rounded-xl border border-border bg-background pl-8 pr-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-            </div>
           </div>
-        </div>
 
-        {isLoading ? (
-          <div className="p-8 text-center text-muted-foreground text-sm">Загрузка...</div>
-        ) : filteredExpenses.length === 0 ? (
-          <div className="p-8 text-center text-muted-foreground text-sm">Нет расходов за выбранный период</div>
-        ) : showGrouped && groupedExpenses ? (
-          // ── Grouped by apartment ──────────────────────────────────────────────
-          <div className="divide-y divide-border">
-            {groupedExpenses.map(group => (
-              <div key={group.apt.id}>
-                {/* Apartment group header */}
-                <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40 border-b border-border">
-                  <div className="flex items-center gap-2">
-                    <Home size={13} className="text-muted-foreground" />
-                    <span className="text-xs font-semibold text-foreground">{group.apt.title}</span>
-                    <span className="text-[11px] text-muted-foreground">{group.expenses.length} запис{group.expenses.length === 1 ? 'ь' : group.expenses.length < 5 ? 'и' : 'ей'}</span>
-                  </div>
-                  <span className="text-xs font-bold text-foreground">{fmtEur(group.total)}</span>
-                </div>
-
-                {/* Desktop table for this group */}
-                <div className="hidden sm:block overflow-x-auto">
-                  <table className="w-full text-sm">
-                    {group === groupedExpenses[0] && (
-                      <thead>
-                        <tr className="border-b border-border bg-muted/10">
-                          <th className="text-left px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Дата</th>
-                          <th className="text-left px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Категория</th>
-                          <th className="text-left px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Описание</th>
-                          <th className="text-left px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Период</th>
-                          <th className="text-right px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Сумма</th>
-                          <th className="w-[72px]" />
-                        </tr>
-                      </thead>
-                    )}
-                    <tbody className="divide-y divide-border">
-                      {group.expenses.map(e => {
-                        const meta = catMeta(e.category_name)
-                        return (
-                          <tr key={e.id} className="hover:bg-muted/20 transition-colors">
-                            <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
-                              {format(parseISO(e.paid_date), 'd MMM yyyy', { locale: ru })}
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-2">
-                                <div className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 ${meta.bg}`}>
-                                  <span className={meta.color}>{meta.icon}</span>
-                                </div>
-                                <span className="font-medium">{e.category_name}</span>
-                                {e.is_recurring && <span className="text-xs" title="Ежемесячный">🔄</span>}
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 text-muted-foreground max-w-[180px] truncate">{e.notes || '—'}</td>
-                            <td className="px-4 py-3">
-                              {e.period_note
-                                ? <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-xs font-medium bg-primary/10 text-primary">{e.period_note}</span>
-                                : <span className="text-muted-foreground text-xs">—</span>}
-                            </td>
-                            <td className="px-4 py-3 text-right font-semibold whitespace-nowrap">{fmtEur(e.amount)}</td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-0.5 justify-end">
-                                <button onClick={() => startEdit(e)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><Pencil size={13} /></button>
-                                <button onClick={() => handleDelete(e.id)} disabled={deleting === e.id}
-                                  className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 size={13} /></button>
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Mobile cards for this group */}
-                <div className="sm:hidden divide-y divide-border">
-                  {group.expenses.map(e => {
-                    const meta = catMeta(e.category_name)
-                    return (
-                      <div key={e.id} className="px-4 py-3 flex items-start gap-3">
-                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${meta.bg}`}>
-                          <span className={meta.color}>{meta.icon}</span>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold">{e.category_name}</span>
-                            {e.is_recurring && <span className="text-xs">🔄</span>}
-                            <span className="text-sm font-bold ml-auto">{fmtEur(e.amount)}</span>
-                          </div>
-                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                            <span className="text-xs text-muted-foreground">{format(parseISO(e.paid_date), 'd MMM yyyy', { locale: ru })}</span>
-                          </div>
-                          {e.period_note && <span className="text-xs text-primary font-medium mt-0.5 inline-block">{e.period_note}</span>}
-                          {e.notes && <p className="text-xs text-muted-foreground mt-0.5">{e.notes}</p>}
-                        </div>
-                        <div className="flex gap-0.5 flex-shrink-0">
-                          <button onClick={() => startEdit(e)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><Pencil size={13} /></button>
-                          <button onClick={() => handleDelete(e.id)} disabled={deleting === e.id}
-                            className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 size={13} /></button>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
+          <div className="p-5 grid sm:grid-cols-2 gap-6">
+            {/* Income */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Доходы</p>
+              <div className="flex justify-between py-2 border-b border-border">
+                <span className="text-sm">Доходы от аренды (casilla 0102)</span>
+                <span className="font-semibold text-green-600">€{totalIncome.toFixed(2)}</span>
               </div>
-            ))}
-          </div>
-        ) : (
-          // ── Flat list with pagination ─────────────────────────────────────────
-          <>
-            {/* Desktop table */}
-            <div className="hidden sm:block overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-muted/30">
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Дата</th>
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Категория</th>
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Описание</th>
-                    {apartments.length > 1 && <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Квартира</th>}
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Период</th>
-                    <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Сумма</th>
-                    <th className="w-[72px]" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {paginated.map(e => {
-                    const meta = catMeta(e.category_name)
-                    const aptName = apartments.find(a => a.id === e.apartment_id)?.title ?? ''
-                    return (
-                      <tr key={e.id} className="hover:bg-muted/20 transition-colors">
-                        <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
-                          {format(parseISO(e.paid_date), 'd MMM yyyy', { locale: ru })}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <div className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 ${meta.bg}`}>
-                              <span className={meta.color}>{meta.icon}</span>
-                            </div>
-                            <span className="font-medium">{e.category_name}</span>
-                            {e.is_recurring && <span className="text-xs" title="Ежемесячный">🔄</span>}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-muted-foreground max-w-[180px] truncate">{e.notes || '—'}</td>
-                        {apartments.length > 1 && <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{aptName}</td>}
-                        <td className="px-4 py-3">
-                          {e.period_note
-                            ? <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-xs font-medium bg-primary/10 text-primary">{e.period_note}</span>
-                            : <span className="text-muted-foreground text-xs">—</span>}
-                        </td>
-                        <td className="px-4 py-3 text-right font-semibold whitespace-nowrap">{fmtEur(e.amount)}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-0.5 justify-end">
-                            <button onClick={() => startEdit(e)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><Pencil size={13} /></button>
-                            <button onClick={() => handleDelete(e.id)} disabled={deleting === e.id}
-                              className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 size={13} /></button>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
             </div>
 
-            {/* Mobile cards */}
-            <div className="sm:hidden divide-y divide-border">
-              {paginated.map(e => {
-                const meta = catMeta(e.category_name)
-                const aptName = apartments.find(a => a.id === e.apartment_id)?.title ?? ''
+            {/* Expenses */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                Расходы ({(rentalRatio * 100).toFixed(0)}% пропорционально)
+              </p>
+              {Object.entries(expByCategory).map(([cat, amt]) => {
+                const meta = EXP_CATEGORIES[cat] ?? EXP_CATEGORIES.other
+                const deductible = amt * rentalRatio
                 return (
-                  <div key={e.id} className="px-4 py-3 flex items-start gap-3">
-                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${meta.bg}`}>
-                      <span className={meta.color}>{meta.icon}</span>
+                  <div key={cat} className="flex justify-between py-1.5 border-b border-border/50 text-sm">
+                    <span className="text-muted-foreground flex items-center gap-1">
+                      <span className={meta.color}>{meta.icon}</span> {meta.label}
+                    </span>
+                    <span>€{deductible.toFixed(2)}</span>
+                  </div>
+                )
+              })}
+              {apt.construction_value && (
+                <div className="flex justify-between py-1.5 border-b border-border/50 text-sm">
+                  <span className="text-muted-foreground">Амортизация 3% (casilla 0112)</span>
+                  <span>€{deductibleDepreciation.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between py-2 mt-1 font-semibold">
+                <span>Итого расходы</span>
+                <span className="text-red-500">€{(deductibleExpenses + deductibleDepreciation).toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-5 py-3 border-t border-border bg-muted/30 flex justify-between items-center">
+            <span className="font-semibold">Чистый доход / убыток</span>
+            <span className={`text-lg font-bold ${netIncome >= 0 ? 'text-primary' : 'text-destructive'}`}>
+              {netIncome < 0 ? '−' : '+'}€{Math.abs(netIncome).toFixed(2)}
+            </span>
+          </div>
+        </div>
+      ))}
+
+      {aptData.length === 0 && (
+        <div className="bg-card border border-border rounded-2xl p-10 text-center text-muted-foreground">
+          Нет данных за {year} год
+        </div>
+      )}
+
+      <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-2xl p-4 text-sm text-blue-800 dark:text-blue-300">
+        <p className="font-semibold mb-1">ℹ️ Инструкция для декларации Modelo 100</p>
+        <p>Заполните данные вручную по расчётам выше: раздел «Rendimientos del capital inmobiliario», casillas 0102 (ingresos íntegros), 0106–0115 (gastos deducibles), 0116 (amortización). Рекомендуется проверить с налоговым консультантом.</p>
+      </div>
+    </div>
+  )
+}
+
+// ─── Admin Section ────────────────────────────────────────────────────────────
+
+type AgentLog = {
+  id: string; run_at: string; emails_checked: number
+  bookings_created: number; bookings_updated: number
+  expenses_created: number; skipped: number
+  errors: Record<string, unknown>[] | null; status: string
+}
+
+type UserAlias = { id: string; user_id: string; alias: string; created_at: string }
+type UserProfile = { id: string; name: string; email: string | null; is_active: boolean; created_at: string }
+
+function AdminSection() {
+  const [tab, setTab] = useState<'users' | 'agent' | 'restore'>('users')
+  const { user } = useAuth()
+  const qc = useQueryClient()
+
+  const { data: profiles = [] } = useQuery({
+    queryKey: ['admin-profiles'],
+    queryFn: async () => {
+      const { data } = await supabase.from('profiles').select('*').order('created_at')
+      return (data ?? []) as UserProfile[]
+    },
+  })
+
+  const { data: aliases = [] } = useQuery({
+    queryKey: ['admin-aliases'],
+    queryFn: async () => {
+      const { data } = await supabase.from('user_email_aliases').select('*').order('alias')
+      return (data ?? []) as UserAlias[]
+    },
+  })
+
+  const { data: agentLogs = [] } = useQuery({
+    queryKey: ['admin-agent-logs'],
+    queryFn: async () => {
+      const { data } = await supabase.from('agent_logs').select('*')
+        .order('run_at', { ascending: false }).limit(20)
+      return (data ?? []) as AgentLog[]
+    },
+  })
+
+  const { data: deletedBookings = [] } = useQuery({
+    queryKey: ['admin-deleted-bookings'],
+    queryFn: async () => {
+      const { data } = await supabase.from('bookings').select('*, apartments(title)')
+        .not('deleted_at', 'is', null).order('deleted_at', { ascending: false }).limit(50)
+      return (data ?? []) as (BookingRow & { deleted_at: string })[]
+    },
+    enabled: tab === 'restore',
+  })
+
+  const { data: deletedExpenses = [] } = useQuery({
+    queryKey: ['admin-deleted-expenses'],
+    queryFn: async () => {
+      const { data } = await supabase.from('expenses').select('*')
+        .not('deleted_at', 'is', null).order('deleted_at', { ascending: false }).limit(50)
+      return (data ?? []) as (Expense & { deleted_at: string })[]
+    },
+    enabled: tab === 'restore',
+  })
+
+  const [newAlias, setNewAlias] = useState('')
+  const [newAliasUser, setNewAliasUser] = useState('')
+
+  const handleAddAlias = async () => {
+    if (!newAlias.trim() || !newAliasUser) return
+    await supabase.from('user_email_aliases').insert({ user_id: newAliasUser, alias: newAlias.trim().toLowerCase() })
+    qc.invalidateQueries({ queryKey: ['admin-aliases'] })
+    setNewAlias('')
+  }
+
+  const handleDeleteAlias = async (id: string) => {
+    await supabase.from('user_email_aliases').delete().eq('id', id)
+    qc.invalidateQueries({ queryKey: ['admin-aliases'] })
+  }
+
+  const handleRestoreBooking = async (id: string) => {
+    await supabase.rpc('restore_booking', { _booking_id: id })
+    qc.invalidateQueries({ queryKey: ['admin-deleted-bookings'] })
+    qc.invalidateQueries({ queryKey: ['owner-bookings-full'] })
+  }
+
+  const handleRestoreExpense = async (id: string) => {
+    await supabase.rpc('restore_expense', { _expense_id: id })
+    qc.invalidateQueries({ queryKey: ['admin-deleted-expenses'] })
+    qc.invalidateQueries({ queryKey: ['expenses-confirmed'] })
+  }
+
+  const TAB_ITEMS = [
+    { id: 'users' as const,   label: 'Пользователи', icon: <UserCircle size={15} /> },
+    { id: 'agent' as const,   label: 'Агент',         icon: <Bot size={15} /> },
+    { id: 'restore' as const, label: 'Восстановление',icon: <RotateCcw size={15} /> },
+  ]
+
+  const statusBadge = (s: string) => {
+    const map: Record<string, string> = {
+      success: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
+      partial: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
+      failed:  'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400',
+    }
+    return map[s] ?? 'bg-muted text-muted-foreground'
+  }
+
+  return (
+    <div className="flex flex-col gap-5 max-w-4xl">
+      <div>
+        <h2 className="text-xl font-display font-semibold flex items-center gap-2">
+          <ShieldCheck size={20} className="text-primary" /> Панель администратора
+        </h2>
+        <p className="text-sm text-muted-foreground mt-0.5">Только для администраторов</p>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 bg-muted p-1 rounded-xl w-fit">
+        {TAB_ITEMS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+              tab === t.id ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
+            }`}>
+            {t.icon} {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* USERS TAB */}
+      {tab === 'users' && (
+        <div className="flex flex-col gap-4">
+          {/* User list */}
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+              <UserCircle size={14} className="text-muted-foreground" />
+              <span className="font-semibold text-sm">Пользователи ({profiles.length})</span>
+            </div>
+            <div className="divide-y divide-border">
+              {profiles.map(p => {
+                const userAlias = aliases.find(a => a.user_id === p.id)
+                return (
+                  <div key={p.id} className="px-4 py-3 flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${
+                      p.is_active ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+                    }`}>
+                      {(p.name || p.email || '?')[0].toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold">{e.category_name}</span>
-                        {e.is_recurring && <span className="text-xs">🔄</span>}
-                        <span className="text-sm font-bold ml-auto">{fmtEur(e.amount)}</span>
-                      </div>
-                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-xs text-muted-foreground">{format(parseISO(e.paid_date), 'd MMM yyyy', { locale: ru })}</span>
-                        {apartments.length > 1 && <span className="text-xs text-muted-foreground">· {aptName}</span>}
-                      </div>
-                      {e.period_note && <span className="text-xs text-primary font-medium mt-0.5 inline-block">{e.period_note}</span>}
-                      {e.notes && <p className="text-xs text-muted-foreground mt-0.5">{e.notes}</p>}
+                      <p className="text-sm font-semibold">{p.name || '(без имени)'}</p>
+                      <p className="text-xs text-muted-foreground">{p.email}</p>
                     </div>
-                    <div className="flex gap-0.5 flex-shrink-0">
-                      <button onClick={() => startEdit(e)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><Pencil size={13} /></button>
-                      <button onClick={() => handleDelete(e.id)} disabled={deleting === e.id}
-                        className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 size={13} /></button>
+                    <div className="text-right flex-shrink-0">
+                      {userAlias ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 px-2 py-0.5 rounded-full font-mono">
+                            +{userAlias.alias}
+                          </span>
+                          <button onClick={() => handleDeleteAlias(userAlias.id)}
+                            className="p-1 rounded text-muted-foreground hover:text-destructive">
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">нет алиаса</span>
+                      )}
                     </div>
                   </div>
                 )
               })}
             </div>
+          </div>
 
-            {/* Pagination */}
-            <div className="px-4 py-3 border-t border-border flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-1">
-                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
-                  className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground disabled:opacity-40 transition-colors"><ChevronLeft size={14} /></button>
-                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                  const p = i + 1
-                  return (
-                    <button key={p} onClick={() => setPage(p)}
-                      className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors ${page === p ? 'bg-primary text-primary-foreground' : 'hover:bg-muted text-muted-foreground'}`}>
-                      {p}
-                    </button>
-                  )
-                })}
-                {totalPages > 5 && <span className="text-muted-foreground text-sm px-1">…</span>}
-                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-                  className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground disabled:opacity-40 transition-colors"><ChevronRight size={14} /></button>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>На странице:</span>
-                <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }}
-                  className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:outline-none">
-                  {[5, 10, 20, 50].map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
-              </div>
+          {/* Add alias */}
+          <div className="bg-card border border-border rounded-2xl p-4">
+            <p className="text-sm font-semibold mb-3">Назначить email-алиас</p>
+            <div className="flex gap-2 flex-wrap">
+              <select value={newAliasUser} onChange={e => setNewAliasUser(e.target.value)}
+                className="flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+                <option value="">— Выберите пользователя —</option>
+                {profiles.map(p => <option key={p.id} value={p.id}>{p.name || p.email}</option>)}
+              </select>
+              <input type="text" value={newAlias} onChange={e => setNewAlias(e.target.value)}
+                placeholder="rafael" className="w-40 rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+              <button onClick={handleAddAlias} disabled={!newAlias || !newAliasUser}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-50">
+                Назначить
+              </button>
             </div>
-          </>
-        )}
-      </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              Email: bloknot.app+<span className="font-mono">{newAlias || 'алиас'}</span>@gmail.com
+            </p>
+          </div>
+        </div>
+      )}
 
-      {/* ── Add expense modal ── */}
-      <AnimatePresence>
-        {showAddModal && (
-          <ExpModal title="Новый расход" onClose={() => setShowAddModal(false)} onSave={handleSave}
-            canSave={!saving && !!form.category_name && !!form.amount} saving={saving}>
-            {renderFormFields(form, setForm)}
-          </ExpModal>
-        )}
-      </AnimatePresence>
-
-      {/* ── Edit expense modal ── */}
-      <AnimatePresence>
-        {editingExp && (
-          <ExpModal title="Редактировать расход" onClose={() => setEditingExp(null)} onSave={handleUpdate}
-            canSave={!!editForm.category_name && !!editForm.amount}>
-            {renderFormFields(editForm, setEditForm)}
-          </ExpModal>
-        )}
-      </AnimatePresence>
-
-      {/* ── Year view modal ── */}
-      <AnimatePresence>
-        {yearViewModal && (
-          <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setYearViewModal(false)} />
-            <motion.div className="relative bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl"
-              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}>
-              <div className="px-5 py-4 border-b border-border bg-card rounded-t-2xl">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold">Расходы за год</h3>
-                  <button onClick={() => setYearViewModal(false)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X size={16} /></button>
+      {/* AGENT TAB */}
+      {tab === 'agent' && (
+        <div className="bg-card border border-border rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+            <Bot size={14} className="text-muted-foreground" />
+            <span className="font-semibold text-sm">Последние запуски агента</span>
+          </div>
+          {agentLogs.length === 0 ? (
+            <div className="p-8 text-center text-muted-foreground text-sm">Агент ещё не запускался</div>
+          ) : (
+            <div className="divide-y divide-border">
+              {agentLogs.map(log => (
+                <div key={log.id} className="px-4 py-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusBadge(log.status)}`}>
+                      {log.status === 'success' ? 'ОК' : log.status === 'partial' ? 'Частично' : 'Ошибка'}
+                    </span>
+                    <span className="text-sm font-medium">
+                      {format(parseISO(log.run_at), 'd MMM yyyy HH:mm', { locale: ru })}
+                    </span>
+                    <span className="text-xs text-muted-foreground ml-auto">
+                      📧 {log.emails_checked} писем
+                    </span>
+                  </div>
+                  <div className="flex gap-4 mt-1.5 text-xs text-muted-foreground flex-wrap">
+                    {log.bookings_created > 0 && <span>+{log.bookings_created} бронирований</span>}
+                    {log.bookings_updated > 0 && <span>↻ {log.bookings_updated} обновлено</span>}
+                    {log.expenses_created > 0 && <span>+{log.expenses_created} расходов</span>}
+                    {log.skipped > 0 && <span>{log.skipped} пропущено</span>}
+                  </div>
+                  {log.errors && log.errors.length > 0 && (
+                    <div className="mt-1.5 text-xs text-destructive">
+                      {log.errors.length} ошибок — {JSON.stringify(log.errors[0])}
+                    </div>
+                  )}
                 </div>
-                {/* Year navigation */}
-                <div className="flex items-center gap-2 mt-3">
-                  <button onClick={() => setYearViewYear(y => y - 1)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors"><ChevronLeft size={15} /></button>
-                  <span className="text-lg font-bold px-2">{yearViewYear}</span>
-                  <button onClick={() => setYearViewYear(y => y + 1)} disabled={yearViewYear >= thisYear} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground disabled:opacity-30 transition-colors"><ChevronRight size={15} /></button>
-                  <span className="ml-auto text-sm text-muted-foreground">{yearViewExps.length} записей · <span className="font-semibold text-foreground">{fmtEur(totalYearView)}</span></span>
-                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* RESTORE TAB */}
+      {tab === 'restore' && (
+        <div className="flex flex-col gap-4">
+          {/* Deleted bookings */}
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+              <RotateCcw size={14} className="text-muted-foreground" />
+              <span className="font-semibold text-sm">Удалённые бронирования ({deletedBookings.length})</span>
+            </div>
+            {deletedBookings.length === 0 ? (
+              <div className="p-6 text-center text-muted-foreground text-sm">Нет удалённых бронирований</div>
+            ) : (
+              <div className="divide-y divide-border">
+                {deletedBookings.map(b => (
+                  <div key={b.id} className="px-4 py-3 flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold">{b.guest_name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {b.apartments?.title} · {b.start_date} — {b.end_date}
+                      </p>
+                    </div>
+                    <button onClick={() => handleRestoreBooking(b.id)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 flex-shrink-0">
+                      <RotateCcw size={12} /> Восстановить
+                    </button>
+                  </div>
+                ))}
               </div>
-              <div className="overflow-y-auto flex-1 divide-y divide-border">
-                {yearViewExps.length === 0 ? (
-                  <div className="p-8 text-center text-muted-foreground text-sm">Нет расходов за {yearViewYear} год</div>
-                ) : yearViewExps.map(e => {
-                  const meta = catMeta(e.category_name)
-                  const aptName = apartments.find(a => a.id === e.apartment_id)?.title ?? ''
+            )}
+          </div>
+
+          {/* Deleted expenses */}
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+              <RotateCcw size={14} className="text-muted-foreground" />
+              <span className="font-semibold text-sm">Удалённые расходы ({deletedExpenses.length})</span>
+            </div>
+            {deletedExpenses.length === 0 ? (
+              <div className="p-6 text-center text-muted-foreground text-sm">Нет удалённых расходов</div>
+            ) : (
+              <div className="divide-y divide-border">
+                {deletedExpenses.map(e => {
+                  const cat = EXP_CATEGORIES[e.category] ?? EXP_CATEGORIES.other
                   return (
-                    <div key={e.id} className="px-5 py-3 flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${meta.bg}`}>
-                        <span className={meta.color}>{meta.icon}</span>
+                    <div key={e.id} className="px-4 py-3 flex items-center gap-3">
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${cat.bg}`}>
+                        <span className={cat.color}>{cat.icon}</span>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold">{e.category_name}</span>
-                          {e.is_recurring && <span className="text-xs">🔄</span>}
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
-                          <span>{format(parseISO(e.paid_date), 'd MMM yyyy', { locale: ru })}</span>
-                          {apartments.length > 1 && <span>· {aptName}</span>}
-                          {e.notes && <span>· {e.notes}</span>}
-                        </div>
+                        <p className="text-sm font-semibold">{cat.label} · €{e.amount.toFixed(2)}</p>
+                        <p className="text-xs text-muted-foreground">{e.expense_date} · {e.provider ?? ''}</p>
                       </div>
-                      <span className="text-sm font-bold flex-shrink-0">{fmtEur(e.amount)}</span>
+                      <button onClick={() => handleRestoreExpense(e.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 flex-shrink-0">
+                        <RotateCcw size={12} /> Восстановить
+                      </button>
                     </div>
                   )
                 })}
               </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── Period month modal ── */}
-      <AnimatePresence>
-        {expMonthModal && (
-          <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setExpMonthModal(false)} />
-            <motion.div className="relative bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl"
-              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}>
-              <div className="px-5 py-4 border-b border-border flex items-center justify-between bg-card rounded-t-2xl">
-                <div>
-                  <h3 className="font-semibold">{EXP_MONTH_NAMES[periodMonth - 1]} {periodYear}</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">{periodExpenses.length} записей · {fmtEur(periodMonthTotal)}</p>
-                </div>
-                <button onClick={() => setExpMonthModal(false)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X size={16} /></button>
-              </div>
-              <div className="overflow-y-auto flex-1 divide-y divide-border">
-                {periodExpenses.length === 0 ? (
-                  <div className="p-8 text-center text-muted-foreground text-sm">Нет расходов за этот месяц</div>
-                ) : periodExpenses.map(e => {
-                  const meta = catMeta(e.category_name)
-                  const aptName = apartments.find(a => a.id === e.apartment_id)?.title ?? ''
-                  return (
-                    <div key={e.id} className="px-5 py-3 flex items-center gap-3 hover:bg-muted/20 transition-colors">
-                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${meta.bg}`}>
-                        <span className={meta.color}>{meta.icon}</span>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold">{e.category_name}</span>
-                          {e.is_recurring && <span className="text-xs">🔄</span>}
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
-                          <span>{format(parseISO(e.paid_date), 'd MMM yyyy', { locale: ru })}</span>
-                          {apartments.length > 1 && <span>· {aptName}</span>}
-                          {e.notes && <span>· {e.notes}</span>}
-                        </div>
-                      </div>
-                      <span className="text-sm font-bold flex-shrink-0">{fmtEur(e.amount)}</span>
-                      <div className="flex gap-0.5 flex-shrink-0">
-                        <button onClick={() => { startEdit(e); setExpMonthModal(false) }}
-                          className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><Pencil size={13} /></button>
-                        <button onClick={() => handleDelete(e.id)} disabled={deleting === e.id}
-                          className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 size={13} /></button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── Bar-click month modal ── */}
-      <AnimatePresence>
-        {barClickMonth !== null && (
-          <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setBarClickMonth(null)} />
-            <motion.div className="relative bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl"
-              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}>
-              <div className="px-5 py-4 border-b border-border flex items-center justify-between bg-card rounded-t-2xl">
-                <div>
-                  <h3 className="font-semibold">{clickedMonthName} {periodYear}</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">{clickedExps.length} записей · {fmtEur(clickedTotal)}</p>
-                </div>
-                <button onClick={() => setBarClickMonth(null)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X size={16} /></button>
-              </div>
-              <div className="overflow-y-auto flex-1 divide-y divide-border">
-                {clickedExps.length === 0 ? (
-                  <div className="p-8 text-center text-muted-foreground text-sm">Нет расходов за этот месяц</div>
-                ) : clickedExps.map(e => {
-                  const meta = catMeta(e.category_name)
-                  const aptName = apartments.find(a => a.id === e.apartment_id)?.title ?? ''
-                  return (
-                    <div key={e.id} className="px-5 py-3 flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${meta.bg}`}>
-                        <span className={meta.color}>{meta.icon}</span>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold">{e.category_name}</span>
-                          {e.is_recurring && <span className="text-xs">🔄</span>}
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
-                          <span>{format(parseISO(e.paid_date), 'd MMM yyyy', { locale: ru })}</span>
-                          {apartments.length > 1 && <span>· {aptName}</span>}
-                          {e.notes && <span>· {e.notes}</span>}
-                        </div>
-                      </div>
-                      <span className="text-sm font-bold flex-shrink-0">{fmtEur(e.amount)}</span>
-                    </div>
-                  )
-                })}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+
 
 // ─── Settings Section ────────────────────────────────────────────────────────
 
@@ -6215,17 +6301,20 @@ function SettingsSection({ userId }: { userId: string }) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-const NAV_ITEMS: Array<{ id: Section; label: string; icon: React.ReactNode }> = [
-  { id: 'dashboard', label: 'Дашборд', icon: <LayoutDashboard size={16} /> },
-  { id: 'bookings', label: 'Бронирования', icon: <CalendarCheck size={16} /> },
-  { id: 'calendar', label: 'Календарь', icon: <CalendarDays size={16} /> },
-  { id: 'expenses', label: 'Расходы', icon: <Receipt size={16} /> },
-  { id: 'apartments', label: 'Апартаменты', icon: <Building2 size={16} /> },
-  { id: 'settings', label: 'Настройки', icon: <Settings size={16} /> },
+const NAV_ITEMS: Array<{ id: Section; label: string; icon: React.ReactNode; adminOnly?: boolean }> = [
+  { id: 'dashboard',   label: 'Дашборд',       icon: <LayoutDashboard size={16} /> },
+  { id: 'bookings',    label: 'Бронирования',   icon: <CalendarCheck size={16} /> },
+  { id: 'calendar',    label: 'Календарь',      icon: <CalendarDays size={16} /> },
+  { id: 'expenses',    label: 'Расходы',        icon: <Receipt size={16} /> },
+  { id: 'tax_report',  label: 'Налог IRPF',     icon: <FileSpreadsheet size={16} /> },
+  { id: 'apartments',  label: 'Апартаменты',    icon: <Building2 size={16} /> },
+  { id: 'settings',    label: 'Настройки',      icon: <Settings size={16} /> },
+  { id: 'admin',       label: 'Админ',          icon: <ShieldCheck size={16} />, adminOnly: true },
 ]
 
 export default function OwnerDashboard() {
-  const { user, signOut } = useAuth()
+  const { user, signOut, roles } = useAuth()
+  const isAdmin = roles.includes('admin')
   const { theme } = useTheme()
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -6275,6 +6364,19 @@ export default function OwnerDashboard() {
   }
 
   const pendingCount = bookings.filter(b => b.status === 'pending').length
+
+  // Pending expenses count for badge (queried reactively)
+  const { data: pendingExpensesCount = 0 } = useQuery({
+    queryKey: ['expenses-pending-count', user?.id],
+    queryFn: async () => {
+      const { count } = await supabase.from('expenses')
+        .select('*', { count: 'exact', head: true })
+        .eq('owner_id', user!.id).eq('status', 'pending_confirmation').is('deleted_at', null)
+      return count ?? 0
+    },
+    enabled: !!user,
+    refetchInterval: 60_000,
+  })
   const handleSignOutRoot = async () => { await signOut(); navigate('/') }
 
   return (
@@ -6299,7 +6401,7 @@ export default function OwnerDashboard() {
         </button>
 
         {/* Nav */}
-        {NAV_ITEMS.map(item => (
+        {NAV_ITEMS.filter(item => !item.adminOnly || isAdmin).map(item => (
           <button
             key={item.id}
             onClick={() => { setSection(item.id); setMobileNavOpen(false) }}
@@ -6312,6 +6414,11 @@ export default function OwnerDashboard() {
             {item.id === 'bookings' && pendingCount > 0 && (
               <span className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
                 {pendingCount}
+              </span>
+            )}
+            {item.id === 'expenses' && pendingExpensesCount > 0 && (
+              <span className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
+                {pendingExpensesCount}
               </span>
             )}
           </button>
@@ -6450,6 +6557,13 @@ export default function OwnerDashboard() {
               )}
               {section === 'cleaning' && <CleaningSection bookings={bookings} onRefresh={invalidate} />}
               {section === 'expenses' && <ExpensesSection apartments={apartments} />}
+              {section === 'tax_report' && <TaxReportSection apartments={apartments} bookings={bookings} />}
+              {section === 'admin' && isAdmin && <AdminSection />}
+              {section === 'admin' && !isAdmin && (
+                <div className="bg-card border border-border rounded-2xl p-10 text-center text-muted-foreground">
+                  Доступ запрещён
+                </div>
+              )}
               {section === 'settings' && <SettingsSection userId={user.id} />}
             </motion.div>
           </AnimatePresence>
