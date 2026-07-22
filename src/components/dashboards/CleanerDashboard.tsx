@@ -485,7 +485,7 @@ function CleanerCalendar({ tasks, aptColor }: { tasks: TaskRow[]; aptColor: (id:
                 const isToday = dateStr === todayStr
                 return (
                   <div key={di} className="p-1 flex flex-col gap-[2px] overflow-hidden" style={{ minHeight: cellMinH }}>
-                    <span className={`text-[10px] font-semibold w-4 h-4 flex items-center justify-center rounded-full flex-shrink-0 ${isToday ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}>
+                    <span className={`text-[10px] font-bold w-4 h-4 flex items-center justify-center rounded-full flex-shrink-0 ${isToday ? 'bg-primary text-primary-foreground' : 'text-gray-700'}`}>
                       {day}
                     </span>
                     {aptOrder.map(apt => {
@@ -497,9 +497,9 @@ function CleanerCalendar({ tasks, aptColor }: { tasks: TaskRow[]; aptColor: (id:
                       return (
                         <span key={apt.id}
                           title={`${apt.title} · ${guests ? `${guests} чел · ` : ''}€${t.cleaning_fee} · ${t.payment_status === 'paid' ? 'оплачено' : 'не оплачено'}`}
-                          className={`flex items-center text-[8px] leading-none text-white overflow-hidden ${isStart ? 'rounded-l-full pl-1.5' : '-ml-1'} ${isEnd ? 'rounded-r-full pr-1' : '-mr-1'}`}
+                          className={`flex items-center text-[8px] leading-none text-gray-800 overflow-hidden ${isStart ? 'rounded-l-full pl-1.5' : '-ml-1'} ${isEnd ? 'rounded-r-full pr-1' : '-mr-1'}`}
                           style={{ height: ROW_H, backgroundColor: aptColor(apt.id), opacity: t.payment_status === 'paid' ? 0.5 : 0.9 }}>
-                          {isStart && <span className="truncate font-semibold">{apt.title}{guests ? ` · ${guests}` : ''}</span>}
+                          {isStart && <span className="truncate font-bold">{apt.title}{guests ? ` · ${guests}` : ''}</span>}
                         </span>
                       )
                     })}
