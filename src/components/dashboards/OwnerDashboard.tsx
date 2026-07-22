@@ -1179,7 +1179,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                     key={di}
                     onClick={() => handleDayClick(dateStr, info)}
                     onMouseEnter={() => { if (!info && abkAnchor && !abkRange) setAbkHover(dateStr) }}
-                    className={`flex flex-col min-h-0 relative select-none overflow-hidden cursor-pointer transition-colors ${isYear ? 'p-0.5' : compact ? 'px-1 pt-1 pb-0.5' : 'px-2 pt-2 pb-1'} ${cellBg}`}
+                    className={`flex flex-col min-h-0 relative select-none cursor-pointer transition-colors ${isYear ? 'p-0.5' : compact ? 'px-1 pt-1 pb-0.5' : 'px-2 pt-2 pb-1'} ${cellBg}`}
                   >
 
                     {/* Booking bar — Airbnb-style: a solid pill anchored to the bottom of the cell,
@@ -1198,7 +1198,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                         </div>
                       ) : (
                         <div
-                          className={`absolute flex items-center pointer-events-none overflow-hidden ${isYear ? 'bottom-0.5 h-1.5' : compact ? 'bottom-1 h-5' : 'bottom-1.5 h-8'} ${
+                          className={`absolute flex items-center pointer-events-none ${info!.isStart ? 'z-10 overflow-visible' : 'overflow-hidden'} ${isYear ? 'bottom-0.5 h-1.5' : compact ? 'bottom-1 h-5' : 'bottom-1.5 h-8'} ${
                             info!.isStart && info!.isEnd ? 'left-0.5 right-0.5 rounded-full'
                             : info!.isStart ? 'left-0.5 right-0 rounded-l-full'
                             : info!.isEnd ? 'left-0 right-0.5 rounded-r-full'
@@ -1207,14 +1207,16 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                           style={{ backgroundColor: aptColor }}
                         >
                           {info!.isStart && !isYear && (
-                            <div className="flex items-center gap-1 min-w-0 px-1.5">
+                            <div className="flex items-center gap-1 px-1.5">
                               {!compact && (
                                 <span className="w-4 h-4 rounded-full bg-white/25 flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0">
                                   {(info!.guestName || '?').trim().charAt(0).toUpperCase()}
                                 </span>
                               )}
-                              <span className={`${compact ? 'text-[9px]' : 'text-[11px]'} font-bold text-white truncate`}>
-                                {info!.guestName}{info!.guestsCount > 1 ? ` +${info!.guestsCount - 1}` : ''}
+                              <span className={`${compact ? 'text-[9px]' : 'text-[11px]'} font-bold text-white whitespace-nowrap`}>
+                                {compact
+                                  ? info!.guestName
+                                  : `${info!.guestName}, ${info!.guestsCount} ${info!.guestsCount === 1 ? 'гость' : info!.guestsCount < 5 ? 'гостя' : 'гостей'}, ${info!.nights} ${info!.nights === 1 ? 'ночь' : info!.nights < 5 ? 'ночи' : 'ночей'}`}
                               </span>
                             </div>
                           )}
