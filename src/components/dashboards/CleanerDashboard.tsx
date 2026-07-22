@@ -545,6 +545,13 @@ export default function CleanerDashboard() {
     return { title: e.type === 'deposit' ? 'Пополнение вручную' : 'Списание вручную', sub: e.note ?? '' }
   }
 
+  // Actual/upcoming check-ins for the apartment currently shown in the calendar tab
+  const effectiveCalApt = (calSelectedApt || calApartments[0]?.id) ?? ''
+  const calUpcomingTasks = all
+    .filter(t => t.bookings.apartments.id === effectiveCalApt && t.bookings.end_date > today)
+    .sort((a, b) => a.bookings.start_date.localeCompare(b.bookings.start_date))
+    .slice(0, 6)
+
   const NAV = [
     { id: 'bookings' as const, label: 'Заезды', icon: <CalendarDays size={16} />, count: currentStays.length + upcoming.length + overdue.length },
     { id: 'payment' as const, label: 'Оплата', icon: <Banknote size={16} /> },
@@ -705,12 +712,28 @@ export default function CleanerDashboard() {
             )
           })() : tab === 'calendar' ? (
             calApartments.length > 0 ? (
-              <CalendarSection
-                apartments={calApartments}
-                selectedApt={(calSelectedApt || calApartments[0]?.id) ?? ''}
-                setSelectedApt={setCalSelectedApt}
-                readOnly
-              />
+              <div className="flex flex-col gap-4">
+                <CalendarSection
+                  apartments={calApartments}
+                  selectedApt={effectiveCalApt}
+                  setSelectedApt={setCalSelectedApt}
+                  readOnly
+                />
+                <div>
+                  <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">
+                    Актуальные и ближайшие заезды
+                  </h3>
+                  {calUpcomingTasks.length === 0 ? (
+                    <div className="bg-card border border-border rounded-2xl p-6 text-center text-muted-foreground text-sm">
+                      Нет предстоящих заездов
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {calUpcomingTasks.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} />)}
+                    </div>
+                  )}
+                </div>
+              </div>
             ) : (
               <div className="bg-card border border-border rounded-2xl p-10 text-center text-muted-foreground text-sm">
                 Нет назначенных квартир
