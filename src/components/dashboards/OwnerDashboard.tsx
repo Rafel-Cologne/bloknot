@@ -36,7 +36,6 @@ import {
   FileText,
   BarChart2,
   ClipboardX,
-  Menu,
   Zap,
   Droplets,
   Receipt,
@@ -55,6 +54,7 @@ import {
   UserCircle,
   Bot,
   PackageCheck,
+  MoreHorizontal,
 } from 'lucide-react'
 import {
   format,
@@ -70,6 +70,7 @@ import { ru } from 'date-fns/locale'
 import { supabase } from '@/integrations/supabase/client'
 import { useTheme, type AppTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/hooks/useAuth'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -697,6 +698,28 @@ type CalDayInfo = {
   totalAmount: number | null
   cleaningFee: number
   source: string
+  startDate: string
+  // Если в этот день одновременно выезд одной брони и заезд другой — имя
+  // заезжающего гостя, чтобы ячейку можно было разделить на два цвета.
+  turnoverGuestName?: string
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.substring(0, 2), 16)
+  const g = parseInt(h.substring(2, 4), 16)
+  const b = parseInt(h.substring(4, 6), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+// Светлая пастельная версия цвета (для фона ячейки — чтобы насыщенный текст того же
+// цвета оставался читаемым, как раньше с розовым: светлая заливка + тёмный текст).
+function tintHex(hex: string, amount: number): string {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.substring(0, 2), 16)
+  const g = parseInt(h.substring(2, 4), 16)
+  const b = parseInt(h.substring(4, 6), 16)
+  const mix = (c: number) => Math.round(c + (255 - c) * amount)
+  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`
 }
 
 function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartments: Apartment[]; selectedApt: string; setSelectedApt: (id: string) => void }) {
@@ -716,6 +739,9 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
 
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const apt = apartments.find(a => a.id === selectedApt)
+  // Фиксированный цвет квартиры — тот же индекс/палитра, что и на карточках у уборщицы
+  const aptColorIdx = apartments.findIndex(a => a.id === selectedApt)
+  const aptColor = CLEANER_APT_COLORS[aptColorIdx >= 0 ? aptColorIdx % CLEANER_APT_COLORS.length : 0]
 
   // Period price setter
   const [showPeriodModal, setShowPeriodModal] = useState(false)
@@ -821,6 +847,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
 
   const dateMap = useMemo(() => {
     const m: Record<string, CalDayInfo> = {}
+    const rawMap: Record<string, CalDayInfo[]> = {}
     bookings?.forEach(b => {
       const startD = parseISO(b.start_date)
       const endD = parseISO(b.end_date)
@@ -833,7 +860,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
       while (d <= endD) {
         const key = format(d, 'yyyy-MM-dd')
         const isLastDay = format(d, 'yyyy-MM-dd') === b.end_date
-        m[key] = {
+        const info: CalDayInfo = {
           status: 'accepted',
           bookingId: b.id,
           guestName: b.guest_name,
@@ -844,10 +871,21 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
           totalAmount: (b as any).total_amount ?? null,
           cleaningFee,
           source: (b as any).source ?? 'other',
+          startDate: b.start_date,
         }
+        ;(rawMap[key] ??= []).push(info)
         d = addDays(d, 1)
         isFirst = false
       }
+    })
+    // Разбор по дням: если в один день одновременно выезд одной брони и заезд
+    // другой — оставляем выездную (с суммой), но помечаем именем заезжающего
+    // гостя, чтобы ячейку можно было визуально разделить на два цвета.
+    Object.entries(rawMap).forEach(([key, infos]) => {
+      if (infos.length === 1) { m[key] = infos[0]; return }
+      const outgoing = infos.find(i => i.isEnd) ?? infos[0]
+      const incoming = infos.find(i => i.isStart && i !== outgoing) ?? infos[infos.length - 1]
+      m[key] = { ...outgoing, turnoverGuestName: incoming.guestName }
     })
     return m
   }, [bookings])
@@ -1143,6 +1181,8 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                 }
 
                 const isYear = effectiveCount > 6
+                const isTurnover = isBooked && !!info!.turnoverGuestName
+                const aptTextColor = isDark ? tintHex(aptColor, 0.4) : aptColor
 
                 return (
                   <div
@@ -1152,35 +1192,60 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                     className={`flex flex-col min-h-0 relative select-none overflow-hidden cursor-pointer transition-colors ${isYear ? 'p-0.5' : compact ? 'px-1 pt-1 pb-0.5' : 'px-2 pt-2 pb-1'} ${cellBg}`}
                   >
 
-                    {/* Booking stripe — solid bg with rounded ends on first/last day */}
+                    {/* Booking stripe — цвет квартиры. В день стыковки (выезд+заезд в один день)
+                        ячейка делится пополам с зазором, чтобы две брони не сливались в одну. */}
                     {isBooked && !isSelected && (
-                      <div className={`absolute inset-y-0 pointer-events-none ${
-                        info!.isStart && info!.isEnd
-                          ? 'left-1 right-1 rounded-xl'
-                          : info!.isStart
-                            ? 'left-1 right-0 rounded-l-xl'
-                            : info!.isEnd
-                              ? 'left-0 right-1 rounded-r-xl'
-                              : 'left-0 right-0'
-                      } ${isDark ? 'bg-rose-900/65' : 'bg-rose-200/70'}`} />
+                      isTurnover ? (
+                        <div className="absolute inset-y-0 left-0 right-0 flex pointer-events-none">
+                          <div className="flex-1 rounded-l-xl mr-px" style={{ backgroundColor: isDark ? hexToRgba(aptColor, 0.32) : tintHex(aptColor, 0.72) }} />
+                          <div className="flex-1 rounded-r-xl ml-px" style={{ backgroundColor: isDark ? hexToRgba(aptColor, 0.14) : tintHex(aptColor, 0.88) }} />
+                        </div>
+                      ) : (
+                        <div className={`absolute inset-y-0 pointer-events-none ${
+                          info!.isStart && info!.isEnd
+                            ? 'left-1 right-1 rounded-xl'
+                            : info!.isStart
+                              ? 'left-1 right-0 rounded-l-xl'
+                              : info!.isEnd
+                                ? 'left-0 right-1 rounded-r-xl'
+                                : 'left-0 right-0'
+                        }`} style={{ backgroundColor: isDark ? hexToRgba(aptColor, 0.25) : tintHex(aptColor, 0.8) }} />
+                      )
                     )}
 
                     <div className="relative flex flex-col min-h-0 flex-1">
                     {/* Day number — top left */}
                     <div className={`rounded-full flex items-center justify-center flex-shrink-0 ${isYear ? 'w-3.5 h-3.5' : compact ? 'w-5 h-5' : 'w-6 h-6'} ${isToday ? 'bg-primary' : ''}`}>
-                      <span className={`font-bold leading-none ${isYear ? 'text-[8px]' : compact ? 'text-[10px]' : 'text-xs'} ${isToday ? 'text-white' : isSelected ? (isDark ? 'text-amber-300' : 'text-amber-900') : isBooked ? (isDark ? 'text-rose-300' : 'text-rose-700') : isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400') : (isDark ? 'text-slate-100' : 'text-foreground')}`}>
+                      <span
+                        className={`font-bold leading-none ${isYear ? 'text-[8px]' : compact ? 'text-[10px]' : 'text-xs'} ${isToday ? 'text-white' : isSelected ? (isDark ? 'text-amber-300' : 'text-amber-900') : isBooked ? '' : isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400') : (isDark ? 'text-slate-100' : 'text-foreground')}`}
+                        style={isBooked && !isSelected && !isToday ? { color: aptTextColor } : undefined}
+                      >
                         {day}
                       </span>
                     </div>
 
+                    {/* Turnover: incoming guest name on the right (lighter) half */}
+                    {isTurnover && !isSelected && !isYear && effectiveCount <= 3 && (
+                      <span className="absolute top-0 right-0 text-[9px] font-bold leading-tight truncate max-w-[48%] text-right" style={{ color: aptTextColor }}>
+                        → {info!.turnoverGuestName}
+                      </span>
+                    )}
+
                     {/* Check-in: guest name + guests count + nights */}
                     {showName && !isSelected && !isYear && effectiveCount <= 3 && (
                       <div className="flex flex-col gap-0.5 mt-0.5 flex-shrink-0">
-                        <span className={`${compact ? 'text-[11px]' : 'text-sm'} font-bold leading-tight truncate ${isDark ? 'text-rose-400' : 'text-rose-800'}`}>{info!.guestName}</span>
-                        <span className={`${compact ? 'text-[10px]' : 'text-[11px]'} leading-tight ${isDark ? 'text-rose-500' : 'text-rose-600'}`}>
+                        <span className={`${compact ? 'text-[11px]' : 'text-sm'} font-bold leading-tight truncate`} style={{ color: aptTextColor }}>{info!.guestName}</span>
+                        <span className={`${compact ? 'text-[10px]' : 'text-[11px]'} leading-tight opacity-80`} style={{ color: aptTextColor }}>
                           {info!.guestsCount} чел · {info!.nights} н.
                         </span>
                       </div>
+                    )}
+
+                    {/* Middle-of-stay days: repeat a small guest name so long stays don't read as a blank block */}
+                    {isBooked && !info!.isStart && !isSelected && !isYear && effectiveCount <= 3 && (
+                      <span className="text-[9px] font-semibold leading-tight truncate mt-0.5 flex-shrink-0 opacity-75" style={{ color: aptTextColor }}>
+                        {info!.guestName}
+                      </span>
                     )}
 
                     {/* Check-out: rent amount + cleaning fee separately */}
@@ -1189,7 +1254,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                       const fee = info!.cleaningFee
                       return (
                         <div className="flex flex-col gap-0.5 mt-1 flex-shrink-0">
-                          {rent != null && <span className={`text-sm font-bold leading-tight ${isDark ? 'text-rose-400' : 'text-rose-700'}`}>{fmtEur(rent)}</span>}
+                          {rent != null && <span className="text-sm font-bold leading-tight" style={{ color: aptTextColor }}>{fmtEur(rent)}</span>}
                           {fee > 0 && <span className={`text-[11px] leading-tight ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>уборка {fmtEur(fee)}</span>}
                         </div>
                       )
@@ -1202,7 +1267,10 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
 
                     {/* Price — bottom right */}
                     {price !== undefined && !isSelected && !(isBooked && info?.source !== 'airbnb' && info?.source !== 'booking' && info?.totalAmount != null) && (
-                      <span className={`mt-auto self-end leading-none ${isYear ? 'text-[8px]' : compact ? 'text-[10px]' : 'text-xs'} font-bold ${isBooked ? (hasCustomPrice ? (isDark ? 'text-rose-300' : 'text-rose-500') : (isDark ? 'text-rose-400' : 'text-rose-300')) : isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400') : (hasCustomPrice ? (isDark ? 'text-emerald-300' : 'text-emerald-600') : (isDark ? 'text-slate-300' : 'text-gray-400'))}`}>
+                      <span
+                        className={`mt-auto self-end leading-none ${isYear ? 'text-[8px]' : compact ? 'text-[10px]' : 'text-xs'} font-bold ${isBooked ? '' : isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400') : (hasCustomPrice ? (isDark ? 'text-emerald-300' : 'text-emerald-600') : (isDark ? 'text-slate-300' : 'text-gray-400'))}`}
+                        style={isBooked ? { color: aptTextColor } : undefined}
+                      >
                         {price} €
                       </span>
                     )}
@@ -4402,10 +4470,14 @@ function CleanerView({ bookings, onRefresh, ownerId }: { bookings: BookingRow[];
         style={isCur ? { borderColor: color } : undefined}>
         <div className="flex items-center gap-4 px-5 py-4">
           {/* Date */}
-          <div className="flex-shrink-0 text-center rounded-xl px-3 py-2 w-[80px] text-white" style={{ backgroundColor: color }}>
-            <div className="text-base font-bold leading-tight">{b.start_date.slice(8)}</div>
-            <div className="text-[10px] uppercase font-semibold text-white/85 whitespace-nowrap">
-              {format(parseISO(b.start_date), 'LLLL', { locale: ru })}
+          <div className="flex-shrink-0 text-center rounded-xl px-2 py-2 w-[80px] text-white" style={{ backgroundColor: color }}>
+            <div className="text-sm font-bold leading-tight whitespace-nowrap">
+              {b.start_date.slice(8)}–{b.end_date.slice(8)}
+            </div>
+            <div className="text-[9px] uppercase font-semibold text-white/85 whitespace-nowrap">
+              {b.start_date.slice(0, 7) === b.end_date.slice(0, 7)
+                ? format(parseISO(b.start_date), 'LLLL', { locale: ru })
+                : `${format(parseISO(b.start_date), 'LLL', { locale: ru }).replace('.', '')}–${format(parseISO(b.end_date), 'LLL', { locale: ru }).replace('.', '')}`}
             </div>
           </div>
           {/* Info */}
@@ -4478,10 +4550,14 @@ function CleanerView({ bookings, onRefresh, ownerId }: { bookings: BookingRow[];
           )}
           {isPaid && <div className="flex-shrink-0 w-5 h-5" />}
           {/* Date */}
-          <div className="flex-shrink-0 text-center rounded-xl px-3 py-2 w-[80px] text-white" style={{ backgroundColor: color }}>
-            <div className="text-base font-bold leading-tight">{b.start_date.slice(8)}</div>
-            <div className="text-[10px] uppercase font-semibold text-white/85 whitespace-nowrap">
-              {format(parseISO(b.start_date), 'LLLL', { locale: ru })}
+          <div className="flex-shrink-0 text-center rounded-xl px-2 py-2 w-[80px] text-white" style={{ backgroundColor: color }}>
+            <div className="text-sm font-bold leading-tight whitespace-nowrap">
+              {b.start_date.slice(8)}–{b.end_date.slice(8)}
+            </div>
+            <div className="text-[9px] uppercase font-semibold text-white/85 whitespace-nowrap">
+              {b.start_date.slice(0, 7) === b.end_date.slice(0, 7)
+                ? format(parseISO(b.start_date), 'LLLL', { locale: ru })
+                : `${format(parseISO(b.start_date), 'LLL', { locale: ru }).replace('.', '')}–${format(parseISO(b.end_date), 'LLL', { locale: ru }).replace('.', '')}`}
             </div>
           </div>
           {/* Info */}
@@ -5652,20 +5728,51 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
 
   const filteredApts = aptFilter === 'all' ? apartments : apartments.filter(a => a.id === aptFilter)
 
+  // Границы налогового года
+  const yearStart = new Date(`${year}-01-01T00:00:00`)
+  const yearEndExclusive = new Date(`${year + 1}-01-01T00:00:00`)
+
   const aptData = filteredApts.map(apt => {
-    const aptBookings = bookings.filter(b =>
+    // Берём все брони, которые ХОТЯ БЫ ЧАСТИЧНО пересекаются с годом
+    // (а не только те, что начались в этом году — иначе бронь с заездом
+    // в декабре и выездом в январе целиком уходила бы в прошлый год)
+    const aptBookingsAll = bookings.filter(b =>
       b.apartment_id === apt.id &&
       b.status === 'accepted' &&
-      b.start_date >= `${year}-01-01` &&
-      b.start_date <= `${year}-12-31`
+      new Date(b.start_date) < yearEndExclusive &&
+      new Date(b.end_date) > yearStart
     )
     const aptExpenses = expenses.filter(e => e.apartment_id === apt.id)
 
-    const totalIncome = aptBookings.reduce((s, b) => s + (b.total_amount ?? 0), 0)
-    const totalDays = aptBookings.reduce((s, b) => {
-      const d1 = new Date(b.start_date), d2 = new Date(b.end_date)
-      return s + Math.max(0, Math.round((d2.getTime() - d1.getTime()) / 86400000))
-    }, 0)
+    let totalIncome = 0
+    let totalDays = 0
+    let bookingsCount = 0
+    let missingAmountCount = 0
+
+    aptBookingsAll.forEach(b => {
+      const bStart = new Date(b.start_date)
+      const bEnd = new Date(b.end_date)
+      const bNights = Math.max(0, Math.round((bEnd.getTime() - bStart.getTime()) / 86400000))
+      if (bNights === 0) return
+
+      // Доля ночей этой брони, которая приходится именно на выбранный год
+      const overlapStart = bStart > yearStart ? bStart : yearStart
+      const overlapEnd = bEnd < yearEndExclusive ? bEnd : yearEndExclusive
+      const nightsInYear = Math.max(0, Math.round((overlapEnd.getTime() - overlapStart.getTime()) / 86400000))
+      if (nightsInYear === 0) return
+
+      bookingsCount++
+      totalDays += nightsInYear
+
+      if (b.total_amount == null) {
+        missingAmountCount++
+      } else {
+        // Сумма брони распределяется пропорционально ночам в этом году
+        // (важно для броней, пересекающих границу года)
+        totalIncome += b.total_amount * (nightsInYear / bNights)
+      }
+    })
+
     const totalExpenses = aptExpenses.reduce((s, e) => s + e.amount, 0)
 
     // Амортизация: 3% от стоимости строения
@@ -5683,9 +5790,9 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
     }, {})
 
     return {
-      apt, totalIncome, totalDays, totalExpenses, depreciation,
+      apt, totalIncome, totalDays,
       rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome,
-      expByCategory, bookingsCount: aptBookings.length,
+      expByCategory, bookingsCount, missingAmountCount,
     }
   })
 
@@ -5693,6 +5800,7 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
   const grandExpenses = aptData.reduce((s, d) => s + d.deductibleExpenses, 0)
   const grandDepreciation = aptData.reduce((s, d) => s + d.deductibleDepreciation, 0)
   const grandNet = aptData.reduce((s, d) => s + d.netIncome, 0)
+  const grandMissingAmount = aptData.reduce((s, d) => s + d.missingAmountCount, 0)
 
   const handlePrint = () => window.print()
 
@@ -5739,9 +5847,19 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
         ))}
       </div>
 
+      {grandMissingAmount > 0 && (
+        <div className="flex items-start gap-2 rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
+          <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+          <span>
+            {grandMissingAmount} {grandMissingAmount === 1 ? 'бронирование' : 'бронирований'} за {year} год без указанной суммы —
+            {' '}эти брони не учтены в доходах, и итог ниже реального. Укажи сумму в карточке брони.
+          </span>
+        </div>
+      )}
+
       {/* Per-apartment tables */}
       {aptData.map(({ apt, totalIncome, totalDays,
-        rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome, expByCategory, bookingsCount }) => (
+        rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome, expByCategory, bookingsCount, missingAmountCount }) => (
         <div key={apt.id} className="bg-card border border-border rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-border bg-muted/30">
             <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -5753,7 +5871,13 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
                 )}
               </div>
               <div className="flex gap-4 text-right">
-                <div><p className="text-xs text-muted-foreground">Бронирований</p><p className="font-bold">{bookingsCount}</p></div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Бронирований</p>
+                  <p className="font-bold">
+                    {bookingsCount}
+                    {missingAmountCount > 0 && <span className="text-amber-600 font-normal"> ({missingAmountCount} без суммы)</span>}
+                  </p>
+                </div>
                 <div><p className="text-xs text-muted-foreground">Дней аренды</p><p className="font-bold">{totalDays}</p></div>
                 <div><p className="text-xs text-muted-foreground">% использ.</p><p className="font-bold">{(rentalRatio * 100).toFixed(1)}%</p></div>
               </div>
@@ -6308,6 +6432,141 @@ const NAV_ITEMS: Array<{ id: Section; label: string; icon: React.ReactNode; admi
   { id: 'admin',       label: 'Админ',          icon: <ShieldCheck size={16} />, adminOnly: true },
 ]
 
+// ─── Mobile · Owner Overview ────────────────────────────────────────────────────
+
+const MOBILE_MONTHS_SHORT = ['ЯНВ','ФЕВ','МАР','АПР','МАЙ','ИЮН','ИЮЛ','АВГ','СЕН','ОКТ','НОЯ','ДЕК']
+
+function MobileOwnerOverview({
+  bookings, apartments, onGoTo, onGoCleaning, ownerId,
+}: {
+  bookings: BookingRow[]; apartments: Apartment[]
+  onGoTo: (s: Section) => void; onGoCleaning: () => void; ownerId: string
+}) {
+  const { user } = useAuth()
+  const today = new Date().toISOString().slice(0, 10)
+  const thisYear = new Date().getFullYear()
+
+  const { data: ledger } = useQuery({
+    queryKey: ['owner-cash-ledger', ownerId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('cash_ledger').select('*').eq('owner_id', ownerId)
+      if (error) throw error
+      return data as CashEntry[]
+    },
+    enabled: !!ownerId,
+  })
+  const cashBalance = (ledger ?? []).reduce((s, e) => s + (e.type === 'deposit' ? e.amount : -e.amount), 0)
+
+  const ytdEarnings = bookings
+    .filter(b => b.status === 'accepted' && new Date(b.start_date).getFullYear() === thisYear)
+    .reduce((s, b) => s + (b.total_amount ?? 0), 0)
+
+  const pendingCount = bookings.filter(b => b.status === 'pending').length
+
+  const upcoming = bookings
+    .filter(b => b.status === 'accepted' && b.end_date > today)
+    .sort((a, b) => a.start_date.localeCompare(b.start_date))
+    .slice(0, 4)
+
+  const aptColorOf = (apartmentId: string) => {
+    const i = apartments.findIndex(a => a.id === apartmentId)
+    return CLEANER_APT_COLORS[i >= 0 ? i % CLEANER_APT_COLORS.length : 0]
+  }
+
+  const dateBadge = (iso: string) => {
+    const d = new Date(iso)
+    return { day: d.getDate(), month: MOBILE_MONTHS_SHORT[d.getMonth()] }
+  }
+
+  return (
+    <div className="pb-4">
+      {/* Greeting */}
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-11 h-11 rounded-full flex items-center justify-center text-base font-bold flex-shrink-0"
+          style={{ background: 'hsl(var(--primary))', color: 'hsl(var(--primary-foreground))' }}>
+          {user?.email?.[0]?.toUpperCase() ?? 'R'}
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Добро пожаловать</p>
+          <p className="font-display font-semibold text-base">{user?.email?.split('@')[0] ?? 'Владелец'}</p>
+        </div>
+      </div>
+
+      {/* Revenue card */}
+      <div className="rounded-2xl p-5 mb-4 shadow-[var(--shadow-card)]" style={{
+        background: 'linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)))',
+        color: 'hsl(var(--primary-foreground))',
+      }}>
+        <p className="text-xs opacity-80 mb-1">Доход за {thisYear} год</p>
+        <p className="font-display font-bold text-3xl">{fmtEur(ytdEarnings)}</p>
+      </div>
+
+      {/* Stat row */}
+      <div className="grid grid-cols-3 gap-2 mb-5">
+        <div className="bg-card border border-border rounded-xl p-3 text-center">
+          <p className="font-display font-bold text-lg">{apartments.length}</p>
+          <p className="text-[10px] text-muted-foreground">Квартир</p>
+        </div>
+        <button onClick={() => onGoTo('bookings')} className="bg-card border border-border rounded-xl p-3 text-center">
+          <p className="font-display font-bold text-lg">{pendingCount}</p>
+          <p className="text-[10px] text-muted-foreground">Ожидают</p>
+        </button>
+        <div className="bg-card border border-border rounded-xl p-3 text-center">
+          <p className="font-display font-bold text-lg">{fmtEur(cashBalance)}</p>
+          <p className="text-[10px] text-muted-foreground">Касса</p>
+        </div>
+      </div>
+
+      {/* Upcoming check-ins */}
+      <div className="mb-5">
+        <h3 className="text-sm font-semibold mb-2">Ближайшие заезды</h3>
+        {upcoming.length === 0 ? (
+          <div className="bg-card border border-border rounded-xl p-4 text-center text-sm text-muted-foreground">
+            Нет предстоящих броней
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {upcoming.map(b => {
+              const color = aptColorOf(b.apartment_id)
+              const badge = dateBadge(b.start_date)
+              const isStaying = b.start_date <= today
+              return (
+                <button key={b.id} onClick={() => onGoTo('bookings')}
+                  className="bg-card border border-border rounded-xl p-3 flex items-center gap-3 text-left w-full">
+                  <div className="w-11 h-11 rounded-lg flex flex-col items-center justify-center flex-shrink-0"
+                    style={{ background: tintHex(color, 0.82), color }}>
+                    <span className="text-sm font-bold leading-none">{badge.day}</span>
+                    <span className="text-[8px] font-semibold leading-none mt-0.5">{badge.month}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{b.guest_name || 'Без имени'}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {b.apartments?.title} · {isStaying ? 'Сейчас проживает' : 'Заезд'}
+                    </p>
+                  </div>
+                  <p className="text-sm font-semibold flex-shrink-0">{fmtEur(b.total_amount ?? 0)}</p>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Quick links */}
+      <div className="grid grid-cols-2 gap-2">
+        <button onClick={() => onGoTo('calendar')}
+          className="bg-card border border-border rounded-xl p-4 flex items-center gap-2 text-sm font-medium">
+          <CalendarDays size={17} /> Календарь
+        </button>
+        <button onClick={onGoCleaning}
+          className="bg-card border border-border rounded-xl p-4 flex items-center gap-2 text-sm font-medium">
+          <Brush size={17} /> Уборка
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function OwnerDashboard() {
   const { user, signOut, roles } = useAuth()
   const isAdmin = roles.includes('admin')
@@ -6317,8 +6576,9 @@ export default function OwnerDashboard() {
   const [section, setSection] = useState<Section>('dashboard')
   const [topView, setTopView] = useState<'owner' | 'cleaner'>('owner')
   const [showAddBooking, setShowAddBooking] = useState(false)
-  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [calSelectedApt, setCalSelectedApt] = useState(() => getLastAptId())
+  const isMobile = useIsMobile()
+  const [moreOpen, setMoreOpen] = useState(false)
 
   const { data: apartments = [] } = useQuery({
     queryKey: ['owner-apartments', user?.id],
@@ -6377,15 +6637,8 @@ export default function OwnerDashboard() {
 
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden">
-      {/* Mobile nav backdrop */}
-      {mobileNavOpen && (
-        <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setMobileNavOpen(false)} />
-      )}
-
-      {/* Sidebar */}
-      <aside className={`sidebar-root w-52 flex-shrink-0 flex flex-col py-5 px-3 z-50
-        fixed inset-y-0 left-0 md:relative md:translate-x-0 transition-transform duration-200
-        ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      {/* Sidebar — desktop only, mobile uses the bottom tab bar instead */}
+      <aside className={`sidebar-root hidden md:flex w-52 flex-shrink-0 md:flex-col py-5 px-3 z-50
         ${topView === 'cleaner' ? 'md:hidden' : ''}
       `}>
         {/* Logo — links back to public home */}
@@ -6400,7 +6653,7 @@ export default function OwnerDashboard() {
         {NAV_ITEMS.filter(item => !item.adminOnly || isAdmin).map(item => (
           <button
             key={item.id}
-            onClick={() => { setSection(item.id); setMobileNavOpen(false) }}
+            onClick={() => setSection(item.id)}
             className={`sidebar-nav-item flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 mb-0.5 relative ${
               section === item.id ? 'active' : ''
             }`}
@@ -6465,14 +6718,8 @@ export default function OwnerDashboard() {
 
       {/* Main content column */}
       <div className="flex-1 flex flex-col min-h-0">
-        {/* Top header bar */}
-        <header className="flex-shrink-0 h-14 bg-card border-b border-border relative flex items-center px-3 md:px-6">
-          {/* Hamburger — mobile only */}
-          {topView !== 'cleaner' && (
-            <button onClick={() => setMobileNavOpen(true)} className="md:hidden p-2 rounded-lg hover:bg-muted text-muted-foreground transition-colors mr-1 flex-shrink-0">
-              <Menu size={18} />
-            </button>
-          )}
+        {/* Top header bar — desktop only, mobile uses the bottom tab bar instead */}
+        <header className="hidden md:flex flex-shrink-0 h-14 bg-card border-b border-border relative items-center px-3 md:px-6">
           {/* Center tabs — absolutely centered */}
           <div className="absolute inset-x-0 flex justify-center pointer-events-none">
             <nav className="flex items-end gap-4 md:gap-8 h-14 pointer-events-auto">
@@ -6507,13 +6754,22 @@ export default function OwnerDashboard() {
           </div>
         </header>
 
+        {/* Mobile-only back header for "Ещё" sub-screens */}
+        {isMobile && topView === 'owner' && ['apartments', 'expenses', 'tax_report', 'settings', 'admin'].includes(section) && (
+          <div className="md:hidden flex-shrink-0 h-12 flex items-center px-3 border-b border-border bg-card">
+            <button onClick={() => setSection('dashboard')} className="flex items-center gap-1 text-sm font-medium text-muted-foreground">
+              <ChevronLeft size={18} /> Ещё
+            </button>
+          </div>
+        )}
+
         {/* Content area — cleaner view */}
         {topView === 'cleaner' && (
-          <main className="flex-1 flex overflow-hidden">
+          <main className="flex-1 flex overflow-hidden pb-16 md:pb-0">
             <CleanerView bookings={bookings} onRefresh={invalidate} ownerId={user.id} />
           </main>
         )}
-        <main className={`flex-1 relative min-h-0 ${topView === 'cleaner' ? 'hidden' : ''} ${section === 'dashboard' || section === 'calendar' ? 'overflow-y-auto xl:overflow-hidden flex flex-col' : 'overflow-y-auto'}`}
+        <main className={`flex-1 relative min-h-0 pb-16 md:pb-0 ${topView === 'cleaner' ? 'hidden' : ''} ${section === 'dashboard' || section === 'calendar' ? 'overflow-y-auto xl:overflow-hidden flex flex-col' : 'overflow-y-auto'}`}
           style={section === 'dashboard' ? {
             backgroundImage: 'radial-gradient(ellipse at 15% 0%, hsl(var(--primary) / 0.05) 0%, transparent 55%), radial-gradient(ellipse at 85% 95%, hsl(var(--primary) / 0.04) 0%, transparent 50%)',
           } : undefined}>
@@ -6526,9 +6782,12 @@ export default function OwnerDashboard() {
             <motion.div key={section} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
               className={section === 'dashboard' || section === 'calendar' ? 'xl:flex-1 xl:min-h-0 xl:flex xl:flex-col' : ''}>
               {section === 'dashboard' && (
-                <DashboardOverview bookings={bookings} apartments={apartments}
-                  onGoTo={setSection} ownerId={user.id}
-                />
+                isMobile
+                  ? <MobileOwnerOverview bookings={bookings} apartments={apartments}
+                      onGoTo={setSection} onGoCleaning={() => setTopView('cleaner')} ownerId={user.id} />
+                  : <DashboardOverview bookings={bookings} apartments={apartments}
+                      onGoTo={setSection} ownerId={user.id}
+                    />
               )}
               {section === 'apartments' && (
                 <ApartmentsSection apartments={apartments} bookings={bookings} ownerId={user.id} onRefresh={invalidate} />
@@ -6583,6 +6842,71 @@ export default function OwnerDashboard() {
                 </div>
               </div>
             )
+        )}
+      </AnimatePresence>
+
+      {/* Mobile bottom tab bar */}
+      <nav className="md:hidden fixed inset-x-0 bottom-0 z-40 flex items-stretch h-16 px-1"
+        style={{ background: 'hsl(var(--sidebar))', borderTop: '1px solid hsl(var(--sidebar-border))', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+        {([
+          { key: 'dashboard', label: 'Обзор', icon: <LayoutDashboard size={19} />, action: () => { setTopView('owner'); setSection('dashboard') } },
+          { key: 'bookings', label: 'Брони', icon: <CalendarCheck size={19} />, action: () => { setTopView('owner'); setSection('bookings') } },
+          { key: 'calendar', label: 'Календарь', icon: <CalendarDays size={19} />, action: () => { setTopView('owner'); setSection('calendar') } },
+          { key: 'cleaning', label: 'Уборка', icon: <Brush size={19} />, action: () => setTopView('cleaner') },
+          { key: 'more', label: 'Ещё', icon: <MoreHorizontal size={19} />, action: () => setMoreOpen(true) },
+        ] as const).map(tab => {
+          const isActive = tab.key === 'cleaning' ? topView === 'cleaner'
+            : tab.key === 'more' ? moreOpen
+            : (topView === 'owner' && section === tab.key)
+          return (
+            <button key={tab.key} onClick={tab.action}
+              className="flex-1 flex flex-col items-center justify-center gap-0.5 relative"
+              style={{ color: isActive ? 'hsl(var(--sidebar-active-fg))' : 'hsl(var(--sidebar-fg))' }}>
+              {isActive && (
+                <span className="absolute top-1 inset-x-6 h-0.5 rounded-full" style={{ background: 'hsl(var(--sidebar-active-fg))' }} />
+              )}
+              {tab.icon}
+              <span className="text-[10px] font-medium">{tab.label}</span>
+              {tab.key === 'bookings' && pendingCount > 0 && (
+                <span className="absolute top-0 right-4 w-4 h-4 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center">
+                  {pendingCount}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </nav>
+
+      {/* "Ещё" bottom sheet */}
+      <AnimatePresence>
+        {moreOpen && (
+          <>
+            <motion.div className="md:hidden fixed inset-0 bg-black/40 z-40"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setMoreOpen(false)} />
+            <motion.div className="md:hidden fixed inset-x-0 bottom-0 z-50 bg-card rounded-t-3xl p-4 shadow-[var(--shadow-card-hover)]"
+              style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
+              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ duration: 0.2 }}>
+              <div className="w-10 h-1 rounded-full bg-border mx-auto mb-4" />
+              {([
+                { id: 'expenses' as Section, label: 'Расходы', icon: <Receipt size={17} /> },
+                { id: 'tax_report' as Section, label: 'Налог IRPF', icon: <FileSpreadsheet size={17} /> },
+                { id: 'apartments' as Section, label: 'Апартаменты', icon: <Building2 size={17} /> },
+                { id: 'settings' as Section, label: 'Настройки', icon: <Settings size={17} /> },
+                ...(isAdmin ? [{ id: 'admin' as Section, label: 'Админ', icon: <ShieldCheck size={17} /> }] : []),
+              ]).map(item => (
+                <button key={item.id} onClick={() => { setTopView('owner'); setSection(item.id); setMoreOpen(false) }}
+                  className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium hover:bg-muted transition-colors">
+                  {item.icon} {item.label}
+                </button>
+              ))}
+              <div className="h-px bg-border my-2" />
+              <button onClick={() => { setMoreOpen(false); handleSignOutRoot() }}
+                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium text-destructive hover:bg-muted transition-colors">
+                <LogOut size={17} /> Выйти
+              </button>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </div>

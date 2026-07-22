@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   CalendarDays, Banknote, FileText, Star, X, ChevronRight, ChevronLeft, Brush, LogOut,
-  CheckCircle2, Wallet, Users, Plus, Minus, History,
+  CheckCircle2, Wallet, Users, Plus, Minus, History, ClipboardList, Archive, User,
 } from 'lucide-react'
 import { format, parseISO, getDaysInMonth } from 'date-fns'
 import { ru } from 'date-fns/locale'
@@ -378,10 +378,14 @@ function TaskCard({ task, onSelect, aptColor }: { task: TaskRow; onSelect: () =>
       className={`bg-card border rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md hover:border-primary/30 ${isCur ? 'ring-1 ring-primary/20' : 'border-border'}`}
       style={isCur ? { borderColor: color } : undefined}>
       <div className="flex items-center gap-4 px-5 py-4">
-        <div className="flex-shrink-0 text-center rounded-xl px-3 py-2 w-[80px] text-white" style={{ backgroundColor: color }}>
-          <div className="text-base font-bold leading-tight">{b.start_date.slice(8)}</div>
-          <div className="text-[10px] uppercase font-semibold text-white/85 whitespace-nowrap">
-            {format(parseISO(b.start_date), 'LLLL', { locale: ru })}
+        <div className="flex-shrink-0 text-center rounded-xl px-2 py-2 w-[80px] text-white" style={{ backgroundColor: color }}>
+          <div className="text-sm font-bold leading-tight whitespace-nowrap">
+            {b.start_date.slice(8)}–{b.end_date.slice(8)}
+          </div>
+          <div className="text-[9px] uppercase font-semibold text-white/85 whitespace-nowrap">
+            {b.start_date.slice(0, 7) === b.end_date.slice(0, 7)
+              ? format(parseISO(b.start_date), 'LLLL', { locale: ru })
+              : `${format(parseISO(b.start_date), 'LLL', { locale: ru }).replace('.', '')}–${format(parseISO(b.end_date), 'LLL', { locale: ru }).replace('.', '')}`}
           </div>
         </div>
         <div className="flex-1 min-w-0">
@@ -525,7 +529,7 @@ function CleanerCalendar({ tasks, aptColor }: { tasks: TaskRow[]; aptColor: (id:
 export default function CleanerDashboard() {
   const { user, signOut } = useAuth()
   const qc = useQueryClient()
-  const [tab, setTab] = useState<'bookings' | 'payment' | 'calendar' | 'archive'>('bookings')
+  const [tab, setTab] = useState<'bookings' | 'payment' | 'calendar' | 'archive' | 'profile'>('bookings')
   const [selectedTask, setSelectedTask] = useState<TaskRow | null>(null)
   const [aptFilter, setAptFilter] = useState<string>('all')
   const [showCashForm, setShowCashForm] = useState(false)
@@ -631,6 +635,14 @@ export default function CleanerDashboard() {
     { id: 'archive' as const, label: 'Архив', icon: <FileText size={16} />, count: archive.length },
   ]
 
+  const MOBILE_NAV = [
+    { id: 'bookings' as const, label: 'Заезды', icon: <ClipboardList size={19} /> },
+    { id: 'payment' as const, label: 'Оплата', icon: <Wallet size={19} /> },
+    { id: 'calendar' as const, label: 'Календарь', icon: <CalendarDays size={19} /> },
+    { id: 'archive' as const, label: 'Архив', icon: <Archive size={19} /> },
+    { id: 'profile' as const, label: 'Профиль', icon: <User size={19} /> },
+  ]
+
   if (!user) return null
 
   const byApartment = (t: TaskRow) => aptFilter === 'all' || t.bookings.apartments.id === aptFilter
@@ -691,34 +703,16 @@ export default function CleanerDashboard() {
 
       {/* ── Main content ── */}
       <div className="flex-1 overflow-y-auto flex flex-col">
-        {/* Mobile top tab bar */}
-        <div className="md:hidden flex-shrink-0 flex items-center gap-1 px-3 pt-3 pb-1 overflow-x-auto">
-          {NAV.map(item => (
-            <button key={item.id} onClick={() => setTab(item.id)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${tab === item.id ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
-              {item.icon}
-              {item.label}
-              {item.id === 'payment' && totalOwed > 0 && (
-                <span className="text-[9px] px-1 rounded-full bg-red-500 text-white font-bold">€</span>
-              )}
-            </button>
-          ))}
-        </div>
-        <div className="md:hidden flex-shrink-0 flex items-center justify-end px-3 pb-1">
-          <button onClick={() => signOut()} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1">
-            <LogOut size={13} /> Выйти
-          </button>
-        </div>
-
-        <div className={`px-3 py-4 md:px-8 md:py-8 flex-1 ${tab === 'calendar' ? 'max-w-4xl' : 'max-w-3xl'} w-full`}>
+        <div className={`px-3 py-4 md:px-8 md:py-8 pb-20 md:pb-8 flex-1 ${tab === 'calendar' ? 'max-w-4xl' : 'max-w-3xl'} w-full`}>
           <div className="mb-4 md:mb-6">
             <h1 className="text-xl md:text-2xl font-display font-bold text-foreground">
-              {tab === 'bookings' ? 'Заезды' : tab === 'payment' ? 'Оплата' : tab === 'calendar' ? 'Календарь' : 'Архив заездов'}
+              {tab === 'bookings' ? 'Заезды' : tab === 'payment' ? 'Оплата' : tab === 'calendar' ? 'Календарь' : tab === 'profile' ? 'Профиль' : 'Архив заездов'}
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
               {tab === 'bookings' ? `${currentStays.length} сейчас · ${upcoming.length + overdue.length} предстоящих` :
                tab === 'payment' ? `Заработано ${fmtEur(totalEarned)} · получено ${fmtEur(totalPaid)}` :
                tab === 'calendar' ? 'Все заезды по всем квартирам' :
+               tab === 'profile' ? (user?.email ?? '') :
                `${archive.length} завершённых заездов`}
             </p>
           </div>
@@ -930,7 +924,7 @@ export default function CleanerDashboard() {
                 <div className="bg-card border border-border rounded-2xl p-12 text-center text-muted-foreground text-sm">Нет данных об уборках</div>
               )}
             </div>
-          ) : (
+          ) : tab === 'archive' ? (
             <div>
               {archive.length === 0 ? (
                 <div className="bg-card border border-border rounded-2xl p-12 text-center text-muted-foreground text-sm">Архив пуст</div>
@@ -938,9 +932,58 @@ export default function CleanerDashboard() {
                 <div className="flex flex-col gap-2">{archive.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} />)}</div>
               )}
             </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              <div className="bg-card border border-border rounded-2xl p-5 shadow-sm flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold flex-shrink-0"
+                  style={{ background: 'hsl(var(--primary))', color: 'hsl(var(--primary-foreground))' }}>
+                  {user?.email?.[0]?.toUpperCase() ?? 'У'}
+                </div>
+                <div className="min-w-0">
+                  <p className="font-semibold text-foreground truncate">{user?.email ?? 'Уборщица'}</p>
+                  <p className="text-xs text-muted-foreground">Сервис по уборке</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center">
+                  <p className="text-xl font-bold text-foreground">{fmtEur(totalEarned)}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Всего заработано</p>
+                </div>
+                <div className="bg-card border border-purple-200 rounded-2xl p-4 shadow-sm text-center">
+                  <p className="text-xl font-bold text-purple-700 flex items-center justify-center gap-1"><Wallet size={15} /> {fmtEur(cashBalance)}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Касса (наличные)</p>
+                </div>
+              </div>
+              <button onClick={() => signOut()}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl bg-secondary text-sm font-semibold text-foreground hover:bg-muted transition-colors">
+                <LogOut size={16} /> Выйти
+              </button>
+            </div>
           )}
         </div>
       </div>
+
+      {/* Mobile bottom tab bar */}
+      <nav className="md:hidden fixed inset-x-0 bottom-0 z-40 flex items-stretch h-16 px-1"
+        style={{ background: 'hsl(var(--sidebar))', borderTop: '1px solid hsl(var(--sidebar-border))', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+        {MOBILE_NAV.map(item => {
+          const isActive = tab === item.id
+          return (
+            <button key={item.id} onClick={() => setTab(item.id)}
+              className="flex-1 flex flex-col items-center justify-center gap-0.5 relative"
+              style={{ color: isActive ? 'hsl(var(--sidebar-active-fg))' : 'hsl(var(--sidebar-fg))' }}>
+              {isActive && (
+                <span className="absolute top-1 inset-x-6 h-0.5 rounded-full" style={{ background: 'hsl(var(--sidebar-active-fg))' }} />
+              )}
+              {item.icon}
+              <span className="text-[10px] font-medium">{item.label}</span>
+              {item.id === 'payment' && totalOwed > 0 && (
+                <span className="absolute top-0 right-4 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">€</span>
+              )}
+            </button>
+          )
+        })}
+      </nav>
 
       <AnimatePresence>
         {selectedTask && (
