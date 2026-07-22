@@ -2445,18 +2445,18 @@ function DashboardOverview({
       </div>
 
       {/* ── Row 4: Current apartment + Quick actions ── */}
-      <div className="flex flex-col md:flex-row gap-3 md:flex-[1.5] md:min-h-0 relative z-10">
+      <div className="flex flex-col md:flex-row md:items-start gap-3 relative z-10">
 
-        {/* Текущая квартира / квартиры */}
-        <div className="md:flex-[3] bg-card border border-border rounded-2xl shadow-sm flex flex-col overflow-hidden min-w-0 min-h-[100px] md:min-h-0">
+        {/* Текущая квартира / квартиры — height follows content (up to 2 stays), no forced scroll */}
+        <div className="md:flex-[3] bg-card border border-border rounded-2xl shadow-sm flex flex-col overflow-hidden min-w-0">
           <p className="text-sm font-semibold px-5 pt-4 pb-0 flex-shrink-0">
             {currentStaysInfo.length > 1 ? 'Текущие квартиры' : 'Текущая квартира'}
           </p>
           {currentStaysInfo.length > 0 ? (
-            <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 p-4">
+            <div className="max-h-[420px] overflow-y-auto flex flex-col gap-3 p-4">
               {currentStaysInfo.map(({ booking, apt, image, progress }) => (
-                <div key={booking.id} className="flex gap-4">
-                  <div className="w-24 rounded-xl overflow-hidden flex-shrink-0 bg-secondary self-stretch">
+                <div key={booking.id} className="flex gap-3">
+                  <div className="w-20 h-20 rounded-xl overflow-hidden flex-shrink-0 bg-secondary">
                     {image
                       ? <img src={image} alt={apt?.title} className="w-full h-full object-cover" />
                       : <div className="w-full h-full flex items-center justify-center text-2xl opacity-20">🏠</div>
@@ -2487,14 +2487,14 @@ function DashboardOverview({
               ))}
             </div>
           ) : (
-            <div className="flex-1 flex items-center justify-center">
+            <div className="p-6 flex items-center justify-center">
               <p className="text-xs text-muted-foreground/40">Нет активных заездов</p>
             </div>
           )}
         </div>
 
         {/* Быстрые действия */}
-        <div className="md:flex-[2] bg-card border border-border rounded-2xl shadow-sm flex flex-col overflow-hidden min-h-[100px] md:min-h-0">
+        <div className="md:flex-[2] bg-card border border-border rounded-2xl shadow-sm flex flex-col overflow-hidden min-h-[100px]">
           <p className="text-sm font-semibold px-5 pt-4 pb-3 flex-shrink-0">Быстрые действия</p>
           <div className="flex gap-2 px-4 pb-4 flex-1 items-center justify-around">
             {[
