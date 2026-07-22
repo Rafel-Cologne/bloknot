@@ -2,13 +2,14 @@ import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  CalendarDays, Banknote, FileText, Star, X, ChevronRight, ChevronLeft, Brush, LogOut,
+  CalendarDays, Banknote, FileText, Star, X, ChevronRight, Brush, LogOut,
   CheckCircle2, Wallet, Users, Plus, Minus, History, ClipboardList, Archive, User,
 } from 'lucide-react'
-import { format, parseISO, getDaysInMonth } from 'date-fns'
+import { format, parseISO } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { supabase } from '@/integrations/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
+import { CalendarSection, type Apartment } from './OwnerDashboard'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -64,7 +65,6 @@ const APT_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#f43f5e', '#0ea5e9', '#d94
 
 const fmtEur = (n: number) =>
   n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
-const pad = (n: number) => String(n).padStart(2, '0')
 
 // Minimal phone → country lookup
 const DIAL_CODES: [string, string, string][] = [
@@ -425,105 +425,6 @@ function TaskCard({ task, onSelect, aptColor }: { task: TaskRow; onSelect: () =>
   )
 }
 
-// ─── Calendar — full stay-range bars, one row per apartment ────────────────────
-
-const ROW_H = 15
-
-function CleanerCalendar({ tasks, aptColor }: { tasks: TaskRow[]; aptColor: (id: string) => string }) {
-  const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1) })
-  const todayStr = new Date().toISOString().slice(0, 10)
-
-  const { aptOrder, byApt } = useMemo(() => {
-    const order: { id: string; title: string }[] = []
-    const map = new Map<string, TaskRow[]>()
-    tasks.forEach(t => {
-      const apt = t.bookings?.apartments
-      if (!apt) return
-      if (!map.has(apt.id)) { map.set(apt.id, []); order.push({ id: apt.id, title: apt.title }) }
-      map.get(apt.id)!.push(t)
-    })
-    return { aptOrder: order, byApt: map }
-  }, [tasks])
-
-  const taskOnDay = (aptId: string, dateStr: string) =>
-    (byApt.get(aptId) ?? []).find(t => t.bookings.start_date <= dateStr && dateStr <= t.bookings.end_date)
-
-  const weeks = useMemo(() => {
-    const year = month.getFullYear(), mo = month.getMonth()
-    const firstDow = (new Date(year, mo, 1).getDay() + 6) % 7
-    const daysInMonth = getDaysInMonth(month)
-    const cells: (number | null)[] = Array(firstDow).fill(null)
-    for (let d = 1; d <= daysInMonth; d++) cells.push(d)
-    while (cells.length % 7 !== 0) cells.push(null)
-    const wks: (number | null)[][] = []
-    for (let i = 0; i < cells.length; i += 7) wks.push(cells.slice(i, i + 7))
-    return wks
-  }, [month])
-
-  return (
-    <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
-          className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronLeft size={15} /></button>
-        <p className="text-sm font-semibold capitalize">{format(month, 'LLLL yyyy', { locale: ru })}</p>
-        <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
-          className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronRight size={15} /></button>
-      </div>
-      <div className="grid grid-cols-7 border-b border-border">
-        {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(d => (
-          <div key={d} className="text-center text-[10px] font-bold text-muted-foreground uppercase py-1.5">{d}</div>
-        ))}
-      </div>
-      <div className="divide-y divide-border">
-        {weeks.map((week, wi) => {
-          const cellMinH = 26 + Math.max(1, aptOrder.length) * (ROW_H + 2)
-          return (
-            <div key={wi} className="grid grid-cols-7 divide-x divide-border">
-              {week.map((day, di) => {
-                if (day === null) return <div key={di} className="bg-gray-50/60" style={{ minHeight: cellMinH }} />
-                const dateStr = `${month.getFullYear()}-${pad(month.getMonth() + 1)}-${pad(day)}`
-                const isToday = dateStr === todayStr
-                return (
-                  <div key={di} className="p-1 flex flex-col gap-[2px] overflow-hidden" style={{ minHeight: cellMinH }}>
-                    <span className={`text-[10px] font-bold w-4 h-4 flex items-center justify-center rounded-full flex-shrink-0 ${isToday ? 'bg-primary text-primary-foreground' : 'text-gray-700'}`}>
-                      {day}
-                    </span>
-                    {aptOrder.map(apt => {
-                      const t = taskOnDay(apt.id, dateStr)
-                      if (!t) return <div key={apt.id} style={{ height: ROW_H }} />
-                      const isStart = t.bookings.start_date === dateStr
-                      const isEnd = t.bookings.end_date === dateStr
-                      const guests = t.bookings.guests_count
-                      return (
-                        <span key={apt.id}
-                          title={`${apt.title} · ${guests ? `${guests} чел · ` : ''}€${t.cleaning_fee} · ${t.payment_status === 'paid' ? 'оплачено' : 'не оплачено'}`}
-                          className={`flex items-center text-[8px] leading-none text-gray-800 overflow-hidden ${isStart ? 'rounded-l-full pl-1.5' : '-ml-1'} ${isEnd ? 'rounded-r-full pr-1' : '-mr-1'}`}
-                          style={{ height: ROW_H, backgroundColor: aptColor(apt.id), opacity: t.payment_status === 'paid' ? 0.5 : 0.9 }}>
-                          {isStart && <span className="truncate font-bold">{apt.title}{guests ? ` · ${guests}` : ''}</span>}
-                        </span>
-                      )
-                    })}
-                  </div>
-                )
-              })}
-            </div>
-          )
-        })}
-      </div>
-      {aptOrder.length > 0 && (
-        <div className="flex items-center gap-3 flex-wrap px-4 py-2.5 border-t border-border">
-          {aptOrder.map(apt => (
-            <div key={apt.id} className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: aptColor(apt.id) }} />
-              <span className="text-[11px] text-muted-foreground font-medium">{apt.title}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function CleanerDashboard() {
@@ -536,6 +437,22 @@ export default function CleanerDashboard() {
   const [cashDirection, setCashDirection] = useState<'deposit' | 'withdrawal'>('deposit')
   const [cashAmount, setCashAmount] = useState('')
   const [cashNote, setCashNote] = useState('')
+  const [calSelectedApt, setCalSelectedApt] = useState('')
+
+  // Full apartment rows for the calendar tab (same component/visualization as the owner's calendar)
+  const { data: calApartments = [] } = useQuery({
+    queryKey: ['cleaner-apartments', user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('apartments')
+        .select('*, apartment_images(*)')
+        .eq('cleaner_id', user!.id)
+        .order('title')
+      if (error) throw error
+      return data as Apartment[]
+    },
+    enabled: !!user,
+  })
 
   const { data: tasks, isLoading } = useQuery({
     queryKey: ['cleaner-tasks', user?.id],
@@ -787,7 +704,18 @@ export default function CleanerDashboard() {
             </div>
             )
           })() : tab === 'calendar' ? (
-            <CleanerCalendar tasks={all} aptColor={aptColor} />
+            calApartments.length > 0 ? (
+              <CalendarSection
+                apartments={calApartments}
+                selectedApt={(calSelectedApt || calApartments[0]?.id) ?? ''}
+                setSelectedApt={setCalSelectedApt}
+                readOnly
+              />
+            ) : (
+              <div className="bg-card border border-border rounded-2xl p-10 text-center text-muted-foreground text-sm">
+                Нет назначенных квартир
+              </div>
+            )
           ) : tab === 'payment' ? (
             <div className="flex flex-col gap-6">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">

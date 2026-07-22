@@ -79,7 +79,7 @@ type BookingSourceLocal = 'airbnb' | 'booking' | 'other'
 
 type ApartmentImage = { id: string; image_url: string; order_index: number }
 
-type Apartment = {
+export type Apartment = {
   id: string; title: string; address: string; full_address: string | null; description: string
   cleaning_fee: number; price_per_night: number; max_guests: number
   is_public: boolean; owner_id: string; cleaner_id: string | null; amenities: string[]
@@ -714,7 +714,7 @@ function tintHex(hex: string, amount: number): string {
   const mix = (c: number) => Math.round(c + (255 - c) * amount)
   return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`
 }
-function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartments: Apartment[]; selectedApt: string; setSelectedApt: (id: string) => void }) {
+export function CalendarSection({ apartments, selectedApt, setSelectedApt, readOnly }: { apartments: Apartment[]; selectedApt: string; setSelectedApt: (id: string) => void; readOnly?: boolean }) {
   const qc = useQueryClient()
   const { theme } = useTheme()
   const isDark = theme === 'business'
@@ -991,6 +991,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
   }, [abkRange, blockedMap])
 
   const handleDayClick = (dateStr: string, info?: CalDayInfo) => {
+    if (readOnly) return
     // Booked cell → open booking detail
     if (info) {
       setCalDetail(info.bookingId)
@@ -1179,7 +1180,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                     key={di}
                     onClick={() => handleDayClick(dateStr, info)}
                     onMouseEnter={() => { if (!info && abkAnchor && !abkRange) setAbkHover(dateStr) }}
-                    className={`flex flex-col min-h-0 relative select-none cursor-pointer transition-colors ${isYear ? 'p-0.5' : compact ? 'px-1 pt-1 pb-0.5' : 'px-2 pt-2 pb-1'} ${cellBg}`}
+                    className={`flex flex-col min-h-0 relative select-none transition-colors ${readOnly ? 'cursor-default' : 'cursor-pointer'} ${isYear ? 'p-0.5' : compact ? 'px-1 pt-1 pb-0.5' : 'px-2 pt-2 pb-1'} ${cellBg}`}
                   >
 
                     {/* Booking bar — Airbnb-style: a solid pill anchored to the bottom of the cell,
