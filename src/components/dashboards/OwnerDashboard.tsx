@@ -4217,10 +4217,11 @@ type CashEntry = {
   created_at: string
 }
 
-function CleanerView({ bookings, onRefresh, ownerId }: { bookings: BookingRow[]; onRefresh: () => void; ownerId: string }) {
+function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { bookings: BookingRow[]; onRefresh: () => void; ownerId: string; fullApartments: Apartment[] }) {
   const today = new Date().toISOString().slice(0, 10)
   const qc = useQueryClient()
   const [tab, setTab] = useState<'bookings' | 'payment' | 'calendar' | 'archive'>('bookings')
+  const [calSelectedApt, setCalSelectedApt] = useState('')
   const [selectedBooking, setSelectedBooking] = useState<BookingRow | null>(null)
   const [payingTaskId, setPayingTaskId] = useState<string | null>(null)
   const [payInput, setPayInput] = useState('')
@@ -4230,7 +4231,6 @@ function CleanerView({ bookings, onRefresh, ownerId }: { bookings: BookingRow[];
   const [bulkMethod, setBulkMethod] = useState<'guest_cash' | 'owner_transfer'>('guest_cash')
   const [aptFilter, setAptFilter] = useState<string>('all')
   const [rentInput, setRentInput] = useState('')
-  const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1) })
   const [showCashForm, setShowCashForm] = useState(false)
   const [cashDirection, setCashDirection] = useState<'deposit' | 'withdrawal'>('deposit')
   const [cashAmount, setCashAmount] = useState('')
@@ -4654,93 +4654,40 @@ function CleanerView({ bookings, onRefresh, ownerId }: { bookings: BookingRow[];
     )
   }
 
-  // ── render: calendar tab — full stay-range bars, one row per apartment ────────
-  const CAL_ROW_H = 15
-  const renderCalendar = () => {
-    const month = calMonth
-    const setMonth = setCalMonth
-    const weeks = (() => {
-      const year = month.getFullYear(), mo = month.getMonth()
-      const firstDow = (new Date(year, mo, 1).getDay() + 6) % 7
-      const daysInMonth = getDaysInMonth(month)
-      const cells: (number | null)[] = Array(firstDow).fill(null)
-      for (let d = 1; d <= daysInMonth; d++) cells.push(d)
-      while (cells.length % 7 !== 0) cells.push(null)
-      const wks: (number | null)[][] = []
-      for (let i = 0; i < cells.length; i += 7) wks.push(cells.slice(i, i + 7))
-      return wks
-    })()
-    const byApt = new Map<string, BookingRow[]>()
-    all.forEach(b => {
-      if (!byApt.has(b.apartment_id)) byApt.set(b.apartment_id, [])
-      byApt.get(b.apartment_id)!.push(b)
-    })
-    const bookingOnDay = (aptId: string, dateStr: string) =>
-      (byApt.get(aptId) ?? []).find(b => b.start_date <= dateStr && dateStr <= b.end_date)
-
-    return (
-      <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-          <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
-            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronLeft size={15} /></button>
-          <p className="text-sm font-semibold capitalize">{format(month, 'LLLL yyyy', { locale: ru })}</p>
-          <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
-            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronRight size={15} /></button>
+  // ── render: calendar tab — same CalendarSection as the owner's main calendar, read-only ──
+  const effectiveCalApt = (calSelectedApt || fullApartments[0]?.id) ?? ''
+  const calUpcoming = all
+    .filter(b => b.apartment_id === effectiveCalApt && b.end_date > today)
+    .sort((a, b) => a.start_date.localeCompare(b.start_date))
+    .slice(0, 6)
+  const renderCalendar = () => (
+    fullApartments.length > 0 ? (
+      <div className="flex flex-col gap-4">
+        <CalendarSection
+          apartments={fullApartments}
+          selectedApt={effectiveCalApt}
+          setSelectedApt={setCalSelectedApt}
+          readOnly
+        />
+        <div>
+          <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">
+            Актуальные и ближайшие заезды
+          </h3>
+          {calUpcoming.length === 0 ? (
+            <div className="bg-card border border-border rounded-2xl p-6 text-center text-muted-foreground text-sm">
+              Нет предстоящих заездов
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">{calUpcoming.map(b => renderCard(b))}</div>
+          )}
         </div>
-        <div className="grid grid-cols-7 border-b border-border">
-          {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(d => (
-            <div key={d} className="text-center text-[10px] font-bold text-muted-foreground uppercase py-1.5">{d}</div>
-          ))}
-        </div>
-        <div className="divide-y divide-border">
-          {weeks.map((week, wi) => {
-            const cellMinH = 26 + Math.max(1, apartments.length) * (CAL_ROW_H + 2)
-            return (
-              <div key={wi} className="grid grid-cols-7 divide-x divide-border">
-                {week.map((day, di) => {
-                  if (day === null) return <div key={di} className="bg-gray-50/60" style={{ minHeight: cellMinH }} />
-                  const dateStr = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-                  const isToday = dateStr === today
-                  return (
-                    <div key={di} className="p-1 flex flex-col gap-[2px] overflow-hidden" style={{ minHeight: cellMinH }}>
-                      <span className={`text-[10px] font-semibold w-4 h-4 flex items-center justify-center rounded-full flex-shrink-0 ${isToday ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}>
-                        {day}
-                      </span>
-                      {apartments.map(apt => {
-                        const b = bookingOnDay(apt.id, dateStr)
-                        if (!b) return <div key={apt.id} style={{ height: CAL_ROW_H }} />
-                        const isStart = b.start_date === dateStr
-                        const isEnd = b.end_date === dateStr
-                        const task = b.cleaning_tasks[0]
-                        return (
-                          <span key={apt.id}
-                            title={`${apt.title} · ${b.guests_count} чел · ${task ? fmtEur(task.cleaning_fee) : ''} · ${task?.payment_status === 'paid' ? 'оплачено' : 'не оплачено'}`}
-                            className={`flex items-center text-[8px] leading-none text-white overflow-hidden ${isStart ? 'rounded-l-full pl-1.5' : '-ml-1'} ${isEnd ? 'rounded-r-full pr-1' : '-mr-1'}`}
-                            style={{ height: CAL_ROW_H, backgroundColor: aptColorOf(apt.id), opacity: task?.payment_status === 'paid' ? 0.5 : 0.9 }}>
-                            {isStart && <span className="truncate font-semibold">{apt.title}{b.guests_count ? ` · ${b.guests_count}` : ''}</span>}
-                          </span>
-                        )
-                      })}
-                    </div>
-                  )
-                })}
-              </div>
-            )
-          })}
-        </div>
-        {apartments.length > 0 && (
-          <div className="flex items-center gap-3 flex-wrap px-4 py-2.5 border-t border-border">
-            {apartments.map(apt => (
-              <div key={apt.id} className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: aptColorOf(apt.id) }} />
-                <span className="text-[11px] text-muted-foreground font-medium">{apt.title}</span>
-              </div>
-            ))}
-          </div>
-        )}
+      </div>
+    ) : (
+      <div className="bg-card border border-border rounded-2xl p-10 text-center text-muted-foreground text-sm">
+        Нет квартир
       </div>
     )
-  }
+  )
 
   const renderPayment = () => (
     <div className="flex flex-col gap-6">
@@ -6750,7 +6697,7 @@ export default function OwnerDashboard() {
         {/* Content area — cleaner view */}
         {topView === 'cleaner' && (
           <main className="flex-1 flex overflow-hidden pb-16 md:pb-0">
-            <CleanerView bookings={bookings} onRefresh={invalidate} ownerId={user.id} />
+            <CleanerView bookings={bookings} onRefresh={invalidate} ownerId={user.id} fullApartments={apartments} />
           </main>
         )}
         <main className={`flex-1 relative min-h-0 pb-16 md:pb-0 ${topView === 'cleaner' ? 'hidden' : ''} ${section === 'dashboard' || section === 'calendar' ? 'overflow-y-auto xl:overflow-hidden flex flex-col' : 'overflow-y-auto'}`}
