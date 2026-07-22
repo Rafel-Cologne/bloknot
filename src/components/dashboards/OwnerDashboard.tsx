@@ -1192,7 +1192,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                           <div className="flex-1 rounded-l-full mr-px" style={{ backgroundColor: aptColor }} />
                           <div className="flex-1 rounded-r-full ml-px flex items-center pl-1.5 overflow-hidden" style={{ backgroundColor: tintHex(aptColor, 0.3) }}>
                             {!isYear && !compact && (
-                              <span className="text-[10px] font-bold text-white truncate">→ {info!.turnoverGuestName}</span>
+                              <span className="text-[10px] font-bold text-gray-800 truncate">→ {info!.turnoverGuestName}</span>
                             )}
                           </div>
                         </div>
@@ -1209,11 +1209,11 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                           {info!.isStart && !isYear && (
                             <div className="flex items-center gap-1 px-1.5">
                               {!compact && (
-                                <span className="w-4 h-4 rounded-full bg-white/25 flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0">
+                                <span className="w-4 h-4 rounded-full bg-white/90 flex items-center justify-center text-[9px] font-bold text-gray-800 flex-shrink-0">
                                   {(info!.guestName || '?').trim().charAt(0).toUpperCase()}
                                 </span>
                               )}
-                              <span className={`${compact ? 'text-[9px]' : 'text-[11px]'} font-bold text-white whitespace-nowrap`}>
+                              <span className={`${compact ? 'text-[9px]' : 'text-[11px]'} font-bold text-gray-800 whitespace-nowrap`}>
                                 {compact
                                   ? info!.guestName
                                   : `${info!.guestName}, ${info!.guestsCount} ${info!.guestsCount === 1 ? 'гость' : info!.guestsCount < 5 ? 'гостя' : 'гостей'}, ${info!.nights} ${info!.nights === 1 ? 'ночь' : info!.nights < 5 ? 'ночи' : 'ночей'}`}
@@ -1221,7 +1221,7 @@ function CalendarSection({ apartments, selectedApt, setSelectedApt }: { apartmen
                             </div>
                           )}
                           {info!.isEnd && !info!.isStart && !isYear && !compact && info!.totalAmount != null && (
-                            <span className="ml-auto mr-2 text-[11px] font-bold text-white/95 flex-shrink-0">
+                            <span className="ml-auto mr-2 text-[11px] font-bold text-gray-800 flex-shrink-0">
                               {fmtEur(info!.totalAmount)}
                             </span>
                           )}
