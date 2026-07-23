@@ -6142,7 +6142,11 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
       return true
     })
     const netRental = relevant.reduce((s, b) => s + revenueOf(b), 0)
-    const cleaning = relevant.reduce((s, b) => s + (b.cleaning_fee_amount ?? b.cleaning_tasks[0]?.cleaning_fee ?? 0), 0)
+    // Реальная сумма, которая уходит уборщице — берём из фактической задачи на уборку
+    // (то, что ей правда платят), а не из письма Airbnb: иногда Airbnb указывает гостю
+    // одну стоимость уборки, а по факту уборщице платится стандартная ставка квартиры —
+    // разница в таком случае остаётся доходом хозяина, а не тратится на уборку.
+    const cleaning = relevant.reduce((s, b) => s + (b.cleaning_tasks[0]?.cleaning_fee ?? b.cleaning_fee_amount ?? 0), 0)
     const commission = relevant.reduce((s, b) => s + (b.host_service_fee_amount ?? 0), 0)
     const gross = netRental + commission
     const net = netRental - cleaning - totalConfirmed
@@ -6527,9 +6531,10 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
     const nights = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
     return (apt?.price_per_night ?? 0) * nights
   }
-  // Проходящая сумма уборки — не доход хозяина. Берём из разбивки Airbnb, а если её нет
-  // (частная/ручная бронь) — из фактической задачи на уборку этой брони.
-  const cleaningCost = (b: BookingRow) => b.cleaning_fee_amount ?? b.cleaning_tasks[0]?.cleaning_fee ?? 0
+  // Проходящая сумма уборки — не доход хозяина. Берём фактическую сумму задачи на
+  // уборку (то, что реально получает уборщица), а не то, что Airbnb указал гостю в
+  // письме — иногда эти цифры расходятся, и тогда разница остаётся доходом хозяина.
+  const cleaningCost = (b: BookingRow) => b.cleaning_tasks[0]?.cleaning_fee ?? b.cleaning_fee_amount ?? 0
 
   // Фильтр по квартире — "Все квартиры" (по умолчанию) или конкретная, чтобы видеть,
   // сколько приносит именно она.
@@ -6615,7 +6620,7 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {([
           { key: 'revenue' as const, label: 'Общий доход', value: yearTotal.revenue, color: 'text-foreground' },
-          { key: 'cleaning' as const, label: 'Уборка (транзит)', value: yearTotal.cleaning, color: 'text-muted-foreground' },
+          { key: 'cleaning' as const, label: 'Уборка', value: yearTotal.cleaning, color: 'text-muted-foreground' },
           { key: 'expense' as const, label: 'Расходы', value: yearTotal.expense, color: 'text-red-500' },
           { key: 'net' as const, label: 'Чистыми на руки', value: yearTotal.net, color: yearTotal.net < 0 ? 'text-destructive' : 'text-primary' },
         ]).map(({ key, label, value, color }) => (
@@ -6653,7 +6658,7 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
                     <p className="text-sm text-muted-foreground mb-3">
                       {breakdownModal === 'revenue'
                         ? <>Сумма по всем подтверждённым броням, у которых <b>выезд приходится на {year} год</b> — включая уже прошедшие заезды и ещё предстоящие (уже подтверждённые, но гость ещё не заехал). Личные поездки считаются как €0.</>
-                        : <>Уборка — это сумма, которая проходит транзитом клинеру и не является доходом хозяина. Берётся из разбивки Airbnb (если письмо было обработано агентом), иначе — из фактической стоимости задачи на уборку этой брони.</>
+                        : <>Уборка — это сумма, которая проходит транзитом клинеру и не является доходом хозяина. Берётся фактическая стоимость задачи на уборку (то, что реально получает уборщица), а если задачи нет — из разбивки Airbnb.</>
                       }
                     </p>
                     <p className="text-[11px] text-muted-foreground mb-2">
@@ -6664,7 +6669,7 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
                         const amount = breakdownModal === 'revenue'
                           ? (b.source === 'personal' ? 0 : (b.total_amount && b.total_amount > 0) ? b.total_amount
                               : (apartments.find(a => a.id === b.apartment_id)?.price_per_night ?? 0) * Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000))
-                          : (b.cleaning_fee_amount ?? b.cleaning_tasks[0]?.cleaning_fee ?? 0)
+                          : (b.cleaning_tasks[0]?.cleaning_fee ?? b.cleaning_fee_amount ?? 0)
                         if (amount === 0) return null
                         return (
                           <div key={b.id} className="flex items-center justify-between px-3 py-2 text-sm">
@@ -6710,7 +6715,7 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
                       <span className="font-semibold">{fmtEur(yearTotal.revenue)}</span>
                     </div>
                     <div className="flex justify-between px-3 py-2 text-sm">
-                      <span className="text-muted-foreground">− Уборка (транзит)</span>
+                      <span className="text-muted-foreground">− Уборка</span>
                       <span className="font-semibold text-red-500">−{fmtEur(yearTotal.cleaning)}</span>
                     </div>
                     <div className="flex justify-between px-3 py-2 text-sm">
@@ -6960,12 +6965,16 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
       } else {
         // total_amount — это то, что реально получает хозяин (комиссия Airbnb, host_service_fee_amount,
         // уже вычтена самим Airbnb из этой суммы — её вычитать второй раз не нужно). Но внутри total_amount
-        // всё ещё транзитом сидит уборочный сбор (cleaning_fee_amount) — он не доход хозяина, а проходящая
-        // сумма, поэтому для чистого дохода по аренде вычитаем именно её.
+        // всё ещё транзитом сидит уборочный сбор — он не доход хозяина, а проходящая сумма, поэтому для
+        // чистого дохода по аренде вычитаем именно её. Берём фактическую сумму задачи на уборку (то, что
+        // реально получает уборщица), а не то, что Airbnb указал гостю в письме — если Airbnb показал
+        // гостю бОльшую стоимость уборки, чем реально платится уборщице, разница остаётся доходом хозяина
+        // и должна облагаться налогом, а не исключаться как "транзит".
         const share = nightsInYear / bNights
-        const netAmount = b.total_amount - (b.cleaning_fee_amount ?? 0)
+        const actualCleaningFee = b.cleaning_tasks[0]?.cleaning_fee ?? b.cleaning_fee_amount ?? 0
+        const netAmount = b.total_amount - actualCleaningFee
         totalIncome += netAmount * share
-        totalCleaningExcluded += (b.cleaning_fee_amount ?? 0) * share
+        totalCleaningExcluded += actualCleaningFee * share
         totalServiceFeeExcluded += (b.host_service_fee_amount ?? 0) * share
       }
     })
