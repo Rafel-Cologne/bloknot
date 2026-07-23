@@ -5328,17 +5328,30 @@ type Expense = {
 }
 
 const EXP_CATEGORIES: Record<string, { label: string; icon: React.ReactNode; color: string; bg: string }> = {
-  electricity: { label: 'Электричество', icon: <Zap size={14} />,         color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-950/30' },
-  water:       { label: 'Вода',          icon: <Droplets size={14} />,     color: 'text-blue-500',  bg: 'bg-blue-50 dark:bg-blue-950/30' },
+  // Цвета подобраны под фирменные цвета поставщиков: Iberdrola — зелёный, AGAMED (вода) — синий.
+  electricity: { label: 'Электричество', icon: <Zap size={14} />,         color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-950/30' },
+  water:       { label: 'Вода',          icon: <Droplets size={14} />,     color: 'text-blue-600',  bg: 'bg-blue-50 dark:bg-blue-950/30' },
   gas:         { label: 'Газ',           icon: <Zap size={14} />,          color: 'text-orange-500',bg: 'bg-orange-50 dark:bg-orange-950/30' },
   internet:    { label: 'Интернет',      icon: <Bot size={14} />,          color: 'text-indigo-500',bg: 'bg-indigo-50 dark:bg-indigo-950/30' },
   repair:      { label: 'Ремонт',        icon: <ClipboardList size={14} />,color: 'text-rose-500',  bg: 'bg-rose-50 dark:bg-rose-950/30' },
-  furniture:   { label: 'Мебель',        icon: <Home size={14} />,         color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-950/30' },
+  furniture:   { label: 'Мебель',        icon: <Home size={14} />,         color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-950/30' },
   appliances:  { label: 'Техника',       icon: <PackageCheck size={14} />, color: 'text-purple-500',bg: 'bg-purple-50 dark:bg-purple-950/30' },
   insurance:   { label: 'Страховка',     icon: <ShieldCheck size={14} />,  color: 'text-cyan-500',  bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
   ibi:         { label: 'IBI (налог)',   icon: <FileText size={14} />,     color: 'text-red-500',   bg: 'bg-red-50 dark:bg-red-950/30' },
   cleaning:    { label: 'Уборка',        icon: <Brush size={14} />,        color: 'text-teal-500',  bg: 'bg-teal-50 dark:bg-teal-950/30' },
   other:       { label: 'Прочее',        icon: <Receipt size={14} />,      color: 'text-slate-500', bg: 'bg-slate-50 dark:bg-slate-950/30' },
+}
+
+// Стабильные цветные бейджи для квартир — чтобы визуально отличать записи по объекту.
+const APT_BADGE_COLORS = [
+  'bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-400',
+  'bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-950/40 dark:text-fuchsia-400',
+  'bg-lime-100 text-lime-700 dark:bg-lime-950/40 dark:text-lime-400',
+  'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400',
+]
+function aptBadgeColor(apartments: Apartment[], id: string) {
+  const idx = apartments.findIndex(a => a.id === id)
+  return APT_BADGE_COLORS[(idx < 0 ? 0 : idx) % APT_BADGE_COLORS.length]
 }
 
 const expFld = 'rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring w-full'
@@ -5651,7 +5664,7 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-semibold">{cat.label}</span>
                       <span className="text-sm font-bold text-amber-700 dark:text-amber-400">€{e.amount.toFixed(2)}</span>
-                      <span className="text-xs text-muted-foreground">{aptName(e.apartment_id)}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${aptBadgeColor(apartments, e.apartment_id)}`}>{aptName(e.apartment_id)}</span>
                     </div>
                     {e.provider && <p className="text-xs text-muted-foreground">{e.provider}</p>}
                     {e.invoice_period_start && (
@@ -5769,7 +5782,7 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
                         {format(parseISO(e.expense_date), 'd MMM yyyy', { locale: ru })}
                       </span>
                       {apartments.length > 1 && (
-                        <span className="text-xs text-muted-foreground">{aptName(e.apartment_id)}</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${aptBadgeColor(apartments, e.apartment_id)}`}>{aptName(e.apartment_id)}</span>
                       )}
                     </div>
                     {e.provider && <p className="text-xs text-muted-foreground">{e.provider}</p>}
