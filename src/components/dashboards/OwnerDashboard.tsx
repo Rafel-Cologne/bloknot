@@ -6499,6 +6499,7 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
 function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; bookings: BookingRow[] }) {
   const { user } = useAuth()
   const [year, setYear] = useState(new Date().getFullYear())
+  const [aptFilter, setAptFilter] = useState<string>('all')
   const [chartMode, setChartMode] = useState<'income_expense' | 'paid_pending'>('income_expense')
   const [selMonth, setSelMonth] = useState(new Date().getMonth())
   const todayStr = format(new Date(), 'yyyy-MM-dd')
@@ -6530,9 +6531,18 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
   // (частная/ручная бронь) — из фактической задачи на уборку этой брони.
   const cleaningCost = (b: BookingRow) => b.cleaning_fee_amount ?? b.cleaning_tasks[0]?.cleaning_fee ?? 0
 
+  // Фильтр по квартире — "Все квартиры" (по умолчанию) или конкретная, чтобы видеть,
+  // сколько приносит именно она.
+  const filteredBookings = useMemo(() =>
+    aptFilter === 'all' ? bookings : bookings.filter(b => b.apartment_id === aptFilter),
+  [bookings, aptFilter])
+  const filteredExpenses = useMemo(() =>
+    aptFilter === 'all' ? expenses : expenses.filter(e => e.apartment_id === aptFilter),
+  [expenses, aptFilter])
+
   const monthly = useMemo(() => {
     return Array.from({ length: 12 }, (_, m) => {
-      const monthBookings = bookings.filter(b => {
+      const monthBookings = filteredBookings.filter(b => {
         if (b.status !== 'accepted') return false
         const d = parseISO(b.end_date)
         return d.getMonth() === m && d.getFullYear() === year
@@ -6542,12 +6552,12 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
       const paid = monthBookings.filter(b => b.end_date <= todayStr).reduce((s, b) => s + calcRevenue(b), 0)
       const pending = revenue - paid
       const monthStr = `${year}-${String(m + 1).padStart(2, '0')}`
-      const expense = expenses.filter(e => e.expense_date.startsWith(monthStr)).reduce((s, e) => s + e.amount, 0)
+      const expense = filteredExpenses.filter(e => e.expense_date.startsWith(monthStr)).reduce((s, e) => s + e.amount, 0)
       const net = revenue - cleaning - expense
       return { m, revenue, cleaning, paid, pending, expense, net }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookings, expenses, year, todayStr, apartments])
+  }, [filteredBookings, filteredExpenses, year, todayStr, apartments])
 
   const selMonthData = monthly[selMonth] ?? { revenue: 0, cleaning: 0, paid: 0, pending: 0, expense: 0, net: 0 }
 
@@ -6562,10 +6572,10 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
   // год (учитываются и уже прошедшие, и ещё предстоящие подтверждённые брони, в отличие от
   // карточки «Общий доход с начала года» на Дашборде, которая считает только уже завершённые
   // заезды с начала года по сегодня — отсюда и разные цифры на этих двух страницах).
-  const yearBookings = useMemo(() => bookings
+  const yearBookings = useMemo(() => filteredBookings
     .filter(b => b.status === 'accepted' && parseISO(b.end_date).getFullYear() === year)
     .sort((a, b) => a.start_date.localeCompare(b.start_date)),
-  [bookings, year])
+  [filteredBookings, year])
 
   const chartMax = Math.max(
     ...monthly.map(d => chartMode === 'income_expense' ? Math.max(d.revenue, d.expense) : d.revenue),
@@ -6582,12 +6592,23 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
           <h2 className="text-xl font-display font-semibold flex items-center gap-2">
             <BarChart2 size={20} className="text-primary" /> Доходы
           </h2>
-          <p className="text-sm text-muted-foreground mt-0.5">Помесячная динамика по всем квартирам</p>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {aptFilter === 'all' ? 'Помесячная динамика по всем квартирам' : `Помесячная динамика — ${apartments.find(a => a.id === aptFilter)?.title ?? ''}`}
+          </p>
         </div>
-        <select value={year} onChange={e => setYear(Number(e.target.value))}
-          className="rounded-xl border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
-          {years.map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
+        <div className="flex gap-2">
+          {apartments.length > 1 && (
+            <select value={aptFilter} onChange={e => setAptFilter(e.target.value)}
+              className="rounded-xl border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+              <option value="all">Все квартиры</option>
+              {apartments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
+            </select>
+          )}
+          <select value={year} onChange={e => setYear(Number(e.target.value))}
+            className="rounded-xl border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
       </div>
 
       {/* Summary cards */}
@@ -6667,7 +6688,7 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
                       Все подтверждённые расходы (коммунальные, ремонт и т.д.) с датой в {year} году — те же записи, что и во вкладке «Расходы».
                     </p>
                     <div className="flex flex-col divide-y divide-border border border-border rounded-xl overflow-hidden">
-                      {expenses.slice().sort((a, b) => b.expense_date.localeCompare(a.expense_date)).map((e, i) => (
+                      {filteredExpenses.slice().sort((a, b) => b.expense_date.localeCompare(a.expense_date)).map((e, i) => (
                         <div key={i} className="flex items-center justify-between px-3 py-2 text-sm">
                           <div className="min-w-0">
                             <p className="font-medium text-foreground truncate">{EXP_CATEGORIES[e.category]?.label ?? e.category}{e.provider ? ` · ${e.provider}` : ''}</p>
