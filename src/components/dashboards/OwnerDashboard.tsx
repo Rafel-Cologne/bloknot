@@ -3939,6 +3939,7 @@ function BookingsSection({
 // ─── Cleaning Section (owner view) ───────────────────────────────────────────
 
 function CleaningSection({ bookings, onRefresh }: { bookings: BookingRow[]; onRefresh: () => void }) {
+  const { user } = useAuth()
   const qc = useQueryClient()
   const today = new Date().toISOString().slice(0, 10)
   const [modalGroup, setModalGroup] = useState<'platform' | 'private' | null>(null)
@@ -3947,6 +3948,41 @@ function CleaningSection({ bookings, onRefresh }: { bookings: BookingRow[]; onRe
   const [payInput, setPayInput] = useState('')
   // Payment method lifted here to avoid inner-component state reset on re-render
   const [payMethod, setPayMethod] = useState<'owner_transfer' | 'guest_cash'>('owner_transfer')
+  const [seenCleanedIds, setSeenCleanedIds] = useState<Set<string>>(new Set())
+
+  // ── "Квартира убрана" — красный индикатор для хозяина ────────────────────────
+  // Задачи уборки, которые уборщица уже отметила выполненными. Как и в её кабинете,
+  // при первом запуске весь текущий список считается уже виденным (без ретроактивного шума).
+  const doneCleaningRows = bookings.flatMap(b => b.cleaning_tasks
+    .filter(t => t.status === 'done')
+    .map(t => ({ task: t, booking: b })))
+    .sort((a, b) => (b.task.completed_at ?? '').localeCompare(a.task.completed_at ?? ''))
+
+  useEffect(() => {
+    if (!user) return
+    const key = `owner-seen-cleanings-${user.id}`
+    const raw = localStorage.getItem(key)
+    if (raw === null) {
+      const ids = doneCleaningRows.map(r => r.task.id)
+      try { localStorage.setItem(key, JSON.stringify(ids)) } catch { /* ignore */ }
+      setSeenCleanedIds(new Set(ids))
+    } else {
+      try { setSeenCleanedIds(new Set(JSON.parse(raw))) } catch { setSeenCleanedIds(new Set()) }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, bookings])
+
+  const markCleanedSeen = (ids: string[]) => {
+    if (!user) return
+    setSeenCleanedIds(prev => {
+      const next = new Set(prev)
+      ids.forEach(id => next.add(id))
+      try { localStorage.setItem(`owner-seen-cleanings-${user.id}`, JSON.stringify([...next])) } catch { /* ignore */ }
+      return next
+    })
+  }
+
+  const newCleanedRows = doneCleaningRows.filter(r => !seenCleanedIds.has(r.task.id))
 
   // ── helpers ───────────────────────────────────────────────────────────────
   const getPaidAmt = (t: CleaningTask): number => {
@@ -4270,6 +4306,29 @@ function CleaningSection({ bookings, onRefresh }: { bookings: BookingRow[]; onRe
   return (
     <div className="max-w-4xl">
       <h2 className="text-xl font-display font-semibold mb-6">Уборка</h2>
+
+      {newCleanedRows.length > 0 && (
+        <button
+          onClick={() => { setExpandedId(newCleanedRows[0].booking.id); markCleanedSeen(newCleanedRows.map(r => r.task.id)) }}
+          className="w-full flex items-center gap-3 bg-red-50 border border-red-200 text-red-700 rounded-2xl px-4 py-3 mb-6 text-left hover:bg-red-100 transition-colors">
+          <span className="w-2.5 h-2.5 rounded-full bg-red-500 flex-shrink-0 animate-pulse" />
+          <span className="text-sm font-semibold flex-1 min-w-0">
+            {newCleanedRows.length === 1 ? (
+              <>
+                Квартира убрана — {newCleanedRows[0].booking.apartments.title}
+                {newCleanedRows[0].booking.guest_rating ? (
+                  <span className="inline-flex items-center gap-0.5 ml-1.5 align-middle">
+                    {[1, 2, 3, 4, 5].map(i => (
+                      <Star key={i} size={12} className={i <= newCleanedRows[0].booking.guest_rating! ? 'text-amber-400 fill-amber-400' : 'text-red-200'} />
+                    ))}
+                  </span>
+                ) : ' (оценка чистоты пока не поставлена)'}
+              </>
+            ) : <>Убрано квартир: {newCleanedRows.length}</>}
+          </span>
+          <ChevronRight size={16} className="flex-shrink-0" />
+        </button>
+      )}
 
       {/* ── 2-column summary cards ── */}
       <div className="grid grid-cols-2 gap-4 mb-8">

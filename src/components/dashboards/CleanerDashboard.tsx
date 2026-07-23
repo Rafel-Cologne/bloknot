@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -256,7 +256,7 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
               <span className="text-muted-foreground">Телефон</span>
               <span className="font-semibold text-foreground text-right">
                 <a href={`tel:${b.guest_phone}`} className="text-primary hover:underline">{b.guest_phone}</a>
-                {country ? <span className="block text-[11px] text-muted-foreground font-normal">{country.flag} {country.name}</span> : null}
+                {country ? <span className="block text-[11px] text-muted-foreground font-normal">{country.name}</span> : null}
               </span>
             </div>
           )}
@@ -443,7 +443,7 @@ function TaskCard({ task, onSelect, aptColor }: { task: TaskRow; onSelect: () =>
             </span>
             {b.guest_phone && (
               <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                {country && <span>{country.flag}</span>} {b.guest_phone}
+                {b.guest_phone}{country ? ` · ${country.name}` : ''}
               </span>
             )}
           </p>
@@ -575,6 +575,7 @@ export default function CleanerDashboard() {
   const [cashDirection, setCashDirection] = useState<'deposit' | 'withdrawal'>('deposit')
   const [cashAmount, setCashAmount] = useState('')
   const [cashNote, setCashNote] = useState('')
+  const [seenTaskIds, setSeenTaskIds] = useState<Set<string>>(new Set())
 
   // Full apartment rows for the calendar tab (same component/visualization as the owner's calendar)
   const { data: calApartments = [] } = useQuery({
@@ -637,17 +638,53 @@ export default function CleanerDashboard() {
 
   const today = new Date().toISOString().slice(0, 10)
   const all = tasks ?? []
+
+  // ── "Новая бронь" — красный индикатор ────────────────────────────────────────
+  // Отмечаем, какие брони уборщица уже видела (per-браузер, localStorage). При первом
+  // запуске (ключа ещё нет) считаем весь текущий список уже "виденным" — иначе при
+  // первом открытии всё сразу помечается как "новое".
+  useEffect(() => {
+    if (!user || !tasks) return
+    const key = `cleaner-seen-bookings-${user.id}`
+    const raw = localStorage.getItem(key)
+    if (raw === null) {
+      const ids = tasks.map(t => t.id)
+      try { localStorage.setItem(key, JSON.stringify(ids)) } catch { /* ignore */ }
+      setSeenTaskIds(new Set(ids))
+    } else {
+      try { setSeenTaskIds(new Set(JSON.parse(raw))) } catch { setSeenTaskIds(new Set()) }
+    }
+  }, [user?.id, tasks])
+
+  const markTasksSeen = (ids: string[]) => {
+    if (!user) return
+    setSeenTaskIds(prev => {
+      const next = new Set(prev)
+      ids.forEach(id => next.add(id))
+      try { localStorage.setItem(`cleaner-seen-bookings-${user.id}`, JSON.stringify([...next])) } catch { /* ignore */ }
+      return next
+    })
+  }
+
+  // `all` уже отсортирован по created_at убывающе (см. запрос выше) — значит и здесь первым будет самый новый
+  const newTasks = all.filter(t => !seenTaskIds.has(t.id))
+
+  // "Заезды" — живёт по статусу уборки, а не по оплате: пока не отмечено "убрано",
+  // бронь остаётся видна как предстоящая/просроченная, даже если гость уже отдал наличные заранее.
   const currentStays = all.filter(t => t.bookings.start_date <= today && t.bookings.end_date > today)
-  const upcoming = all.filter(t => t.bookings.start_date > today && t.status !== 'done' && t.payment_status !== 'paid')
+  const upcoming = all.filter(t => t.bookings.start_date > today && t.status !== 'done')
     .sort((a, b) => a.bookings.start_date.localeCompare(b.bookings.start_date))
-  const overdue = all.filter(t => t.bookings.end_date <= today && t.status !== 'done' && t.payment_status !== 'paid')
+  const overdue = all.filter(t => t.bookings.end_date <= today && t.status !== 'done')
     .sort((a, b) => a.bookings.end_date.localeCompare(b.bookings.end_date))
-  const archive = all.filter(t => t.status === 'done' || t.payment_status === 'paid')
+  const archive = all.filter(t => t.status === 'done')
     .sort((a, b) => b.bookings.end_date.localeCompare(a.bookings.end_date))
 
+  // Сумма 60€ засчитывается ей на баланс (заработано/ожидает оплаты) только после
+  // того, как уборка реально отмечена выполненной — не раньше.
+  const doneTasks = all.filter(t => t.status === 'done')
   const getPaidAmt = (t: TaskRow) => t.payment_status === 'paid' ? t.cleaning_fee : 0
-  const totalOwed = all.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
-  const totalPaid = all.reduce((s, t) => s + getPaidAmt(t), 0)
+  const totalOwed = doneTasks.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
+  const totalPaid = doneTasks.reduce((s, t) => s + getPaidAmt(t), 0)
   const totalEarned = totalOwed + totalPaid
   const pct = totalEarned > 0 ? Math.round((totalPaid / totalEarned) * 100) : 0
 
@@ -703,8 +740,8 @@ export default function CleanerDashboard() {
   if (!user) return null
 
   const byApartment = (t: TaskRow) => aptFilter === 'all' || t.bookings.apartments.id === aptFilter
-  const paidList = all.filter(t => t.payment_status === 'paid' && byApartment(t))
-  const unpaidList = all.filter(t => t.payment_status !== 'paid' && byApartment(t))
+  const paidList = doneTasks.filter(t => t.payment_status === 'paid' && byApartment(t))
+  const unpaidList = doneTasks.filter(t => t.payment_status !== 'paid' && byApartment(t))
 
   return (
     <div className="flex flex-1 h-full overflow-hidden">
@@ -773,6 +810,20 @@ export default function CleanerDashboard() {
                `${archive.length} завершённых заездов`}
             </p>
           </div>
+
+          {newTasks.length > 0 && (
+            <button
+              onClick={() => { setSelectedTask(newTasks[0]); markTasksSeen(newTasks.map(t => t.id)) }}
+              className="w-full flex items-center gap-3 bg-red-50 border border-red-200 text-red-700 rounded-2xl px-4 py-3 mb-4 md:mb-6 text-left hover:bg-red-100 transition-colors">
+              <span className="w-2.5 h-2.5 rounded-full bg-red-500 flex-shrink-0 animate-pulse" />
+              <span className="text-sm font-semibold flex-1 min-w-0">
+                {newTasks.length === 1
+                  ? <>Новая бронь — {newTasks[0].bookings.apartments.title}{newTasks[0].bookings.guest_name ? `, ${newTasks[0].bookings.guest_name}` : ''}</>
+                  : <>Новых броней: {newTasks.length}</>}
+              </span>
+              <ChevronRight size={16} className="flex-shrink-0" />
+            </button>
+          )}
 
           {isLoading ? (
             <div className="flex flex-col gap-3">
