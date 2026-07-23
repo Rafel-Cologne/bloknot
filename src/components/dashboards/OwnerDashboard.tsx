@@ -5630,6 +5630,23 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
     enabled: !!user,
   })
 
+  // Категории, которые реально встречаются в расходах владельца — фильтр показывает только их.
+  const { data: usedCategoryRows = [] } = useQuery({
+    queryKey: ['expenses-used-categories', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('expenses').select('category')
+        .eq('owner_id', user!.id).eq('status', 'confirmed').is('deleted_at', null)
+      return (data ?? []) as { category: string }[]
+    },
+    enabled: !!user,
+  })
+  const usedCategories = useMemo(
+    () => Array.from(new Set(usedCategoryRows.map(r => r.category))).sort(
+      (a, b) => (EXP_CATEGORIES[a]?.label ?? a).localeCompare(EXP_CATEGORIES[b]?.label ?? b, 'ru')
+    ),
+    [usedCategoryRows]
+  )
+
   // Полная история регулярных счетов (без фильтра по периоду) — нужна, чтобы находить пропуски по месяцам.
   const { data: allRecurringExpenses = [] } = useQuery({
     queryKey: ['expenses-all-recurring', user?.id],
@@ -5649,6 +5666,7 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
     qc.invalidateQueries({ queryKey: ['expenses-confirmed', user?.id] })
     qc.invalidateQueries({ queryKey: ['expenses-pending', user?.id] })
     qc.invalidateQueries({ queryKey: ['expenses-all-recurring', user?.id] })
+    qc.invalidateQueries({ queryKey: ['expenses-used-categories', user?.id] })
   }
 
   const handleConfirm = async (id: string) => {
@@ -5793,11 +5811,13 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
               {l}
             </button>
           ))}
-          <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}
-            className={`${apartments.length > 1 ? '' : 'ml-auto'} rounded-xl border border-border bg-background px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring`}>
-            <option value="all">Все категории</option>
-            {Object.entries(EXP_CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-          </select>
+          {usedCategories.length > 1 && (
+            <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}
+              className={`${apartments.length > 1 ? '' : 'ml-auto'} rounded-xl border border-border bg-background px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring`}>
+              <option value="all">Все категории</option>
+              {usedCategories.map(k => <option key={k} value={k}>{EXP_CATEGORIES[k]?.label ?? k}</option>)}
+            </select>
+          )}
           {apartments.length > 1 && (
             <select value={filterApt} onChange={e => setFilterApt(e.target.value)}
               className="ml-auto rounded-xl border border-border bg-background px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring">
