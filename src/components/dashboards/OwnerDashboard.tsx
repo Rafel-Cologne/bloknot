@@ -76,7 +76,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Section = 'dashboard' | 'apartments' | 'bookings' | 'calendar' | 'cleaning' | 'expenses' | 'tax_report' | 'admin' | 'settings'
-type BookingSourceLocal = 'airbnb' | 'booking' | 'other'
+type BookingSourceLocal = 'airbnb' | 'booking' | 'other' | 'personal'
 
 type ApartmentImage = { id: string; image_url: string; order_index: number }
 
@@ -115,13 +115,14 @@ type BookingRow = {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SOURCE_LABELS: Record<string, string> = {
-  airbnb: 'Airbnb', booking: 'Booking.com', other: 'Частный', platform: 'Direct',
+  airbnb: 'Airbnb', booking: 'Booking.com', other: 'Частный', platform: 'Direct', personal: 'Личная',
 }
 const SOURCE_COLOR: Record<string, string> = {
   airbnb: 'bg-rose-100 text-rose-700',
   booking: 'bg-blue-100 text-blue-700',
   other: 'bg-purple-100 text-purple-700',
   platform: 'bg-green-100 text-green-700',
+  personal: 'bg-slate-100 text-slate-700',
 }
 const STATUS_COLOR: Record<string, string> = {
   pending: 'bg-amber-100 text-amber-800',
@@ -133,7 +134,7 @@ const STATUS_LABELS: Record<string, string> = {
   pending: 'Ожидает', accepted: 'Подтверждено', declined: 'Отклонено', cancelled: 'Отменено',
 }
 const SOURCE_PAYMENT: Record<BookingSourceLocal, string> = {
-  airbnb: 'owner_transfer', booking: 'owner_transfer', other: 'guest_cash',
+  airbnb: 'owner_transfer', booking: 'owner_transfer', other: 'guest_cash', personal: 'owner_transfer',
 }
 const CLEANER_APT_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#f43f5e', '#0ea5e9', '#d946ef', '#84cc16']
 
@@ -276,7 +277,7 @@ function AddBookingModal({
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Источник</label>
             <div className="flex gap-2">
-              {(['airbnb', 'booking', 'other'] as BookingSourceLocal[]).map(s => (
+              {(['airbnb', 'booking', 'other', 'personal'] as BookingSourceLocal[]).map(s => (
                 <button key={s} type="button" onClick={() => set('source', s)}
                   className={`flex-1 py-2 rounded-xl text-xs font-medium transition-colors border ${form.source === s ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border hover:border-primary/40'}`}>
                   {SOURCE_LABELS[s]}
@@ -284,7 +285,8 @@ function AddBookingModal({
               ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              {SOURCE_PAYMENT[form.source] === 'guest_cash' ? '💵 Гость платит за уборку наличными' : '🏦 Вы платите за уборку'}
+              {form.source === 'personal' ? '🏠 Ваша собственная поездка — без дохода, только уборка' :
+                SOURCE_PAYMENT[form.source] === 'guest_cash' ? '💵 Гость платит за уборку наличными' : '🏦 Вы платите за уборку'}
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -1369,7 +1371,7 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
                 {abkAction === 'booking' && (
                   <div className="flex flex-col gap-2">
                     <div className="flex gap-2">
-                      {(['airbnb', 'booking', 'other'] as BookingSourceLocal[]).map(s => (
+                      {(['airbnb', 'booking', 'other', 'personal'] as BookingSourceLocal[]).map(s => (
                         <button key={s} type="button" onClick={() => setAbkForm(f => ({ ...f, source: s }))}
                           className={`flex-1 py-1 rounded-xl text-xs font-medium transition-colors border ${abkForm.source === s ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border hover:border-primary/40'}`}>
                           {SOURCE_LABELS[s]}
@@ -1735,7 +1737,10 @@ function DashboardOverview({
   const MONTHS_RU_SHORT = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек']
 
   // Revenue helper
+  // "personal" — собственная поездка хозяина, дохода нет и не должно оцениваться по тарифу,
+  // даже если сумма не указана (в отличие от "other", где null означает "просто забыли внести").
   const calcRevenue = (b: BookingRow) => {
+    if (b.source === 'personal') return 0
     if (b.total_amount && b.total_amount > 0) return b.total_amount
     const apt = apartments.find(a => a.id === b.apartment_id)
     const nights = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
@@ -1743,9 +1748,9 @@ function DashboardOverview({
   }
 
   // Debt data
-  // Platform bookings (airbnb/booking): owner pays cleaner → track owner_transfer unpaid
+  // Platform bookings (airbnb/booking) и личные поездки: owner pays cleaner → track owner_transfer unpaid
   // Private bookings (other): guest pays in cash → track any unpaid task
-  const isPlatformSource = (src: string) => src === 'airbnb' || src === 'booking'
+  const isPlatformSource = (src: string) => src === 'airbnb' || src === 'booking' || src === 'personal'
   const hasDebt = (b: BookingRow) =>
     isPlatformSource(b.source)
       ? b.cleaning_tasks.some(t => t.payment_method === 'owner_transfer' && t.payment_status !== 'paid')
@@ -1843,7 +1848,8 @@ function DashboardOverview({
       const nights = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
       if (nights === 0) return
       const apt = apartments.find(a => a.id === b.apartment_id)
-      const totalRev = (b.total_amount && b.total_amount > 0) ? b.total_amount : (apt?.price_per_night ?? 0) * nights
+      const totalRev = b.source === 'personal' ? 0
+        : (b.total_amount && b.total_amount > 0) ? b.total_amount : (apt?.price_per_night ?? 0) * nights
       const revPerNight = totalRev / nights
 
       for (let n = 0; n < nights; n++) {
@@ -1929,7 +1935,8 @@ function DashboardOverview({
       bookings.filter(b => b.status === 'accepted' && b.apartment_id === apt.id).forEach(b => {
         const nights = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
         if (nights === 0) return
-        const totalRev = (b.total_amount && b.total_amount > 0) ? b.total_amount : apt.price_per_night * nights
+        const totalRev = b.source === 'personal' ? 0
+          : (b.total_amount && b.total_amount > 0) ? b.total_amount : apt.price_per_night * nights
         const rPN = totalRev / nights
         for (let n = 0; n < nights; n++) {
           const d = addDays(parseISO(b.start_date), n)
@@ -3261,7 +3268,7 @@ function EditBookingModal({ booking, onClose, onSaved }: {
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Источник</label>
             <div className="flex gap-2">
-              {(['airbnb', 'booking', 'other'] as BookingSourceLocal[]).map(s => (
+              {(['airbnb', 'booking', 'other', 'personal'] as BookingSourceLocal[]).map(s => (
                 <button key={s} type="button" onClick={() => set('source', s)}
                   className={`flex-1 py-2 rounded-xl text-xs font-medium transition-colors border ${form.source === s ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border hover:border-primary/40'}`}>
                   {SOURCE_LABELS[s]}
@@ -3382,6 +3389,11 @@ function BookingDetailModal({
   // Восстанавливаем "грязную" сумму до комиссии, чтобы показать понятную цепочку: сумма → минус уборка → минус комиссия → чистыми.
   const grossAmount = booking.total_amount != null ? booking.total_amount + (booking.host_service_fee_amount ?? 0) : null
   const netAmount = booking.total_amount != null ? booking.total_amount - (booking.cleaning_fee_amount ?? 0) : null
+  // % комиссии считаем от суммы до её вычета (grossAmount) — так же, как его показывает сам Airbnb
+  // в письме рядом со строкой "Servicegebühr für Gastgeber:innen (X %)". Не храним отдельно —
+  // выводим на лету из уже сохранённых цифр, чтобы всегда совпадало с реальным письмом.
+  const feePct = (booking.host_service_fee_amount != null && grossAmount)
+    ? (booking.host_service_fee_amount / grossAmount) * 100 : null
 
   return (
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -3435,7 +3447,9 @@ function BookingDetailModal({
           <div className="rounded-xl border border-border overflow-hidden">
             <div className="px-3 py-2 bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Доход</div>
             <div className="p-3 flex flex-col gap-1.5 text-sm">
-              {booking.total_amount == null ? (
+              {booking.source === 'personal' ? (
+                <p className="text-muted-foreground">Личная поездка — без дохода, только уборка</p>
+              ) : booking.total_amount == null ? (
                 <p className="text-muted-foreground">Сумма не указана</p>
               ) : hasFeeBreakdown ? (
                 <>
@@ -3451,7 +3465,9 @@ function BookingDetailModal({
                   )}
                   {booking.host_service_fee_amount != null && (
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">− Комиссия Airbnb</span>
+                      <span className="text-muted-foreground">
+                        − Комиссия Airbnb{feePct != null && <span className="opacity-70"> ({feePct.toFixed(1)}%)</span>}
+                      </span>
                       <span className="text-red-500">−{fmtEur(booking.host_service_fee_amount)}</span>
                     </div>
                   )}
@@ -6371,6 +6387,7 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
 
     let totalIncome = 0
     let totalDays = 0
+    let personalDays = 0
     let bookingsCount = 0
     let missingAmountCount = 0
     let totalCleaningExcluded = 0
@@ -6388,6 +6405,14 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
       const overlapEnd = bEnd < yearEndExclusive ? bEnd : yearEndExclusive
       const nightsInYear = Math.max(0, Math.round((overlapEnd.getTime() - overlapStart.getTime()) / 86400000))
       if (nightsInYear === 0) return
+
+      if (b.source === 'personal') {
+        // Личная поездка хозяина — не сдача в аренду. Дохода нет (и это не "забыли внести
+        // сумму"), а её дни не должны раздувать пропорцию вычитаемых расходов — по IRPF
+        // расходы вычитаются пропорционально именно дням АРЕНДЫ, а не личного проживания.
+        personalDays += nightsInYear
+        return
+      }
 
       bookingsCount++
       totalDays += nightsInYear
@@ -6425,7 +6450,7 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
     }, {})
 
     return {
-      apt, totalIncome, totalDays,
+      apt, totalIncome, totalDays, personalDays,
       rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome,
       expByCategory, bookingsCount, missingAmountCount, missingBookings,
       totalCleaningExcluded, totalServiceFeeExcluded,
@@ -6508,7 +6533,7 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
       )}
 
       {/* Per-apartment tables */}
-      {aptData.map(({ apt, totalIncome, totalDays,
+      {aptData.map(({ apt, totalIncome, totalDays, personalDays,
         rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome, expByCategory, bookingsCount, missingAmountCount, missingBookings,
         totalCleaningExcluded, totalServiceFeeExcluded }) => (
         <div key={apt.id} className="bg-card border border-border rounded-2xl overflow-hidden">
@@ -6536,7 +6561,13 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
                     )}
                   </p>
                 </div>
-                <div><p className="text-xs text-muted-foreground">Дней аренды</p><p className="font-bold">{totalDays}</p></div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Дней аренды</p>
+                  <p className="font-bold">
+                    {totalDays}
+                    {personalDays > 0 && <span className="text-muted-foreground font-normal"> (+{personalDays} личных)</span>}
+                  </p>
+                </div>
                 <div><p className="text-xs text-muted-foreground">% использ.</p><p className="font-bold">{(rentalRatio * 100).toFixed(1)}%</p></div>
               </div>
             </div>
