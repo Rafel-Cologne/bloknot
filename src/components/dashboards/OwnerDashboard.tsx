@@ -5504,17 +5504,27 @@ function AddExpenseModal({
     if (!err && !editing && makeRecurring) {
       // Заводим автоплатёж: приложение само будет создавать такой же расход каждый месяц.
       // Текущий месяц уже покрыт только что сохранённой записью, поэтому отмечаем его как сгенерированный.
-      await supabase.from('recurring_expenses').insert({
-        owner_id: user!.id,
-        apartment_id: payload.apartment_id,
-        category: payload.category,
+      // Если для этой квартиры+категории автоплатёж уже есть — обновляем его, а не плодим дубли.
+      const { data: existingRecurring } = await supabase.from('recurring_expenses').select('id')
+        .eq('owner_id', user!.id).eq('apartment_id', payload.apartment_id).eq('category', payload.category)
+        .eq('active', true).maybeSingle()
+
+      const recurringPayload = {
         amount: payload.amount,
         provider: payload.provider,
         description: payload.description,
         day_of_month: Number(form.expense_date.slice(8, 10)),
         active: true,
         last_generated_month: form.expense_date.slice(0, 7),
-      })
+      }
+
+      if (existingRecurring) {
+        await supabase.from('recurring_expenses').update(recurringPayload).eq('id', existingRecurring.id)
+      } else {
+        await supabase.from('recurring_expenses').insert({
+          owner_id: user!.id, apartment_id: payload.apartment_id, category: payload.category, ...recurringPayload,
+        })
+      }
     }
 
     setSaving(false)
