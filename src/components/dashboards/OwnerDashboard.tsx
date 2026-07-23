@@ -4778,7 +4778,7 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
     const color     = aptColorOf(b.apartment_id)
 
     return (
-      <button key={b.id} onClick={() => setSelectedBooking(b)}
+      <button key={b.id} onClick={() => { setSelectedBooking(b); setRentInput('') }}
         className={`bg-card border rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md hover:border-primary/30 ${isCur ? 'ring-1 ring-primary/20' : 'border-border'}`}
         style={isCur ? { borderColor: color } : undefined}>
         <div className="flex items-center gap-4 px-5 py-4">
@@ -5615,16 +5615,24 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
                   </div>
                 )}
                 {task && task.payment_method === 'owner_transfer' && task.payment_status !== 'paid' && task.cleaner_id && (
-                  cashBalance >= task.cleaning_fee ? (
+                  <div className="flex flex-col gap-2">
                     <button
-                      onClick={() => withdrawFromTill.mutate({ taskId: task.id, cleanerId: task.cleaner_id!, amount: task.cleaning_fee })}
-                      disabled={withdrawFromTill.isPending}
-                      className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-2xl bg-amber-100 text-amber-900 text-sm font-semibold hover:bg-amber-200 transition-colors disabled:opacity-60">
-                      <Wallet size={15} /> Списать {fmtEur(task.cleaning_fee)} из кассы
+                      onClick={() => recordPayment.mutate({ taskId: task.id, amount: task.cleaning_fee, fee: task.cleaning_fee, method: 'owner_transfer' })}
+                      disabled={recordPayment.isPending}
+                      className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50">
+                      <Banknote size={15} /> {recordPayment.isPending ? 'Сохранение…' : `Я перевёл(а) ${fmtEur(task.cleaning_fee)} уборщице`}
                     </button>
-                  ) : (
-                    <p className="text-[10px] text-muted-foreground text-center">Касса: {fmtEur(cashBalance)} — недостаточно, чтобы списать эту уборку</p>
-                  )
+                    {cashBalance >= task.cleaning_fee ? (
+                      <button
+                        onClick={() => withdrawFromTill.mutate({ taskId: task.id, cleanerId: task.cleaner_id!, amount: task.cleaning_fee })}
+                        disabled={withdrawFromTill.isPending}
+                        className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-2xl bg-amber-100 text-amber-900 text-sm font-semibold hover:bg-amber-200 transition-colors disabled:opacity-60">
+                        <Wallet size={15} /> Списать {fmtEur(task.cleaning_fee)} из кассы вместо перевода
+                      </button>
+                    ) : (
+                      <p className="text-[10px] text-muted-foreground text-center">Касса: {fmtEur(cashBalance)} — недостаточно, чтобы списать вместо перевода</p>
+                    )}
+                  </div>
                 )}
 
                 <button onClick={() => setSelectedBooking(null)}
