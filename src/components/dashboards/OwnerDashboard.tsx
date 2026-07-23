@@ -5509,20 +5509,45 @@ function AddExpenseModal({
   )
 }
 
+const EXPENSES_FILTERS_KEY = 'bloknot:expenses:filters'
+
+type ExpensesFilters = { apt: string; from: string; to: string }
+
+function loadExpensesFilters(): ExpensesFilters | null {
+  try {
+    const raw = localStorage.getItem(EXPENSES_FILTERS_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (typeof parsed?.apt === 'string' && typeof parsed?.from === 'string' && typeof parsed?.to === 'string') {
+      return parsed as ExpensesFilters
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
   const { user } = useAuth()
   const qc = useQueryClient()
   const today = new Date().toISOString().slice(0, 10)
   const curYear = new Date().getFullYear()
   const curMonth = new Date().getMonth()
+  const defaultFrom = `${curYear}-${String(curMonth + 1).padStart(2, '0')}-01`
+  const savedFilters = loadExpensesFilters()
 
-  const [filterApt, setFilterApt] = useState('all')
-  const [filterFrom, setFilterFrom] = useState(
-    `${curYear}-${String(curMonth + 1).padStart(2, '0')}-01`
-  )
-  const [filterTo, setFilterTo] = useState(today)
+  const [filterApt, setFilterApt] = useState(savedFilters?.apt ?? 'all')
+  const [filterFrom, setFilterFrom] = useState(savedFilters?.from ?? defaultFrom)
+  const [filterTo, setFilterTo] = useState(savedFilters?.to ?? today)
   const [showAdd, setShowAdd] = useState(false)
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
+
+  // Persist filters (apartment + period) across tabs/sessions
+  useEffect(() => {
+    try {
+      localStorage.setItem(EXPENSES_FILTERS_KEY, JSON.stringify({ apt: filterApt, from: filterFrom, to: filterTo }))
+    } catch { /* ignore storage errors */ }
+  }, [filterApt, filterFrom, filterTo])
 
   // Pending count for badge
   const { data: pendingExpenses = [] } = useQuery({
