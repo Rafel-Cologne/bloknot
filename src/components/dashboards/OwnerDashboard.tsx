@@ -1724,6 +1724,7 @@ function DashboardOverview({
   const [showRevenueModal, setShowRevenueModal] = useState(false)
   const [revenueFromDate, setRevenueFromDate] = useState(`${today.getFullYear()}-01-01`)
   const [showTopMonthPicker, setShowTopMonthPicker] = useState(false)
+  const [yearChartMode, setYearChartMode] = useState<'income_expense' | 'paid_pending'>('income_expense')
   const prevMonth = () => {
     if (selMonth === 0) { setSelMonth(11); setSelYear(y => y - 1) }
     else setSelMonth(m => m - 1)
@@ -1746,6 +1747,34 @@ function DashboardOverview({
     const nights = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
     return (apt?.price_per_night ?? 0) * nights
   }
+
+  // ── Year performance overview (à la Airbnb "Performance") ──────────────────
+  // Доход прикреплён к месяцу ВЫЕЗДА (как и monthRevenue ниже) — так цифры совпадают
+  // с остальными виджетами дашборда. "Завершено" — брони, где выезд уже случился (по этой
+  // дате должна была прийти оплата); "Предстоит" — подтверждённые брони с выездом позже
+  // сегодняшнего дня. Это приближение к Ausgezahlt/Anstehend у Airbnb (у нас нет данных
+  // о факте перевода денег, только о датах брони).
+  const yearMonthly = useMemo(() => {
+    return Array.from({ length: 12 }, (_, m) => {
+      const monthBookings = bookings.filter(b => {
+        if (b.status !== 'accepted') return false
+        const d = parseISO(b.end_date)
+        return d.getMonth() === m && d.getFullYear() === selYear
+      })
+      const revenue = monthBookings.reduce((s, b) => s + calcRevenue(b), 0)
+      const paid = monthBookings.filter(b => b.end_date <= todayStr).reduce((s, b) => s + calcRevenue(b), 0)
+      const pending = revenue - paid
+      const monthStr = `${selYear}-${String(m + 1).padStart(2, '0')}`
+      const expense = dashExpenses.filter(e => e.paid_date.startsWith(monthStr)).reduce((s, e) => s + e.amount, 0)
+      return { m, revenue, paid, pending, expense }
+    })
+  }, [bookings, dashExpenses, selYear, todayStr, apartments])
+
+  const yearChartMax = Math.max(
+    ...yearMonthly.map(d => yearChartMode === 'income_expense' ? Math.max(d.revenue, d.expense) : d.revenue),
+    1,
+  )
+  const selMonthData = yearMonthly[selMonth] ?? { revenue: 0, paid: 0, pending: 0, expense: 0 }
 
   // Debt data
   // Platform bookings (airbnb/booking) и личные поездки: owner pays cleaner → track owner_transfer unpaid
@@ -2128,6 +2157,114 @@ function DashboardOverview({
           <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">доход − расходы</p>
           {monthExpenses > 0 && (
             <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">−{fmtEur(monthExpenses)} расходов</p>
+          )}
+        </div>
+      </div>
+
+      {/* ── Row 2.5: Year performance overview (à la Airbnb "Performance") ── */}
+      <div className="bg-card border border-border rounded-2xl shadow-sm p-4 md:p-5 flex-shrink-0 relative z-10">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => setSelYear(y => y - 1)} className="p-1 rounded-lg hover:bg-muted text-muted-foreground transition-colors"><ChevronLeft size={14} /></button>
+            <p className="text-sm font-semibold text-foreground">Доходы и расходы за {selYear}</p>
+            <button onClick={() => setSelYear(y => y + 1)} className="p-1 rounded-lg hover:bg-muted text-muted-foreground transition-colors"><ChevronRight size={14} /></button>
+          </div>
+          <div className="flex items-center gap-0.5 bg-muted rounded-xl p-0.5">
+            <button onClick={() => setYearChartMode('income_expense')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${yearChartMode === 'income_expense' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+              Доход / Расход
+            </button>
+            <button onClick={() => setYearChartMode('paid_pending')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${yearChartMode === 'paid_pending' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+              Завершено / Предстоит
+            </button>
+          </div>
+        </div>
+
+        {/* Bars — 12 months */}
+        <div className="flex items-end gap-1.5 md:gap-2 h-32 overflow-x-auto pb-1">
+          {yearMonthly.map(d => (
+            <button key={d.m} onClick={() => setSelMonth(d.m)}
+              className="flex-1 min-w-[26px] flex flex-col items-center justify-end h-full gap-1.5 group">
+              {yearChartMode === 'income_expense' ? (
+                <div className="w-full flex items-end justify-center gap-0.5 h-full">
+                  <div className="w-1/2 rounded-t-md transition-all group-hover:opacity-80"
+                    style={{
+                      height: `${Math.max((d.revenue / yearChartMax) * 100, d.revenue > 0 ? 3 : 0)}%`,
+                      background: d.m === selMonth ? 'hsl(var(--primary))' : 'hsl(var(--primary) / 0.45)',
+                    }} />
+                  <div className="w-1/2 rounded-t-md transition-all group-hover:opacity-80 bg-red-300 dark:bg-red-800/60"
+                    style={{ height: `${Math.max((d.expense / yearChartMax) * 100, d.expense > 0 ? 3 : 0)}%` }} />
+                </div>
+              ) : (
+                <div className="w-full flex flex-col justify-end h-full rounded-t-md overflow-hidden transition-all group-hover:opacity-80">
+                  <div style={{
+                    height: `${(d.pending / yearChartMax) * 100}%`,
+                    background: 'hsl(var(--primary) / 0.25)',
+                  }} />
+                  <div style={{
+                    height: `${(d.paid / yearChartMax) * 100}%`,
+                    background: d.m === selMonth ? 'hsl(var(--primary))' : 'hsl(var(--primary) / 0.7)',
+                  }} />
+                </div>
+              )}
+              <span className={`text-[10px] font-medium flex-shrink-0 ${d.m === selMonth ? 'text-primary' : 'text-muted-foreground'}`}>
+                {MONTHS_RU_SHORT[d.m]}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Legend */}
+        <div className="flex items-center gap-4 mt-1 text-[11px] text-muted-foreground">
+          {yearChartMode === 'income_expense' ? (
+            <>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: 'hsl(var(--primary))' }} />Доход</span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block bg-red-300 dark:bg-red-800/60" />Расход</span>
+            </>
+          ) : (
+            <>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: 'hsl(var(--primary))' }} />Завершено</span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: 'hsl(var(--primary) / 0.25)' }} />Предстоит</span>
+            </>
+          )}
+        </div>
+
+        {/* Selected month summary panel */}
+        <div className="mt-4 pt-4 border-t border-border">
+          <p className="text-sm font-semibold text-foreground mb-2">{MONTHS_RU[selMonth]} {selYear}</p>
+          {yearChartMode === 'income_expense' ? (
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <p className="text-lg font-bold text-foreground">{fmtEur(selMonthData.revenue)}</p>
+                <p className="text-[11px] text-muted-foreground">Доход</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold text-red-500">{fmtEur(selMonthData.expense)}</p>
+                <p className="text-[11px] text-muted-foreground">Расход</p>
+              </div>
+              <div>
+                <p className={`text-lg font-bold ${selMonthData.revenue - selMonthData.expense < 0 ? 'text-destructive' : 'text-primary'}`}>
+                  {fmtEur(selMonthData.revenue - selMonthData.expense)}
+                </p>
+                <p className="text-[11px] text-muted-foreground">Прибыль</p>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <p className="text-lg font-bold text-foreground">{fmtEur(selMonthData.paid)}</p>
+                <p className="text-[11px] text-muted-foreground">Завершено</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold text-foreground">{fmtEur(selMonthData.pending)}</p>
+                <p className="text-[11px] text-muted-foreground">Предстоит</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold text-primary">{fmtEur(selMonthData.revenue)}</p>
+                <p className="text-[11px] text-muted-foreground">Итого</p>
+              </div>
+            </div>
           )}
         </div>
       </div>
