@@ -669,22 +669,17 @@ export default function CleanerDashboard() {
   // `all` уже отсортирован по created_at убывающе (см. запрос выше) — значит и здесь первым будет самый новый
   const newTasks = all.filter(t => !seenTaskIds.has(t.id))
 
-  // "Заезды" — живёт по статусу уборки, а не по оплате: пока не отмечено "убрано",
-  // бронь остаётся видна как предстоящая/просроченная, даже если гость уже отдал наличные заранее.
   const currentStays = all.filter(t => t.bookings.start_date <= today && t.bookings.end_date > today)
-  const upcoming = all.filter(t => t.bookings.start_date > today && t.status !== 'done')
+  const upcoming = all.filter(t => t.bookings.start_date > today && t.status !== 'done' && t.payment_status !== 'paid')
     .sort((a, b) => a.bookings.start_date.localeCompare(b.bookings.start_date))
-  const overdue = all.filter(t => t.bookings.end_date <= today && t.status !== 'done')
+  const overdue = all.filter(t => t.bookings.end_date <= today && t.status !== 'done' && t.payment_status !== 'paid')
     .sort((a, b) => a.bookings.end_date.localeCompare(b.bookings.end_date))
-  const archive = all.filter(t => t.status === 'done')
+  const archive = all.filter(t => t.status === 'done' || t.payment_status === 'paid')
     .sort((a, b) => b.bookings.end_date.localeCompare(a.bookings.end_date))
 
-  // Сумма 60€ засчитывается ей на баланс (заработано/ожидает оплаты) только после
-  // того, как уборка реально отмечена выполненной — не раньше.
-  const doneTasks = all.filter(t => t.status === 'done')
   const getPaidAmt = (t: TaskRow) => t.payment_status === 'paid' ? t.cleaning_fee : 0
-  const totalOwed = doneTasks.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
-  const totalPaid = doneTasks.reduce((s, t) => s + getPaidAmt(t), 0)
+  const totalOwed = all.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
+  const totalPaid = all.reduce((s, t) => s + getPaidAmt(t), 0)
   const totalEarned = totalOwed + totalPaid
   const pct = totalEarned > 0 ? Math.round((totalPaid / totalEarned) * 100) : 0
 
@@ -740,8 +735,8 @@ export default function CleanerDashboard() {
   if (!user) return null
 
   const byApartment = (t: TaskRow) => aptFilter === 'all' || t.bookings.apartments.id === aptFilter
-  const paidList = doneTasks.filter(t => t.payment_status === 'paid' && byApartment(t))
-  const unpaidList = doneTasks.filter(t => t.payment_status !== 'paid' && byApartment(t))
+  const paidList = all.filter(t => t.payment_status === 'paid' && byApartment(t))
+  const unpaidList = all.filter(t => t.payment_status !== 'paid' && byApartment(t))
 
   return (
     <div className="flex flex-1 h-full overflow-hidden">
