@@ -100,6 +100,12 @@ type BookingRow = {
   id: string; apartment_id: string; guest_name: string; guest_phone: string
   start_date: string; end_date: string; guests_count: number; status: string
   source: string; owner_notes: string | null; total_amount: number | null
+  // Разбивка суммы Airbnb: сколько внутри total_amount — уборка (проходящая сумма,
+  // не доход хозяина) и комиссия Airbnb (Servicegebühr für Gastgeber). Заполняется
+  // агентом из письма-подтверждения; для старых/ручных броней может быть null.
+  cleaning_fee_amount: number | null
+  host_service_fee_amount: number | null
+  external_booking_id: string | null
   guest_rating: number | null
   apartments: { title: string; address: string }
   cleaning_tasks: CleaningTask[]
@@ -1194,7 +1200,7 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
                           <div className="flex-1 rounded-l-full mr-px" style={{ backgroundColor: aptColor }} />
                           <div className="flex-1 rounded-r-full ml-px flex items-center pl-1.5 overflow-hidden" style={{ backgroundColor: tintHex(aptColor, 0.3) }}>
                             {!isYear && !compact && (
-                              <span className="text-[10px] font-bold text-gray-800 truncate">→ {info!.turnoverGuestName}</span>
+                              <span className="text-[10px] font-bold text-white truncate">→ {info!.turnoverGuestName}</span>
                             )}
                           </div>
                         </div>
@@ -1215,7 +1221,7 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
                                   {(info!.guestName || '?').trim().charAt(0).toUpperCase()}
                                 </span>
                               )}
-                              <span className={`${compact ? 'text-[9px]' : 'text-[11px]'} font-bold text-gray-800 whitespace-nowrap`}>
+                              <span className={`${compact ? 'text-[9px]' : 'text-[11px]'} font-bold text-white whitespace-nowrap`}>
                                 {compact
                                   ? info!.guestName
                                   : `${info!.guestName}, ${info!.guestsCount} ${info!.guestsCount === 1 ? 'гость' : info!.guestsCount < 5 ? 'гостя' : 'гостей'}, ${info!.nights} ${info!.nights === 1 ? 'ночь' : info!.nights < 5 ? 'ночи' : 'ночей'}`}
@@ -1223,7 +1229,7 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
                             </div>
                           )}
                           {info!.isEnd && !info!.isStart && !isYear && !compact && info!.totalAmount != null && (
-                            <span className="ml-auto mr-2 text-[11px] font-bold text-gray-800 flex-shrink-0">
+                            <span className="ml-auto mr-2 text-[11px] font-bold text-white flex-shrink-0">
                               {fmtEur(info!.totalAmount)}
                             </span>
                           )}
@@ -3365,6 +3371,206 @@ function EditBookingModal({ booking, onClose, onSaved }: {
   )
 }
 
+// ─── Booking Detail Modal ───────────────────────────────────────────────────────
+
+function BookingDetailModal({
+  booking, onClose, onEdit,
+}: { booking: BookingRow; onClose: () => void; onEdit: () => void }) {
+  const nights = Math.round((parseISO(booking.end_date).getTime() - parseISO(booking.start_date).getTime()) / 86400000)
+  const hasFeeBreakdown = booking.cleaning_fee_amount != null || booking.host_service_fee_amount != null
+  // total_amount — то, что хозяин реально получает (Airbnb уже вычла свою комиссию из суммы гостя).
+  // Восстанавливаем "грязную" сумму до комиссии, чтобы показать понятную цепочку: сумма → минус уборка → минус комиссия → чистыми.
+  const grossAmount = booking.total_amount != null ? booking.total_amount + (booking.host_service_fee_amount ?? 0) : null
+  const netAmount = booking.total_amount != null ? booking.total_amount - (booking.cleaning_fee_amount ?? 0) : null
+
+  return (
+    <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <motion.div className="relative bg-card border border-border rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl"
+        initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}>
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between sticky top-0 bg-card z-10">
+          <div>
+            <h3 className="font-semibold">{booking.guest_name || 'Без имени'}</h3>
+            <p className="text-xs text-muted-foreground">{booking.apartments.title}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X size={16} /></button>
+        </div>
+
+        <div className="p-5 flex flex-col gap-4">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${STATUS_COLOR[booking.status] ?? 'bg-muted text-muted-foreground'}`}>{STATUS_LABELS[booking.status] ?? booking.status}</span>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${SOURCE_COLOR[booking.source] ?? 'bg-muted text-muted-foreground'}`}>{SOURCE_LABELS[booking.source] ?? booking.source}</span>
+            {booking.external_booking_id && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-mono bg-muted text-muted-foreground">{booking.external_booking_id}</span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <p className="text-xs text-muted-foreground">Заезд</p>
+              <p className="font-semibold">{format(parseISO(booking.start_date), 'd MMM yyyy', { locale: ru })}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Выезд</p>
+              <p className="font-semibold">{format(parseISO(booking.end_date), 'd MMM yyyy', { locale: ru })}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Ночей</p>
+              <p className="font-semibold">{nights}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Гостей</p>
+              <p className="font-semibold">{booking.guests_count}</p>
+            </div>
+            {booking.guest_phone && (
+              <div className="col-span-2">
+                <p className="text-xs text-muted-foreground">Телефон</p>
+                <p className="font-semibold">{booking.guest_phone}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Финансовая разбивка */}
+          <div className="rounded-xl border border-border overflow-hidden">
+            <div className="px-3 py-2 bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Доход</div>
+            <div className="p-3 flex flex-col gap-1.5 text-sm">
+              {booking.total_amount == null ? (
+                <p className="text-muted-foreground">Сумма не указана</p>
+              ) : hasFeeBreakdown ? (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Сумма (до комиссии Airbnb)</span>
+                    <span>{fmtEur(grossAmount ?? booking.total_amount)}</span>
+                  </div>
+                  {booking.cleaning_fee_amount != null && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">− Уборка</span>
+                      <span className="text-red-500">−{fmtEur(booking.cleaning_fee_amount)}</span>
+                    </div>
+                  )}
+                  {booking.host_service_fee_amount != null && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">− Комиссия Airbnb</span>
+                      <span className="text-red-500">−{fmtEur(booking.host_service_fee_amount)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between pt-1.5 mt-0.5 border-t border-border font-bold">
+                    <span>Чистыми хозяину</span>
+                    <span className="text-primary">{fmtEur(netAmount ?? booking.total_amount)}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="flex justify-between font-bold">
+                  <span>Сумма</span>
+                  <span>{fmtEur(booking.total_amount)}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {booking.owner_notes && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Заметки хозяина</p>
+              <p className="text-sm whitespace-pre-wrap">{booking.owner_notes}</p>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-4 border-t border-border flex gap-2 justify-end sticky bottom-0 bg-card">
+          <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted">Закрыть</button>
+          <button onClick={onEdit} className="px-4 py-2 rounded-xl text-sm font-semibold bg-primary text-primary-foreground hover:opacity-90 flex items-center gap-1.5">
+            <Pencil size={13} /> Редактировать
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+// ─── Agent Refresh Control ────────────────────────────────────────────────────
+// Ручной запуск агента (проверка почты) поверх автоматического cron-расписания.
+// Показывает время последней проверки, чтобы не гадать, актуальны ли данные,
+// и не дёргать агента (и не тратить токены Claude) без необходимости.
+
+function AgentRefreshControl() {
+  const qc = useQueryClient()
+  const [running, setRunning] = useState(false)
+  const [resultMsg, setResultMsg] = useState<string | null>(null)
+  const [isError, setIsError] = useState(false)
+
+  const { data: lastRun } = useQuery({
+    queryKey: ['agent-last-run'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('agent_logs')
+        .select('run_at, bookings_created, bookings_updated, expenses_created, status')
+        .order('run_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (error) throw error
+      return data as { run_at: string; bookings_created: number; bookings_updated: number; expenses_created: number; status: string } | null
+    },
+    staleTime: 30_000,
+  })
+
+  const invalidateAll = () => {
+    qc.invalidateQueries({ queryKey: ['agent-last-run'] })
+    qc.invalidateQueries({ queryKey: ['owner-bookings-full'] })
+    qc.invalidateQueries({ queryKey: ['expenses-confirmed'] })
+    qc.invalidateQueries({ queryKey: ['expenses-pending'] })
+    qc.invalidateQueries({ queryKey: ['expenses-pending-count'] })
+    qc.invalidateQueries({ queryKey: ['expenses-all-recurring'] })
+    qc.invalidateQueries({ queryKey: ['expenses-used-categories'] })
+    qc.invalidateQueries({ queryKey: ['tax-expenses'] })
+    qc.invalidateQueries({ queryKey: ['recurring-expenses'] })
+  }
+
+  const handleRun = async () => {
+    setRunning(true)
+    setResultMsg(null)
+    setIsError(false)
+    try {
+      const { data, error } = await supabase.functions.invoke('trigger-agent-run')
+      if (error) throw error
+      const created = (data?.bookings_created ?? 0) + (data?.expenses_created ?? 0)
+      const updated = data?.bookings_updated ?? 0
+      if (created > 0 || updated > 0) {
+        const parts: string[] = []
+        if (created > 0) parts.push(`добавлено: ${created}`)
+        if (updated > 0) parts.push(`обновлено: ${updated}`)
+        setResultMsg(parts.join(', '))
+      } else {
+        setResultMsg('новых данных нет — всё актуально')
+      }
+      invalidateAll()
+    } catch {
+      setIsError(true)
+      setResultMsg('не удалось проверить почту')
+    } finally {
+      setRunning(false)
+      setTimeout(() => setResultMsg(null), 7000)
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <button onClick={handleRun} disabled={running}
+        className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border border-border bg-card hover:bg-muted transition-colors disabled:opacity-60 flex-shrink-0">
+        <RotateCcw size={14} className={running ? 'animate-spin' : ''} />
+        <span className="hidden sm:inline">{running ? 'Проверяю почту…' : 'Обновить данные'}</span>
+      </button>
+      <div className="text-[11px] text-muted-foreground leading-tight">
+        {resultMsg ? (
+          <span className={isError ? 'text-destructive' : 'text-emerald-600'}>{resultMsg}</span>
+        ) : lastRun?.run_at ? (
+          <>Обновлено: {format(parseISO(lastRun.run_at), 'd MMM, HH:mm', { locale: ru })}</>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 // ─── Bookings Section ─────────────────────────────────────────────────────────
 
 function BookingsSection({
@@ -3375,6 +3581,7 @@ function BookingsSection({
 }) {
   const qc = useQueryClient()
   const [editingBooking, setEditingBooking] = useState<BookingRow | null>(null)
+  const [viewingBooking, setViewingBooking] = useState<BookingRow | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
@@ -3480,9 +3687,12 @@ function BookingsSection({
       {/* Header */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h2 className="text-xl font-display font-semibold">Бронирования</h2>
-        <button onClick={onAddBooking} className="btn-primary rounded-xl px-3 py-2 text-sm flex items-center gap-1.5 flex-shrink-0">
-          <Plus size={15} /> <span className="hidden sm:inline">Добавить вручную</span><span className="sm:hidden">Добавить</span>
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <AgentRefreshControl />
+          <button onClick={onAddBooking} className="btn-primary rounded-xl px-3 py-2 text-sm flex items-center gap-1.5 flex-shrink-0">
+            <Plus size={15} /> <span className="hidden sm:inline">Добавить вручную</span><span className="sm:hidden">Добавить</span>
+          </button>
+        </div>
       </div>
 
       {deleteError && (
@@ -3555,7 +3765,8 @@ function BookingsSection({
               const photo = photoMap[b.apartment_id]
               const nightly = b.total_amount && nights > 0 ? Math.round(b.total_amount / nights) : null
               return (
-                <div key={b.id} className="bg-card border border-border rounded-2xl flex flex-col sm:flex-row sm:items-center gap-3 px-4 py-3 shadow-[var(--shadow-card)] hover:shadow-md transition-shadow">
+                <div key={b.id} onClick={() => setViewingBooking(b)} role="button" tabIndex={0}
+                  className="bg-card border border-border rounded-2xl flex flex-col sm:flex-row sm:items-center gap-3 px-4 py-3 shadow-[var(--shadow-card)] hover:shadow-md hover:border-primary/40 transition-shadow cursor-pointer">
                   {/* Top row on mobile: date + photo + actions */}
                   <div className="flex items-center gap-3 sm:contents">
                     {/* Date block */}
@@ -3576,7 +3787,7 @@ function BookingsSection({
                     </div>
 
                     {/* Actions — on mobile pushed to right of date+photo row */}
-                    <div className="flex sm:hidden ml-auto gap-1">
+                    <div className="flex sm:hidden ml-auto gap-1" onClick={e => e.stopPropagation()}>
                       <button onClick={() => setEditingBooking(b)}
                         className="p-2 rounded-xl bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors">
                         <Pencil size={14} />
@@ -3619,7 +3830,7 @@ function BookingsSection({
                   </div>
 
                   {/* Actions — desktop only */}
-                  <div className="hidden sm:flex flex-shrink-0 flex-col gap-1.5">
+                  <div className="hidden sm:flex flex-shrink-0 flex-col gap-1.5" onClick={e => e.stopPropagation()}>
                     <button onClick={() => setEditingBooking(b)}
                       className="p-2 rounded-xl bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors" title="Редактировать">
                       <Pencil size={14} />
@@ -3670,6 +3881,15 @@ function BookingsSection({
           </div>
         </>
       )}
+
+      {/* Detail Modal */}
+      <AnimatePresence>
+        {viewingBooking && !editingBooking && (
+          <BookingDetailModal booking={viewingBooking}
+            onClose={() => setViewingBooking(null)}
+            onEdit={() => { setEditingBooking(viewingBooking); setViewingBooking(null) }} />
+        )}
+      </AnimatePresence>
 
       {/* Edit Modal */}
       <AnimatePresence>
@@ -5807,10 +6027,13 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">Коммунальные услуги, ремонт и прочие расходы</p>
         </div>
-        <button onClick={() => { setQuickPrefill(null); setShowAdd(true) }}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:opacity-90">
-          <Plus size={16} /> Добавить расход
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <AgentRefreshControl />
+          <button onClick={() => { setQuickPrefill(null); setShowAdd(true) }}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:opacity-90">
+            <Plus size={16} /> Добавить расход
+          </button>
+        </div>
       </div>
 
       {/* Pending confirmation block */}
@@ -6132,6 +6355,8 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
     let totalDays = 0
     let bookingsCount = 0
     let missingAmountCount = 0
+    let totalCleaningExcluded = 0
+    let totalServiceFeeExcluded = 0
 
     aptBookingsAll.forEach(b => {
       const bStart = new Date(b.start_date)
@@ -6151,9 +6376,15 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
       if (b.total_amount == null) {
         missingAmountCount++
       } else {
-        // Сумма брони распределяется пропорционально ночам в этом году
-        // (важно для броней, пересекающих границу года)
-        totalIncome += b.total_amount * (nightsInYear / bNights)
+        // total_amount — это то, что реально получает хозяин (комиссия Airbnb, host_service_fee_amount,
+        // уже вычтена самим Airbnb из этой суммы — её вычитать второй раз не нужно). Но внутри total_amount
+        // всё ещё транзитом сидит уборочный сбор (cleaning_fee_amount) — он не доход хозяина, а проходящая
+        // сумма, поэтому для чистого дохода по аренде вычитаем именно её.
+        const share = nightsInYear / bNights
+        const netAmount = b.total_amount - (b.cleaning_fee_amount ?? 0)
+        totalIncome += netAmount * share
+        totalCleaningExcluded += (b.cleaning_fee_amount ?? 0) * share
+        totalServiceFeeExcluded += (b.host_service_fee_amount ?? 0) * share
       }
     })
 
@@ -6177,6 +6408,7 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
       apt, totalIncome, totalDays,
       rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome,
       expByCategory, bookingsCount, missingAmountCount,
+      totalCleaningExcluded, totalServiceFeeExcluded,
     }
   })
 
@@ -6243,7 +6475,8 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
 
       {/* Per-apartment tables */}
       {aptData.map(({ apt, totalIncome, totalDays,
-        rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome, expByCategory, bookingsCount, missingAmountCount }) => (
+        rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome, expByCategory, bookingsCount, missingAmountCount,
+        totalCleaningExcluded, totalServiceFeeExcluded }) => (
         <div key={apt.id} className="bg-card border border-border rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-border bg-muted/30">
             <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -6276,6 +6509,12 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
                 <span className="text-sm">Доходы от аренды (casilla 0102)</span>
                 <span className="font-semibold text-green-600">€{totalIncome.toFixed(2)}</span>
               </div>
+              {(totalCleaningExcluded > 0 || totalServiceFeeExcluded > 0) && (
+                <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
+                  Уже не учтено в доходе: уборка €{totalCleaningExcluded.toFixed(2)}
+                  {totalServiceFeeExcluded > 0 && <> и комиссия Airbnb €{totalServiceFeeExcluded.toFixed(2)} (вычтена Airbnb до выплаты)</>}
+                </p>
+              )}
             </div>
 
             {/* Expenses */}
