@@ -3574,10 +3574,11 @@ function AgentRefreshControl() {
 // ─── Bookings Section ─────────────────────────────────────────────────────────
 
 function BookingsSection({
-  bookings, isLoading, onRefresh, onAddBooking, apartments,
+  bookings, isLoading, onRefresh, onAddBooking, apartments, jumpToBookingId, onConsumeJump,
 }: {
   bookings: BookingRow[]; isLoading: boolean
   onRefresh: () => void; onAddBooking: () => void; apartments: Apartment[]
+  jumpToBookingId?: string | null; onConsumeJump?: () => void
 }) {
   const qc = useQueryClient()
   const [editingBooking, setEditingBooking] = useState<BookingRow | null>(null)
@@ -3598,6 +3599,21 @@ function BookingsSection({
   const [perPage, setPerPage] = useState(5)
 
   const today = new Date().toISOString().slice(0, 10)
+
+  // Переход из Налогового отчёта по клику на конкретную бронь без суммы —
+  // сразу открываем её редактирование, минуя фильтры и пагинацию списка.
+  useEffect(() => {
+    if (!jumpToBookingId) return
+    const target = bookings.find(b => b.id === jumpToBookingId)
+    if (target) {
+      setEditingBooking(target)
+      // Архивные брони (уже завершились) живут во вкладке "Архив" — переключаем,
+      // чтобы после закрытия модалки бронь не потерялась из вида.
+      if (target.end_date < today) setStatusFilter('archive')
+    }
+    onConsumeJump?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpToBookingId, bookings])
 
   // Apartment photo map
   const photoMap = useMemo(() => {
@@ -6315,7 +6331,9 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
 
 // ─── Tax Report Section ───────────────────────────────────────────────────────
 
-function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; bookings: BookingRow[] }) {
+function TaxReportSection({ apartments, bookings, onGoToBooking }: {
+  apartments: Apartment[]; bookings: BookingRow[]; onGoToBooking: (bookingId: string) => void
+}) {
   const [year, setYear] = useState(new Date().getFullYear())
   const [aptFilter, setAptFilter] = useState('all')
   const { user } = useAuth()
@@ -6357,6 +6375,7 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
     let missingAmountCount = 0
     let totalCleaningExcluded = 0
     let totalServiceFeeExcluded = 0
+    const missingBookings: BookingRow[] = []
 
     aptBookingsAll.forEach(b => {
       const bStart = new Date(b.start_date)
@@ -6375,6 +6394,7 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
 
       if (b.total_amount == null) {
         missingAmountCount++
+        missingBookings.push(b)
       } else {
         // total_amount — это то, что реально получает хозяин (комиссия Airbnb, host_service_fee_amount,
         // уже вычтена самим Airbnb из этой суммы — её вычитать второй раз не нужно). Но внутри total_amount
@@ -6407,7 +6427,7 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
     return {
       apt, totalIncome, totalDays,
       rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome,
-      expByCategory, bookingsCount, missingAmountCount,
+      expByCategory, bookingsCount, missingAmountCount, missingBookings,
       totalCleaningExcluded, totalServiceFeeExcluded,
     }
   })
@@ -6417,6 +6437,7 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
   const grandDepreciation = aptData.reduce((s, d) => s + d.deductibleDepreciation, 0)
   const grandNet = aptData.reduce((s, d) => s + d.netIncome, 0)
   const grandMissingAmount = aptData.reduce((s, d) => s + d.missingAmountCount, 0)
+  const grandMissingBookings = aptData.flatMap(d => d.missingBookings)
 
   const handlePrint = () => window.print()
 
@@ -6464,18 +6485,31 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
       </div>
 
       {grandMissingAmount > 0 && (
-        <div className="flex items-start gap-2 rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
-          <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-          <span>
-            {grandMissingAmount} {grandMissingAmount === 1 ? 'бронирование' : 'бронирований'} за {year} год без указанной суммы —
-            {' '}эти брони не учтены в доходах, и итог ниже реального. Укажи сумму в карточке брони.
-          </span>
+        <div className="flex flex-col gap-2 rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
+          <div className="flex items-start gap-2">
+            <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+            <span>
+              {grandMissingAmount} {grandMissingAmount === 1 ? 'бронирование' : 'бронирований'} за {year} год без указанной суммы —
+              {' '}эти брони не учтены в доходах, и итог ниже реального. Нажми на бронь, чтобы указать сумму.
+            </span>
+          </div>
+          <div className="flex flex-col gap-1 pl-6">
+            {grandMissingBookings.map(b => (
+              <button key={b.id} onClick={() => onGoToBooking(b.id)}
+                className="flex items-center gap-1.5 text-left text-amber-900 dark:text-amber-200 hover:underline underline-offset-2 w-fit">
+                <span className="font-medium">{b.guest_name || 'Без имени'}</span>
+                <span className="opacity-70">
+                  · {b.apartments.title} · {format(parseISO(b.start_date), 'd MMM', { locale: ru })}–{format(parseISO(b.end_date), 'd MMM yyyy', { locale: ru })}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
       {/* Per-apartment tables */}
       {aptData.map(({ apt, totalIncome, totalDays,
-        rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome, expByCategory, bookingsCount, missingAmountCount,
+        rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome, expByCategory, bookingsCount, missingAmountCount, missingBookings,
         totalCleaningExcluded, totalServiceFeeExcluded }) => (
         <div key={apt.id} className="bg-card border border-border rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-border bg-muted/30">
@@ -6492,7 +6526,14 @@ function TaxReportSection({ apartments, bookings }: { apartments: Apartment[]; b
                   <p className="text-xs text-muted-foreground">Бронирований</p>
                   <p className="font-bold">
                     {bookingsCount}
-                    {missingAmountCount > 0 && <span className="text-amber-600 font-normal"> ({missingAmountCount} без суммы)</span>}
+                    {missingAmountCount > 0 && (
+                      <button
+                        onClick={() => onGoToBooking(missingBookings[0].id)}
+                        title={missingBookings.map(b => `${b.guest_name || 'Без имени'} (${format(parseISO(b.start_date), 'd MMM', { locale: ru })})`).join(', ')}
+                        className="text-amber-600 font-normal hover:underline underline-offset-2">
+                        {' '}({missingAmountCount} без суммы)
+                      </button>
+                    )}
                   </p>
                 </div>
                 <div><p className="text-xs text-muted-foreground">Дней аренды</p><p className="font-bold">{totalDays}</p></div>
@@ -7199,6 +7240,8 @@ export default function OwnerDashboard() {
   const [section, setSection] = useState<Section>('dashboard')
   const [topView, setTopView] = useState<'owner' | 'cleaner'>('owner')
   const [showAddBooking, setShowAddBooking] = useState(false)
+  // Переход из Налогового отчёта: клик по брони без суммы сразу открывает её на редактирование
+  const [jumpToBookingId, setJumpToBookingId] = useState<string | null>(null)
   const [calSelectedApt, setCalSelectedApt] = useState(() => getLastAptId())
   const isMobile = useIsMobile()
   const [moreOpen, setMoreOpen] = useState(false)
@@ -7416,7 +7459,8 @@ export default function OwnerDashboard() {
                 <ApartmentsSection apartments={apartments} bookings={bookings} ownerId={user.id} onRefresh={invalidate} />
               )}
               {section === 'bookings' && (
-                <BookingsSection bookings={bookings} isLoading={isLoading} onRefresh={invalidate} onAddBooking={() => setShowAddBooking(true)} apartments={apartments} />
+                <BookingsSection bookings={bookings} isLoading={isLoading} onRefresh={invalidate} onAddBooking={() => setShowAddBooking(true)} apartments={apartments}
+                  jumpToBookingId={jumpToBookingId} onConsumeJump={() => setJumpToBookingId(null)} />
               )}
               {section === 'calendar' && apartments.length > 0 && (
                 <CalendarSection
@@ -7435,7 +7479,10 @@ export default function OwnerDashboard() {
               )}
               {section === 'cleaning' && <CleaningSection bookings={bookings} onRefresh={invalidate} />}
               {section === 'expenses' && <ExpensesSection apartments={apartments} />}
-              {section === 'tax_report' && <TaxReportSection apartments={apartments} bookings={bookings} />}
+              {section === 'tax_report' && (
+                <TaxReportSection apartments={apartments} bookings={bookings}
+                  onGoToBooking={(id) => { setJumpToBookingId(id); setSection('bookings') }} />
+              )}
               {section === 'admin' && isAdmin && <AdminSection />}
               {section === 'admin' && !isAdmin && (
                 <div className="bg-card border border-border rounded-2xl p-10 text-center text-muted-foreground">
