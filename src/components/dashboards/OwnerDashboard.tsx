@@ -5358,15 +5358,31 @@ function aptBadgeColor(apartments: Apartment[], id: string) {
 const RECURRING_CATEGORIES = ['electricity', 'water', 'gas', 'internet']
 const MONTH_NAMES_RU = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
 
-type MissingInvoice = { apartment_id: string; category: string; month: string } // month: 'YYYY-MM'
+type MissingInvoice = {
+  apartment_id: string; category: string; month: string // month: 'YYYY-MM'
+  suggestedAmount: number | null // заполнено, только если сумма во всех прошлых счетах этой группы одинаковая
+  suggestedDate: string
+  suggestedProvider: string
+}
 
 function monthLabel(month: string) {
   const [y, m] = month.split('-').map(Number)
   return `${MONTH_NAMES_RU[m - 1]} ${y}`
 }
 
+// Подбирает дату внутри пропущенного месяца по дню месяца из последнего известного счёта той же группы
+// (провайдеры обычно выставляют счёт примерно в один и тот же день).
+function suggestedDateForMonth(month: string, dayOfMonth: number): string {
+  const [y, m] = month.split('-').map(Number)
+  const lastDay = new Date(y, m, 0).getDate()
+  const day = Math.min(Math.max(dayOfMonth, 1), lastDay)
+  return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
 // Ищет пропущенные месяцы между первым и последним известным счётом для каждой пары квартира+категория.
 // Если, например, счета за электричество есть за декабрь и февраль, но нет за январь — это пропуск.
+// Если сумма во всех прошлых счетах этой группы одинаковая (например, фиксированный тариф интернета),
+// дополнительно подсказывает сумму/дату/поставщика для быстрого добавления.
 function computeMissingInvoices(expenses: Expense[]): MissingInvoice[] {
   const groups = new Map<string, Expense[]>()
   for (const e of expenses) {
@@ -5381,11 +5397,24 @@ function computeMissingInvoices(expenses: Expense[]): MissingInvoice[] {
     const months = Array.from(new Set(list.map(e => (e.invoice_period_end ?? e.expense_date).slice(0, 7)))).sort()
     if (months.length < 2) continue
     const present = new Set(months)
+
+    const amounts = list.map(e => e.amount)
+    const allSameAmount = amounts.every(a => Math.abs(a - amounts[0]) < 0.005)
+    const latest = list[list.length - 1]
+    const dayOfMonth = Number(latest.expense_date.slice(8, 10))
+
     let [y, m] = months[0].split('-').map(Number)
     const [ly, lm] = months[months.length - 1].split('-').map(Number)
     while (y < ly || (y === ly && m < lm)) {
       const cur = `${y}-${String(m).padStart(2, '0')}`
-      if (!present.has(cur)) missing.push({ apartment_id, category, month: cur })
+      if (!present.has(cur)) {
+        missing.push({
+          apartment_id, category, month: cur,
+          suggestedAmount: allSameAmount ? amounts[0] : null,
+          suggestedDate: suggestedDateForMonth(cur, dayOfMonth),
+          suggestedProvider: latest.provider ?? '',
+        })
+      }
       m++
       if (m > 12) { m = 1; y++ }
     }
@@ -5401,7 +5430,11 @@ type ExpForm = {
   provider: string; description: string; file: File | null
 }
 
-function useExpenseForm(apartments: Apartment[], initial?: Expense | null): [ExpForm, React.Dispatch<React.SetStateAction<ExpForm>>, () => void] {
+// Частичные значения для быстрого предзаполнения формы нового (не редактируемого) расхода —
+// например, из подсказки "отсутствует счёт" с уже известными суммой/датой/поставщиком.
+type ExpPrefill = Partial<Pick<ExpForm, 'apartment_id' | 'category' | 'amount' | 'expense_date' | 'provider'>>
+
+function useExpenseForm(apartments: Apartment[], initial?: Expense | null, prefill?: ExpPrefill | null): [ExpForm, React.Dispatch<React.SetStateAction<ExpForm>>, () => void] {
   const today = new Date().toISOString().slice(0, 10)
   const empty: ExpForm = initial ? {
     apartment_id: initial.apartment_id,
@@ -5410,11 +5443,11 @@ function useExpenseForm(apartments: Apartment[], initial?: Expense | null): [Exp
     invoice_period_start: initial.invoice_period_start ?? '', invoice_period_end: initial.invoice_period_end ?? '',
     provider: initial.provider ?? '', description: initial.description ?? '', file: null,
   } : {
-    apartment_id: apartments[0]?.id ?? '',
-    category: 'electricity', amount: '',
-    expense_date: today,
+    apartment_id: prefill?.apartment_id ?? apartments[0]?.id ?? '',
+    category: prefill?.category ?? 'electricity', amount: prefill?.amount ?? '',
+    expense_date: prefill?.expense_date ?? today,
     invoice_period_start: '', invoice_period_end: '',
-    provider: '', description: '', file: null,
+    provider: prefill?.provider ?? '', description: '', file: null,
   }
   const [form, setForm] = useState<ExpForm>(empty)
   const reset = () => setForm({ ...empty, apartment_id: form.apartment_id })
@@ -5422,10 +5455,10 @@ function useExpenseForm(apartments: Apartment[], initial?: Expense | null): [Exp
 }
 
 function AddExpenseModal({
-  apartments, editing, onClose, onSaved,
-}: { apartments: Apartment[]; editing?: Expense | null; onClose: () => void; onSaved: () => void }) {
+  apartments, editing, prefill, onClose, onSaved,
+}: { apartments: Apartment[]; editing?: Expense | null; prefill?: ExpPrefill | null; onClose: () => void; onSaved: () => void }) {
   const { user } = useAuth()
-  const [form, setForm, reset] = useExpenseForm(apartments, editing)
+  const [form, setForm, reset] = useExpenseForm(apartments, editing, prefill)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const set = <K extends keyof ExpForm>(k: K, v: ExpForm[K]) => setForm(f => ({ ...f, [k]: v }))
@@ -5594,6 +5627,7 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
   const [filterCategory, setFilterCategory] = useState(savedFilters?.category ?? 'all')
   const [showAdd, setShowAdd] = useState(false)
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
+  const [quickPrefill, setQuickPrefill] = useState<ExpPrefill | null>(null)
 
   // Persist filters (apartment + period + category) across tabs/sessions
   useEffect(() => {
@@ -5712,7 +5746,7 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">Коммунальные услуги, ремонт и прочие расходы</p>
         </div>
-        <button onClick={() => setShowAdd(true)}
+        <button onClick={() => { setQuickPrefill(null); setShowAdd(true) }}
           className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:opacity-90">
           <Plus size={16} /> Добавить расход
         </button>
@@ -5791,10 +5825,29 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
                   <span>{cat.label}</span>
                   <span className="text-muted-foreground">— нет счёта за</span>
                   <span className="font-semibold">{monthLabel(mi.month)}</span>
-                  <button onClick={() => setShowAdd(true)}
-                    className="ml-auto px-2.5 py-1 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 text-xs font-semibold hover:bg-red-200 transition-colors flex-shrink-0">
-                    Внести
-                  </button>
+                  {mi.suggestedAmount != null ? (
+                    <button
+                      onClick={() => {
+                        setQuickPrefill({
+                          apartment_id: mi.apartment_id, category: mi.category,
+                          amount: String(mi.suggestedAmount), expense_date: mi.suggestedDate,
+                          provider: mi.suggestedProvider,
+                        })
+                        setShowAdd(true)
+                      }}
+                      className="ml-auto px-2.5 py-1 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 text-xs font-semibold hover:bg-red-200 transition-colors flex-shrink-0">
+                      Внести €{mi.suggestedAmount.toFixed(2)}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setQuickPrefill({ apartment_id: mi.apartment_id, category: mi.category, expense_date: mi.suggestedDate, provider: mi.suggestedProvider })
+                        setShowAdd(true)
+                      }}
+                      className="ml-auto px-2.5 py-1 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 text-xs font-semibold hover:bg-red-200 transition-colors flex-shrink-0">
+                      Внести
+                    </button>
+                  )}
                 </div>
               )
             })}
@@ -5935,7 +5988,8 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
           <AddExpenseModal
             apartments={apartments}
             editing={editingExpense}
-            onClose={() => { setShowAdd(false); setEditingExpense(null) }}
+            prefill={quickPrefill}
+            onClose={() => { setShowAdd(false); setEditingExpense(null); setQuickPrefill(null) }}
             onSaved={invalidate}
           />
         )}
