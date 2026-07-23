@@ -5563,7 +5563,7 @@ function AddExpenseModal({
 
 const EXPENSES_FILTERS_KEY = 'bloknot:expenses:filters'
 
-type ExpensesFilters = { apt: string; from: string; to: string }
+type ExpensesFilters = { apt: string; from: string; to: string; category: string }
 
 function loadExpensesFilters(): ExpensesFilters | null {
   try {
@@ -5571,7 +5571,7 @@ function loadExpensesFilters(): ExpensesFilters | null {
     if (!raw) return null
     const parsed = JSON.parse(raw)
     if (typeof parsed?.apt === 'string' && typeof parsed?.from === 'string' && typeof parsed?.to === 'string') {
-      return parsed as ExpensesFilters
+      return { apt: parsed.apt, from: parsed.from, to: parsed.to, category: typeof parsed?.category === 'string' ? parsed.category : 'all' }
     }
     return null
   } catch {
@@ -5591,15 +5591,16 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
   const [filterApt, setFilterApt] = useState(savedFilters?.apt ?? 'all')
   const [filterFrom, setFilterFrom] = useState(savedFilters?.from ?? defaultFrom)
   const [filterTo, setFilterTo] = useState(savedFilters?.to ?? today)
+  const [filterCategory, setFilterCategory] = useState(savedFilters?.category ?? 'all')
   const [showAdd, setShowAdd] = useState(false)
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
 
-  // Persist filters (apartment + period) across tabs/sessions
+  // Persist filters (apartment + period + category) across tabs/sessions
   useEffect(() => {
     try {
-      localStorage.setItem(EXPENSES_FILTERS_KEY, JSON.stringify({ apt: filterApt, from: filterFrom, to: filterTo }))
+      localStorage.setItem(EXPENSES_FILTERS_KEY, JSON.stringify({ apt: filterApt, from: filterFrom, to: filterTo, category: filterCategory }))
     } catch { /* ignore storage errors */ }
-  }, [filterApt, filterFrom, filterTo])
+  }, [filterApt, filterFrom, filterTo, filterCategory])
 
   // Pending count for badge
   const { data: pendingExpenses = [] } = useQuery({
@@ -5614,7 +5615,7 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
   })
 
   const { data: confirmedExpenses = [], isLoading } = useQuery({
-    queryKey: ['expenses-confirmed', user?.id, filterApt, filterFrom, filterTo],
+    queryKey: ['expenses-confirmed', user?.id, filterApt, filterFrom, filterTo, filterCategory],
     queryFn: async () => {
       let q = supabase.from('expenses').select('*')
         .eq('owner_id', user!.id).eq('status', 'confirmed').is('deleted_at', null)
@@ -5622,6 +5623,7 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
       if (filterApt !== 'all') q = q.eq('apartment_id', filterApt)
       if (filterFrom) q = q.gte('expense_date', filterFrom)
       if (filterTo) q = q.lte('expense_date', filterTo)
+      if (filterCategory !== 'all') q = q.eq('category', filterCategory)
       const { data } = await q
       return (data ?? []) as Expense[]
     },
@@ -5791,6 +5793,11 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
               {l}
             </button>
           ))}
+          <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}
+            className={`${apartments.length > 1 ? '' : 'ml-auto'} rounded-xl border border-border bg-background px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring`}>
+            <option value="all">Все категории</option>
+            {Object.entries(EXP_CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
           {apartments.length > 1 && (
             <select value={filterApt} onChange={e => setFilterApt(e.target.value)}
               className="ml-auto rounded-xl border border-border bg-background px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring">
