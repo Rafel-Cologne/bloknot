@@ -5354,6 +5354,45 @@ function aptBadgeColor(apartments: Apartment[], id: string) {
   return APT_BADGE_COLORS[(idx < 0 ? 0 : idx) % APT_BADGE_COLORS.length]
 }
 
+// Категории, по которым счета приходят регулярно (обычно раз в месяц) — для них имеет смысл искать пропуски.
+const RECURRING_CATEGORIES = ['electricity', 'water', 'gas', 'internet']
+const MONTH_NAMES_RU = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
+
+type MissingInvoice = { apartment_id: string; category: string; month: string } // month: 'YYYY-MM'
+
+function monthLabel(month: string) {
+  const [y, m] = month.split('-').map(Number)
+  return `${MONTH_NAMES_RU[m - 1]} ${y}`
+}
+
+// Ищет пропущенные месяцы между первым и последним известным счётом для каждой пары квартира+категория.
+// Если, например, счета за электричество есть за декабрь и февраль, но нет за январь — это пропуск.
+function computeMissingInvoices(expenses: Expense[]): MissingInvoice[] {
+  const groups = new Map<string, Expense[]>()
+  for (const e of expenses) {
+    const key = `${e.apartment_id}::${e.category}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(e)
+  }
+  const missing: MissingInvoice[] = []
+  for (const [key, list] of groups) {
+    if (list.length < 2) continue // недостаточно данных, чтобы понять периодичность
+    const [apartment_id, category] = key.split('::')
+    const months = Array.from(new Set(list.map(e => (e.invoice_period_end ?? e.expense_date).slice(0, 7)))).sort()
+    if (months.length < 2) continue
+    const present = new Set(months)
+    let [y, m] = months[0].split('-').map(Number)
+    const [ly, lm] = months[months.length - 1].split('-').map(Number)
+    while (y < ly || (y === ly && m < lm)) {
+      const cur = `${y}-${String(m).padStart(2, '0')}`
+      if (!present.has(cur)) missing.push({ apartment_id, category, month: cur })
+      m++
+      if (m > 12) { m = 1; y++ }
+    }
+  }
+  return missing
+}
+
 const expFld = 'rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring w-full'
 
 type ExpForm = {
@@ -5589,9 +5628,25 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
     enabled: !!user,
   })
 
+  // Полная история регулярных счетов (без фильтра по периоду) — нужна, чтобы находить пропуски по месяцам.
+  const { data: allRecurringExpenses = [] } = useQuery({
+    queryKey: ['expenses-all-recurring', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('expenses').select('*')
+        .eq('owner_id', user!.id).eq('status', 'confirmed').is('deleted_at', null)
+        .in('category', RECURRING_CATEGORIES)
+        .order('expense_date', { ascending: true })
+      return (data ?? []) as Expense[]
+    },
+    enabled: !!user,
+  })
+
+  const missingInvoices = useMemo(() => computeMissingInvoices(allRecurringExpenses), [allRecurringExpenses])
+
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['expenses-confirmed', user?.id] })
     qc.invalidateQueries({ queryKey: ['expenses-pending', user?.id] })
+    qc.invalidateQueries({ queryKey: ['expenses-all-recurring', user?.id] })
   }
 
   const handleConfirm = async (id: string) => {
@@ -5689,6 +5744,37 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
                       <XCircle size={14} />
                     </button>
                   </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Missing invoices warning */}
+      {missingInvoices.length > 0 && (
+        <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-red-200 dark:border-red-800 flex items-center gap-2">
+            <AlertCircle size={15} className="text-red-600" />
+            <span className="text-sm font-semibold text-red-800 dark:text-red-300">
+              Возможно, отсутствуют счета: {missingInvoices.length}
+            </span>
+          </div>
+          <div className="divide-y divide-red-100 dark:divide-red-900">
+            {missingInvoices.map(mi => {
+              const cat = EXP_CATEGORIES[mi.category] ?? EXP_CATEGORIES.other
+              return (
+                <div key={`${mi.apartment_id}-${mi.category}-${mi.month}`} className="px-4 py-2.5 flex items-center gap-2.5 text-sm">
+                  <span className={cat.color}>{cat.icon}</span>
+                  <span className="font-medium">{aptName(mi.apartment_id)}</span>
+                  <span className="text-muted-foreground">·</span>
+                  <span>{cat.label}</span>
+                  <span className="text-muted-foreground">— нет счёта за</span>
+                  <span className="font-semibold">{monthLabel(mi.month)}</span>
+                  <button onClick={() => setShowAdd(true)}
+                    className="ml-auto px-2.5 py-1 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 text-xs font-semibold hover:bg-red-200 transition-colors flex-shrink-0">
+                    Внести
+                  </button>
                 </div>
               )
             })}
