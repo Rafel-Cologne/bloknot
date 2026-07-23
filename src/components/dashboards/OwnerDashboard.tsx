@@ -6517,49 +6517,6 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
 
   const [breakdownModal, setBreakdownModal] = useState<null | 'revenue' | 'cleaning' | 'expense' | 'net'>(null)
 
-  // ── Частные брони: учитывать в доходе или нет ─────────────────────────────────
-  // Хозяин может исключить отдельные частные (не Airbnb/Booking) брони из "Доходов" —
-  // например, если гость по факту не заплатил, или это была услуга по бартеру и т.п.
-  // Хранится per-owner в localStorage, id-брони глобально уникальны, так что выбор
-  // не привязан к конкретному году — переключение года не сбрасывает настройку.
-  const [excludedPrivateIds, setExcludedPrivateIds] = useState<Set<string>>(new Set())
-  const [privateModalOpen, setPrivateModalOpen] = useState(false)
-
-  useEffect(() => {
-    if (!user) return
-    try {
-      const raw = localStorage.getItem(`income-excluded-private-${user.id}`)
-      setExcludedPrivateIds(new Set(raw ? JSON.parse(raw) : []))
-    } catch { setExcludedPrivateIds(new Set()) }
-  }, [user?.id])
-
-  const saveExcluded = (next: Set<string>) => {
-    setExcludedPrivateIds(next)
-    if (!user) return
-    try { localStorage.setItem(`income-excluded-private-${user.id}`, JSON.stringify([...next])) } catch { /* ignore */ }
-  }
-
-  const isBookingCounted = (b: BookingRow) => b.source !== 'other' || !excludedPrivateIds.has(b.id)
-
-  const privateBookingsThisYear = useMemo(() => bookings
-    .filter(b => b.status === 'accepted' && b.source === 'other' && parseISO(b.end_date).getFullYear() === year)
-    .sort((a, b) => a.start_date.localeCompare(b.start_date)),
-  [bookings, year])
-  const includedPrivateCount = privateBookingsThisYear.filter(b => !excludedPrivateIds.has(b.id)).length
-  const allPrivateIncluded = includedPrivateCount === privateBookingsThisYear.length
-
-  const togglePrivateOne = (id: string) => {
-    const next = new Set(excludedPrivateIds)
-    if (next.has(id)) next.delete(id); else next.add(id)
-    saveExcluded(next)
-  }
-  const togglePrivateAll = () => {
-    const next = new Set(excludedPrivateIds)
-    if (allPrivateIncluded) privateBookingsThisYear.forEach(b => next.add(b.id))
-    else privateBookingsThisYear.forEach(b => next.delete(b.id))
-    saveExcluded(next)
-  }
-
   // Доход по брони: total_amount, если указан (уже за вычетом комиссии Airbnb); для частных
   // броней без суммы — грубая оценка по базовому тарифу квартиры; личные поездки хозяина — 0.
   const calcRevenue = (b: BookingRow) => {
@@ -6577,7 +6534,6 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
     return Array.from({ length: 12 }, (_, m) => {
       const monthBookings = bookings.filter(b => {
         if (b.status !== 'accepted') return false
-        if (!isBookingCounted(b)) return false
         const d = parseISO(b.end_date)
         return d.getMonth() === m && d.getFullYear() === year
       })
@@ -6591,7 +6547,7 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
       return { m, revenue, cleaning, paid, pending, expense, net }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookings, expenses, year, todayStr, apartments, excludedPrivateIds])
+  }, [bookings, expenses, year, todayStr, apartments])
 
   const selMonthData = monthly[selMonth] ?? { revenue: 0, cleaning: 0, paid: 0, pending: 0, expense: 0, net: 0 }
 
@@ -6607,9 +6563,9 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
   // карточки «Общий доход с начала года» на Дашборде, которая считает только уже завершённые
   // заезды с начала года по сегодня — отсюда и разные цифры на этих двух страницах).
   const yearBookings = useMemo(() => bookings
-    .filter(b => b.status === 'accepted' && parseISO(b.end_date).getFullYear() === year && isBookingCounted(b))
+    .filter(b => b.status === 'accepted' && parseISO(b.end_date).getFullYear() === year)
     .sort((a, b) => a.start_date.localeCompare(b.start_date)),
-  [bookings, year, excludedPrivateIds])
+  [bookings, year])
 
   const chartMax = Math.max(
     ...monthly.map(d => chartMode === 'income_expense' ? Math.max(d.revenue, d.expense) : d.revenue),
@@ -6633,21 +6589,6 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
           {years.map(y => <option key={y} value={y}>{y}</option>)}
         </select>
       </div>
-
-      {privateBookingsThisYear.length > 0 && (
-        <div className="flex items-center gap-3 flex-wrap bg-card border border-border rounded-2xl px-4 py-3">
-          <button onClick={togglePrivateAll}
-            className={`relative w-10 h-6 rounded-full flex-shrink-0 transition-colors ${allPrivateIncluded ? 'bg-primary' : 'bg-muted'}`}>
-            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${allPrivateIncluded ? 'translate-x-4' : ''}`} />
-          </button>
-          <span className="text-sm font-medium">
-            Учитывать частные брони в доходе — {includedPrivateCount} из {privateBookingsThisYear.length} за {year}
-          </span>
-          <button onClick={() => setPrivateModalOpen(true)} className="text-xs text-primary font-semibold hover:underline ml-auto">
-            Выбрать вручную →
-          </button>
-        </div>
-      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -6770,56 +6711,6 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
         )}
       </AnimatePresence>
 
-      {/* Private bookings — which ones count toward income */}
-      <AnimatePresence>
-        {privateModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4"
-            onClick={e => { if (e.target === e.currentTarget) setPrivateModalOpen(false) }}>
-            <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }}
-              className="bg-card rounded-2xl shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden">
-              <div className="px-5 py-4 border-b border-border flex items-center justify-between flex-shrink-0">
-                <div>
-                  <h3 className="font-semibold">Частные брони за {year}</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">Отметь, какие считать в «Доходах»</p>
-                </div>
-                <button onClick={() => setPrivateModalOpen(false)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X size={16} /></button>
-              </div>
-              <div className="px-5 py-3 border-b border-border flex-shrink-0">
-                <button onClick={togglePrivateAll} className="text-xs text-primary font-semibold hover:underline">
-                  {allPrivateIncluded ? 'Снять все' : 'Выбрать все'}
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto px-5 py-4">
-                <div className="flex flex-col divide-y divide-border border border-border rounded-xl overflow-hidden">
-                  {privateBookingsThisYear.map(b => {
-                    const checked = !excludedPrivateIds.has(b.id)
-                    return (
-                      <label key={b.id} className="flex items-center gap-3 px-3 py-2.5 text-sm cursor-pointer hover:bg-muted/40">
-                        <input type="checkbox" checked={checked} onChange={() => togglePrivateOne(b.id)}
-                          className="w-4 h-4 flex-shrink-0 accent-primary" />
-                        <div className="min-w-0 flex-1">
-                          <p className="font-medium text-foreground truncate">{b.guest_name || 'Без имени'}</p>
-                          <p className="text-[11px] text-muted-foreground truncate">
-                            {b.apartments.title} · {format(parseISO(b.start_date), 'd MMM', { locale: ru })}–{format(parseISO(b.end_date), 'd MMM', { locale: ru })}
-                          </p>
-                        </div>
-                        <span className={`font-semibold flex-shrink-0 ${checked ? '' : 'text-muted-foreground line-through'}`}>{fmtEur(calcRevenue(b))}</span>
-                      </label>
-                    )
-                  })}
-                </div>
-              </div>
-              <div className="px-5 py-3 border-t border-border flex-shrink-0">
-                <button onClick={() => setPrivateModalOpen(false)}
-                  className="w-full py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity">
-                  Готово
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
       {/* Chart card */}
       <div className="bg-card border border-border rounded-2xl shadow-sm p-4 md:p-5">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
@@ -6918,6 +6809,56 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
 
   const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i)
 
+  // ── Частные брони: учитывать в налогооблагаемом доходе или нет ───────────────
+  // Хозяин может вручную исключить отдельные частные (не Airbnb/Booking) брони из
+  // дохода casilla 0102 — например, если гость по факту не заплатил. Дни аренды при
+  // этом всё равно учитываются в пропорции вычитаемых расходов — жильё сдавалось.
+  const [excludedPrivateIds, setExcludedPrivateIds] = useState<Set<string>>(new Set())
+  const [privateModalOpen, setPrivateModalOpen] = useState(false)
+
+  useEffect(() => {
+    if (!user) return
+    try {
+      const raw = localStorage.getItem(`tax-excluded-private-${user.id}`)
+      setExcludedPrivateIds(new Set(raw ? JSON.parse(raw) : []))
+    } catch { setExcludedPrivateIds(new Set()) }
+  }, [user?.id])
+
+  const saveExcluded = (next: Set<string>) => {
+    setExcludedPrivateIds(next)
+    if (!user) return
+    try { localStorage.setItem(`tax-excluded-private-${user.id}`, JSON.stringify([...next])) } catch { /* ignore */ }
+  }
+
+  const calcPrivateRevenue = (b: BookingRow) => {
+    if (b.total_amount && b.total_amount > 0) return b.total_amount
+    const apt = apartments.find(a => a.id === b.apartment_id)
+    const nights = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
+    return (apt?.price_per_night ?? 0) * nights
+  }
+
+  const privateBookingsThisYear = useMemo(() => bookings
+    .filter(b => b.status === 'accepted' && b.source === 'other' && new Date(b.start_date) < new Date(`${year + 1}-01-01T00:00:00`) && new Date(b.end_date) > new Date(`${year}-01-01T00:00:00`))
+    .sort((a, b) => a.start_date.localeCompare(b.start_date)),
+  [bookings, year])
+  const includedPrivateCount = privateBookingsThisYear.filter(b => !excludedPrivateIds.has(b.id)).length
+  const allPrivateIncluded = includedPrivateCount === privateBookingsThisYear.length
+  const includedPrivateTotal = privateBookingsThisYear
+    .filter(b => !excludedPrivateIds.has(b.id))
+    .reduce((s, b) => s + calcPrivateRevenue(b), 0)
+
+  const togglePrivateOne = (id: string) => {
+    const next = new Set(excludedPrivateIds)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    saveExcluded(next)
+  }
+  const togglePrivateAll = () => {
+    const next = new Set(excludedPrivateIds)
+    if (allPrivateIncluded) privateBookingsThisYear.forEach(b => next.add(b.id))
+    else privateBookingsThisYear.forEach(b => next.delete(b.id))
+    saveExcluded(next)
+  }
+
   const { data: expenses = [] } = useQuery({
     queryKey: ['tax-expenses', user?.id, year],
     queryFn: async () => {
@@ -6985,6 +6926,12 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
 
       bookingsCount++
       totalDays += nightsInYear
+
+      if (b.source === 'other' && excludedPrivateIds.has(b.id)) {
+        // Хозяин вручную исключил эту частную бронь из налогооблагаемого дохода (например,
+        // гость по факту не заплатил) — день аренды выше уже учтён, но сумма никуда не идёт.
+        return
+      }
 
       if (b.total_amount == null) {
         missingAmountCount++
@@ -7066,6 +7013,21 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
           </button>
         </div>
       </div>
+
+      {privateBookingsThisYear.length > 0 && (
+        <div className="flex items-center gap-3 flex-wrap bg-card border border-border rounded-2xl px-4 py-3">
+          <button onClick={togglePrivateAll}
+            className={`relative w-10 h-6 rounded-full flex-shrink-0 transition-colors ${allPrivateIncluded ? 'bg-primary' : 'bg-muted'}`}>
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${allPrivateIncluded ? 'translate-x-4' : ''}`} />
+          </button>
+          <span className="text-sm font-medium">
+            Учитывать частные брони в налогооблагаемом доходе — {includedPrivateCount} из {privateBookingsThisYear.length} за {year}
+          </span>
+          <button onClick={() => setPrivateModalOpen(true)} className="text-xs text-primary font-semibold hover:underline ml-auto">
+            Выбрать вручную →
+          </button>
+        </div>
+      )}
 
       {/* Summary banner */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -7233,7 +7195,7 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
           </div>
 
           <div className="px-5 py-3 border-t border-border bg-muted/30 flex justify-between items-center">
-            <span className="font-semibold">Чистый доход / убыток</span>
+            <span className="font-semibold">{netIncome >= 0 ? 'Чистый доход' : 'Чистый убыток'}</span>
             <span className={`text-lg font-bold ${netIncome >= 0 ? 'text-primary' : 'text-destructive'}`}>
               {netIncome < 0 ? '−' : '+'}{fmtEur(Math.abs(netIncome))}
             </span>
@@ -7251,6 +7213,57 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
         <p className="font-semibold mb-1">ℹ️ Инструкция для декларации Modelo 100</p>
         <p>Заполните данные вручную по расчётам выше: раздел «Rendimientos del capital inmobiliario», casillas 0102 (ingresos íntegros), 0106–0115 (gastos deducibles), 0116 (amortización). Рекомендуется проверить с налоговым консультантом.</p>
       </div>
+
+      {/* Private bookings — which ones count toward taxable income */}
+      <AnimatePresence>
+        {privateModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4"
+            onClick={e => { if (e.target === e.currentTarget) setPrivateModalOpen(false) }}>
+            <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }}
+              className="bg-card rounded-2xl shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden">
+              <div className="px-5 py-4 border-b border-border flex items-center justify-between flex-shrink-0">
+                <div>
+                  <h3 className="font-semibold">Частные брони за {year}</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">Отметь, какие считать в налогооблагаемом доходе</p>
+                </div>
+                <button onClick={() => setPrivateModalOpen(false)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X size={16} /></button>
+              </div>
+              <div className="px-5 py-3 border-b border-border flex-shrink-0 flex items-center justify-between gap-3">
+                <button onClick={togglePrivateAll} className="text-xs text-primary font-semibold hover:underline">
+                  {allPrivateIncluded ? 'Снять все' : 'Выбрать все'}
+                </button>
+                <span className="text-sm font-semibold">Выбрано: {fmtEur(includedPrivateTotal)}</span>
+              </div>
+              <div className="flex-1 overflow-y-auto px-5 py-4">
+                <div className="flex flex-col divide-y divide-border border border-border rounded-xl overflow-hidden">
+                  {privateBookingsThisYear.map(b => {
+                    const checked = !excludedPrivateIds.has(b.id)
+                    return (
+                      <label key={b.id} className="flex items-center gap-3 px-3 py-2.5 text-sm cursor-pointer hover:bg-muted/40">
+                        <input type="checkbox" checked={checked} onChange={() => togglePrivateOne(b.id)}
+                          className="w-4 h-4 flex-shrink-0 accent-primary" />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-foreground truncate">{b.guest_name || 'Без имени'}</p>
+                          <p className="text-[11px] text-muted-foreground truncate">
+                            {b.apartments.title} · {format(parseISO(b.start_date), 'd MMM', { locale: ru })}–{format(parseISO(b.end_date), 'd MMM', { locale: ru })}
+                          </p>
+                        </div>
+                        <span className={`font-semibold flex-shrink-0 ${checked ? '' : 'text-muted-foreground line-through'}`}>{fmtEur(calcPrivateRevenue(b))}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+              <div className="px-5 py-3 border-t border-border flex-shrink-0">
+                <button onClick={() => setPrivateModalOpen(false)}
+                  className="w-full py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity">
+                  Готово
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
