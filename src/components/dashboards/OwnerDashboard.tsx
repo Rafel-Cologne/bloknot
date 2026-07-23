@@ -5349,9 +5349,15 @@ type ExpForm = {
   provider: string; description: string; file: File | null
 }
 
-function useExpenseForm(apartments: Apartment[]): [ExpForm, React.Dispatch<React.SetStateAction<ExpForm>>, () => void] {
+function useExpenseForm(apartments: Apartment[], initial?: Expense | null): [ExpForm, React.Dispatch<React.SetStateAction<ExpForm>>, () => void] {
   const today = new Date().toISOString().slice(0, 10)
-  const empty: ExpForm = {
+  const empty: ExpForm = initial ? {
+    apartment_id: initial.apartment_id,
+    category: initial.category, amount: String(initial.amount),
+    expense_date: initial.expense_date,
+    invoice_period_start: initial.invoice_period_start ?? '', invoice_period_end: initial.invoice_period_end ?? '',
+    provider: initial.provider ?? '', description: initial.description ?? '', file: null,
+  } : {
     apartment_id: apartments[0]?.id ?? '',
     category: 'electricity', amount: '',
     expense_date: today,
@@ -5364,10 +5370,10 @@ function useExpenseForm(apartments: Apartment[]): [ExpForm, React.Dispatch<React
 }
 
 function AddExpenseModal({
-  apartments, onClose, onSaved,
-}: { apartments: Apartment[]; onClose: () => void; onSaved: () => void }) {
+  apartments, editing, onClose, onSaved,
+}: { apartments: Apartment[]; editing?: Expense | null; onClose: () => void; onSaved: () => void }) {
   const { user } = useAuth()
-  const [form, setForm, reset] = useExpenseForm(apartments)
+  const [form, setForm, reset] = useExpenseForm(apartments, editing)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const set = <K extends keyof ExpForm>(k: K, v: ExpForm[K]) => setForm(f => ({ ...f, [k]: v }))
@@ -5375,7 +5381,7 @@ function AddExpenseModal({
   const handleSave = async () => {
     if (!form.amount || !form.expense_date || !form.apartment_id) { setError('Заполните обязательные поля'); return }
     setSaving(true); setError(null)
-    let attachment_url: string | null = null
+    let attachment_url: string | null = editing?.attachment_url ?? null
 
     if (form.file && user) {
       const ext = form.file.name.split('.').pop() ?? 'pdf'
@@ -5387,9 +5393,8 @@ function AddExpenseModal({
       }
     }
 
-    const { error: err } = await supabase.from('expenses').insert({
+    const payload = {
       apartment_id: form.apartment_id,
-      owner_id: user!.id,
       category: form.category,
       amount: parseFloat(form.amount.replace(',', '.')),
       expense_date: form.expense_date,
@@ -5397,10 +5402,17 @@ function AddExpenseModal({
       invoice_period_end: form.invoice_period_end || null,
       provider: form.provider.trim() || null,
       description: form.description.trim() || null,
-      source: 'manual',
-      status: 'confirmed',
       attachment_url,
-    })
+    }
+
+    const { error: err } = editing
+      ? await supabase.from('expenses').update(payload).eq('id', editing.id)
+      : await supabase.from('expenses').insert({
+          ...payload,
+          owner_id: user!.id,
+          source: 'manual',
+          status: 'confirmed',
+        })
 
     setSaving(false)
     if (err) { setError(err.message); return }
@@ -5414,7 +5426,7 @@ function AddExpenseModal({
       <motion.div className="relative bg-card border border-border rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl"
         initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}>
         <div className="px-5 py-4 border-b border-border flex items-center justify-between sticky top-0 bg-card z-10">
-          <h3 className="font-semibold">Добавить расход</h3>
+          <h3 className="font-semibold">{editing ? 'Редактировать расход' : 'Добавить расход'}</h3>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X size={16} /></button>
         </div>
         <div className="p-5 flex flex-col gap-4">
@@ -5477,7 +5489,7 @@ function AddExpenseModal({
             <label className="flex items-center gap-2 cursor-pointer px-3 py-2.5 rounded-xl border border-dashed border-border hover:border-primary/50 transition-colors bg-background">
               <Upload size={14} className="text-muted-foreground flex-shrink-0" />
               <span className="text-sm text-muted-foreground truncate">
-                {form.file ? form.file.name : 'Выбрать файл...'}
+                {form.file ? form.file.name : editing?.attachment_url ? 'Заменить текущий файл...' : 'Выбрать файл...'}
               </span>
               <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" className="hidden"
                 onChange={e => set('file', e.target.files?.[0] ?? null)} />
@@ -5489,7 +5501,7 @@ function AddExpenseModal({
           <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted">Отмена</button>
           <button onClick={handleSave} disabled={saving || !form.amount || !form.expense_date}
             className="px-4 py-2 rounded-xl text-sm font-semibold bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50">
-            {saving ? 'Сохраняю...' : 'Сохранить'}
+            {saving ? 'Сохраняю...' : editing ? 'Сохранить изменения' : 'Сохранить'}
           </button>
         </div>
       </motion.div>
@@ -5510,6 +5522,7 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
   )
   const [filterTo, setFilterTo] = useState(today)
   const [showAdd, setShowAdd] = useState(false)
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
 
   // Pending count for badge
   const { data: pendingExpenses = [] } = useQuery({
@@ -5748,10 +5761,16 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
                       </a>
                     )}
                   </div>
-                  <button onClick={() => handleDelete(e.id)}
-                    className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive flex-shrink-0 mt-0.5">
-                    <Trash2 size={13} />
-                  </button>
+                  <div className="flex items-center gap-1 flex-shrink-0 mt-0.5">
+                    <button onClick={() => setEditingExpense(e)}
+                      className="p-1.5 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary" title="Редактировать">
+                      <Pencil size={13} />
+                    </button>
+                    <button onClick={() => handleDelete(e.id)}
+                      className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive" title="Удалить">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
               )
             })}
@@ -5759,9 +5778,16 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
         )}
       </div>
 
-      {/* Add expense modal */}
+      {/* Add / edit expense modal */}
       <AnimatePresence>
-        {showAdd && <AddExpenseModal apartments={apartments} onClose={() => setShowAdd(false)} onSaved={invalidate} />}
+        {(showAdd || editingExpense) && (
+          <AddExpenseModal
+            apartments={apartments}
+            editing={editingExpense}
+            onClose={() => { setShowAdd(false); setEditingExpense(null) }}
+            onSaved={invalidate}
+          />
+        )}
       </AnimatePresence>
     </div>
   )
