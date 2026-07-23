@@ -56,6 +56,7 @@ import {
   PackageCheck,
   MoreHorizontal,
   Repeat,
+  Info,
 } from 'lucide-react'
 import {
   format,
@@ -75,7 +76,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Section = 'dashboard' | 'apartments' | 'bookings' | 'calendar' | 'cleaning' | 'expenses' | 'tax_report' | 'admin' | 'settings'
+type Section = 'dashboard' | 'apartments' | 'bookings' | 'calendar' | 'cleaning' | 'expenses' | 'income' | 'tax_report' | 'admin' | 'settings'
 type BookingSourceLocal = 'airbnb' | 'booking' | 'other' | 'personal'
 
 type ApartmentImage = { id: string; image_url: string; order_index: number }
@@ -1724,7 +1725,6 @@ function DashboardOverview({
   const [showRevenueModal, setShowRevenueModal] = useState(false)
   const [revenueFromDate, setRevenueFromDate] = useState(`${today.getFullYear()}-01-01`)
   const [showTopMonthPicker, setShowTopMonthPicker] = useState(false)
-  const [yearChartMode, setYearChartMode] = useState<'income_expense' | 'paid_pending'>('income_expense')
   const prevMonth = () => {
     if (selMonth === 0) { setSelMonth(11); setSelYear(y => y - 1) }
     else setSelMonth(m => m - 1)
@@ -1747,34 +1747,6 @@ function DashboardOverview({
     const nights = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
     return (apt?.price_per_night ?? 0) * nights
   }
-
-  // ── Year performance overview (à la Airbnb "Performance") ──────────────────
-  // Доход прикреплён к месяцу ВЫЕЗДА (как и monthRevenue ниже) — так цифры совпадают
-  // с остальными виджетами дашборда. "Завершено" — брони, где выезд уже случился (по этой
-  // дате должна была прийти оплата); "Предстоит" — подтверждённые брони с выездом позже
-  // сегодняшнего дня. Это приближение к Ausgezahlt/Anstehend у Airbnb (у нас нет данных
-  // о факте перевода денег, только о датах брони).
-  const yearMonthly = useMemo(() => {
-    return Array.from({ length: 12 }, (_, m) => {
-      const monthBookings = bookings.filter(b => {
-        if (b.status !== 'accepted') return false
-        const d = parseISO(b.end_date)
-        return d.getMonth() === m && d.getFullYear() === selYear
-      })
-      const revenue = monthBookings.reduce((s, b) => s + calcRevenue(b), 0)
-      const paid = monthBookings.filter(b => b.end_date <= todayStr).reduce((s, b) => s + calcRevenue(b), 0)
-      const pending = revenue - paid
-      const monthStr = `${selYear}-${String(m + 1).padStart(2, '0')}`
-      const expense = dashExpenses.filter(e => e.paid_date.startsWith(monthStr)).reduce((s, e) => s + e.amount, 0)
-      return { m, revenue, paid, pending, expense }
-    })
-  }, [bookings, dashExpenses, selYear, todayStr, apartments])
-
-  const yearChartMax = Math.max(
-    ...yearMonthly.map(d => yearChartMode === 'income_expense' ? Math.max(d.revenue, d.expense) : d.revenue),
-    1,
-  )
-  const selMonthData = yearMonthly[selMonth] ?? { revenue: 0, paid: 0, pending: 0, expense: 0 }
 
   // Debt data
   // Platform bookings (airbnb/booking) и личные поездки: owner pays cleaner → track owner_transfer unpaid
@@ -2157,114 +2129,6 @@ function DashboardOverview({
           <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">доход − расходы</p>
           {monthExpenses > 0 && (
             <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">−{fmtEur(monthExpenses)} расходов</p>
-          )}
-        </div>
-      </div>
-
-      {/* ── Row 2.5: Year performance overview (à la Airbnb "Performance") ── */}
-      <div className="bg-card border border-border rounded-2xl shadow-sm p-4 md:p-5 flex-shrink-0 relative z-10">
-        <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
-          <div className="flex items-center gap-1.5">
-            <button onClick={() => setSelYear(y => y - 1)} className="p-1 rounded-lg hover:bg-muted text-muted-foreground transition-colors"><ChevronLeft size={14} /></button>
-            <p className="text-sm font-semibold text-foreground">Доходы и расходы за {selYear}</p>
-            <button onClick={() => setSelYear(y => y + 1)} className="p-1 rounded-lg hover:bg-muted text-muted-foreground transition-colors"><ChevronRight size={14} /></button>
-          </div>
-          <div className="flex items-center gap-0.5 bg-muted rounded-xl p-0.5">
-            <button onClick={() => setYearChartMode('income_expense')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${yearChartMode === 'income_expense' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-              Доход / Расход
-            </button>
-            <button onClick={() => setYearChartMode('paid_pending')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${yearChartMode === 'paid_pending' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-              Завершено / Предстоит
-            </button>
-          </div>
-        </div>
-
-        {/* Bars — 12 months */}
-        <div className="flex items-end gap-1.5 md:gap-2 h-32 overflow-x-auto pb-1">
-          {yearMonthly.map(d => (
-            <button key={d.m} onClick={() => setSelMonth(d.m)}
-              className="flex-1 min-w-[26px] flex flex-col items-center justify-end h-full gap-1.5 group">
-              {yearChartMode === 'income_expense' ? (
-                <div className="w-full flex items-end justify-center gap-0.5 h-full">
-                  <div className="w-1/2 rounded-t-md transition-all group-hover:opacity-80"
-                    style={{
-                      height: `${Math.max((d.revenue / yearChartMax) * 100, d.revenue > 0 ? 3 : 0)}%`,
-                      background: d.m === selMonth ? 'hsl(var(--primary))' : 'hsl(var(--primary) / 0.45)',
-                    }} />
-                  <div className="w-1/2 rounded-t-md transition-all group-hover:opacity-80 bg-red-300 dark:bg-red-800/60"
-                    style={{ height: `${Math.max((d.expense / yearChartMax) * 100, d.expense > 0 ? 3 : 0)}%` }} />
-                </div>
-              ) : (
-                <div className="w-full flex flex-col justify-end h-full rounded-t-md overflow-hidden transition-all group-hover:opacity-80">
-                  <div style={{
-                    height: `${(d.pending / yearChartMax) * 100}%`,
-                    background: 'hsl(var(--primary) / 0.25)',
-                  }} />
-                  <div style={{
-                    height: `${(d.paid / yearChartMax) * 100}%`,
-                    background: d.m === selMonth ? 'hsl(var(--primary))' : 'hsl(var(--primary) / 0.7)',
-                  }} />
-                </div>
-              )}
-              <span className={`text-[10px] font-medium flex-shrink-0 ${d.m === selMonth ? 'text-primary' : 'text-muted-foreground'}`}>
-                {MONTHS_RU_SHORT[d.m]}
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {/* Legend */}
-        <div className="flex items-center gap-4 mt-1 text-[11px] text-muted-foreground">
-          {yearChartMode === 'income_expense' ? (
-            <>
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: 'hsl(var(--primary))' }} />Доход</span>
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block bg-red-300 dark:bg-red-800/60" />Расход</span>
-            </>
-          ) : (
-            <>
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: 'hsl(var(--primary))' }} />Завершено</span>
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: 'hsl(var(--primary) / 0.25)' }} />Предстоит</span>
-            </>
-          )}
-        </div>
-
-        {/* Selected month summary panel */}
-        <div className="mt-4 pt-4 border-t border-border">
-          <p className="text-sm font-semibold text-foreground mb-2">{MONTHS_RU[selMonth]} {selYear}</p>
-          {yearChartMode === 'income_expense' ? (
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <p className="text-lg font-bold text-foreground">{fmtEur(selMonthData.revenue)}</p>
-                <p className="text-[11px] text-muted-foreground">Доход</p>
-              </div>
-              <div>
-                <p className="text-lg font-bold text-red-500">{fmtEur(selMonthData.expense)}</p>
-                <p className="text-[11px] text-muted-foreground">Расход</p>
-              </div>
-              <div>
-                <p className={`text-lg font-bold ${selMonthData.revenue - selMonthData.expense < 0 ? 'text-destructive' : 'text-primary'}`}>
-                  {fmtEur(selMonthData.revenue - selMonthData.expense)}
-                </p>
-                <p className="text-[11px] text-muted-foreground">Прибыль</p>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <p className="text-lg font-bold text-foreground">{fmtEur(selMonthData.paid)}</p>
-                <p className="text-[11px] text-muted-foreground">Завершено</p>
-              </div>
-              <div>
-                <p className="text-lg font-bold text-foreground">{fmtEur(selMonthData.pending)}</p>
-                <p className="text-[11px] text-muted-foreground">Предстоит</p>
-              </div>
-              <div>
-                <p className="text-lg font-bold text-primary">{fmtEur(selMonthData.revenue)}</p>
-                <p className="text-[11px] text-muted-foreground">Итого</p>
-              </div>
-            </div>
           )}
         </div>
       </div>
@@ -6041,7 +5905,7 @@ function loadExpensesFilters(): ExpensesFilters | null {
   }
 }
 
-function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
+function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bookings: BookingRow[] }) {
   const { user } = useAuth()
   const qc = useQueryClient()
   const today = new Date().toISOString().slice(0, 10)
@@ -6171,6 +6035,33 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
     acc[e.category] = (acc[e.category] ?? 0) + e.amount; return acc
   }, {})
 
+  // Разбивка «сколько денег зашло / сколько ушло на уборку и комиссию Airbnb / сколько чистыми» —
+  // в стиле карточки Airbnb «Aufschlüsselung der Zahlung» (Bruttoeinkünfte → Servicegebühr → Gesamtbetrag),
+  // но с добавлением остальных расходов по квартире. Считаем за тот же период/квартиру,
+  // что уже выбраны фильтром выше (по дате ВЫЕЗДА брони — как и на вкладке «Доходы»).
+  const bookingBreakdown = useMemo(() => {
+    const revenueOf = (b: BookingRow) => {
+      if (b.source === 'personal') return 0
+      if (b.total_amount && b.total_amount > 0) return b.total_amount
+      const apt = apartments.find(a => a.id === b.apartment_id)
+      const nights = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
+      return (apt?.price_per_night ?? 0) * nights
+    }
+    const relevant = bookings.filter(b => {
+      if (b.status !== 'accepted') return false
+      if (filterApt !== 'all' && b.apartment_id !== filterApt) return false
+      if (filterFrom && b.end_date < filterFrom) return false
+      if (filterTo && b.end_date > filterTo) return false
+      return true
+    })
+    const netRental = relevant.reduce((s, b) => s + revenueOf(b), 0)
+    const cleaning = relevant.reduce((s, b) => s + (b.cleaning_fee_amount ?? b.cleaning_tasks[0]?.cleaning_fee ?? 0), 0)
+    const commission = relevant.reduce((s, b) => s + (b.host_service_fee_amount ?? 0), 0)
+    const gross = netRental + commission
+    const net = netRental - cleaning - totalConfirmed
+    return { gross, cleaning, commission, net, bookingsCount: relevant.length }
+  }, [bookings, apartments, filterApt, filterFrom, filterTo, totalConfirmed])
+
   const aptName = (id: string) => apartments.find(a => a.id === id)?.title ?? '—'
 
   const setQuickPeriod = (months: number) => {
@@ -6204,6 +6095,38 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
           </button>
         </div>
       </div>
+
+      {/* Разбивка «сколько зашло / ушло / осталось чистыми» — как в Airbnb (Bruttoeinkünfte → Servicegebühr → Gesamtbetrag),
+          но с добавлением уборки и остальных расходов по квартире. За период фильтра ниже. */}
+      {bookingBreakdown.bookingsCount > 0 && (
+        <div className="bg-card border border-border rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Куда уходит доход от аренды {(filterFrom || filterTo) && <span className="normal-case font-normal">· {filterFrom || '…'} — {filterTo || '…'}</span>}
+          </div>
+          <div className="divide-y divide-border">
+            <div className="flex justify-between items-center px-4 py-2.5">
+              <span className="text-sm text-muted-foreground">Валовый доход от броней</span>
+              <span className="text-sm font-semibold text-foreground">{fmtEur(bookingBreakdown.gross)}</span>
+            </div>
+            <div className="flex justify-between items-center px-4 py-2.5">
+              <span className="text-sm text-muted-foreground">− Уборка (уходит клинеру)</span>
+              <span className="text-sm font-medium text-red-500">−{fmtEur(bookingBreakdown.cleaning)}</span>
+            </div>
+            <div className="flex justify-between items-center px-4 py-2.5">
+              <span className="text-sm text-muted-foreground">− Комиссия Airbnb</span>
+              <span className="text-sm font-medium text-red-500">−{fmtEur(bookingBreakdown.commission)}</span>
+            </div>
+            <div className="flex justify-between items-center px-4 py-2.5">
+              <span className="text-sm text-muted-foreground">− Расходы по квартире {filterApt === 'all' ? '(все квартиры)' : ''}</span>
+              <span className="text-sm font-medium text-red-500">−{fmtEur(totalConfirmed)}</span>
+            </div>
+            <div className="flex justify-between items-center px-4 py-3 bg-primary/5">
+              <span className="text-sm font-bold text-foreground">Чистыми на руки</span>
+              <span className={`text-base font-bold ${bookingBreakdown.net < 0 ? 'text-destructive' : 'text-primary'}`}>{fmtEur(bookingBreakdown.net)}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pending confirmation block */}
       {pendingExpenses.length > 0 && (
@@ -6482,6 +6405,312 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
 }
 
 
+// ─── Income Section ───────────────────────────────────────────────────────────
+// Отдельная вкладка «Доходы» — годовой обзор по месяцам (в стиле Airbnb Performance),
+// вынесенный из дашборда в свою страницу, чтобы не тесниться с остальными виджетами.
+
+function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; bookings: BookingRow[] }) {
+  const { user } = useAuth()
+  const [year, setYear] = useState(new Date().getFullYear())
+  const [chartMode, setChartMode] = useState<'income_expense' | 'paid_pending'>('income_expense')
+  const [selMonth, setSelMonth] = useState(new Date().getMonth())
+  const todayStr = format(new Date(), 'yyyy-MM-dd')
+  const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i)
+
+  const { data: expenses = [] } = useQuery({
+    queryKey: ['income-expenses', user?.id, year],
+    queryFn: async () => {
+      const { data } = await supabase.from('expenses').select('amount, expense_date, category, provider, apartment_id')
+        .eq('owner_id', user!.id).eq('status', 'confirmed').is('deleted_at', null)
+        .gte('expense_date', `${year}-01-01`).lte('expense_date', `${year}-12-31`)
+      return (data ?? []) as { amount: number; expense_date: string; category: string; provider: string | null; apartment_id: string }[]
+    },
+    enabled: !!user,
+  })
+
+  const [breakdownModal, setBreakdownModal] = useState<null | 'revenue' | 'cleaning' | 'expense' | 'net'>(null)
+
+  // Доход по брони: total_amount, если указан (уже за вычетом комиссии Airbnb); для частных
+  // броней без суммы — грубая оценка по базовому тарифу квартиры; личные поездки хозяина — 0.
+  const calcRevenue = (b: BookingRow) => {
+    if (b.source === 'personal') return 0
+    if (b.total_amount && b.total_amount > 0) return b.total_amount
+    const apt = apartments.find(a => a.id === b.apartment_id)
+    const nights = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
+    return (apt?.price_per_night ?? 0) * nights
+  }
+  // Проходящая сумма уборки — не доход хозяина. Берём из разбивки Airbnb, а если её нет
+  // (частная/ручная бронь) — из фактической задачи на уборку этой брони.
+  const cleaningCost = (b: BookingRow) => b.cleaning_fee_amount ?? b.cleaning_tasks[0]?.cleaning_fee ?? 0
+
+  const monthly = useMemo(() => {
+    return Array.from({ length: 12 }, (_, m) => {
+      const monthBookings = bookings.filter(b => {
+        if (b.status !== 'accepted') return false
+        const d = parseISO(b.end_date)
+        return d.getMonth() === m && d.getFullYear() === year
+      })
+      const revenue = monthBookings.reduce((s, b) => s + calcRevenue(b), 0)
+      const cleaning = monthBookings.reduce((s, b) => s + cleaningCost(b), 0)
+      const paid = monthBookings.filter(b => b.end_date <= todayStr).reduce((s, b) => s + calcRevenue(b), 0)
+      const pending = revenue - paid
+      const monthStr = `${year}-${String(m + 1).padStart(2, '0')}`
+      const expense = expenses.filter(e => e.expense_date.startsWith(monthStr)).reduce((s, e) => s + e.amount, 0)
+      const net = revenue - cleaning - expense
+      return { m, revenue, cleaning, paid, pending, expense, net }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookings, expenses, year, todayStr, apartments])
+
+  const selMonthData = monthly[selMonth] ?? { revenue: 0, cleaning: 0, paid: 0, pending: 0, expense: 0, net: 0 }
+
+  const yearTotal = monthly.reduce((acc, d) => ({
+    revenue: acc.revenue + d.revenue,
+    cleaning: acc.cleaning + d.cleaning,
+    expense: acc.expense + d.expense,
+    net: acc.net + d.net,
+  }), { revenue: 0, cleaning: 0, expense: 0, net: 0 })
+
+  // Брони, которые вошли в «Общий доход» и «Уборку» за год — выезд приходится на выбранный
+  // год (учитываются и уже прошедшие, и ещё предстоящие подтверждённые брони, в отличие от
+  // карточки «Общий доход с начала года» на Дашборде, которая считает только уже завершённые
+  // заезды с начала года по сегодня — отсюда и разные цифры на этих двух страницах).
+  const yearBookings = useMemo(() => bookings
+    .filter(b => b.status === 'accepted' && parseISO(b.end_date).getFullYear() === year)
+    .sort((a, b) => a.start_date.localeCompare(b.start_date)),
+  [bookings, year])
+
+  const chartMax = Math.max(
+    ...monthly.map(d => chartMode === 'income_expense' ? Math.max(d.revenue, d.expense) : d.revenue),
+    1,
+  )
+
+  const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
+  const MONTHS_RU_SHORT = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек']
+
+  return (
+    <div className="flex flex-col gap-5 max-w-6xl">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-xl font-display font-semibold flex items-center gap-2">
+            <BarChart2 size={20} className="text-primary" /> Доходы
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">Помесячная динамика по всем квартирам</p>
+        </div>
+        <select value={year} onChange={e => setYear(Number(e.target.value))}
+          className="rounded-xl border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+          {years.map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {([
+          { key: 'revenue' as const, label: 'Общий доход', value: yearTotal.revenue, color: 'text-foreground' },
+          { key: 'cleaning' as const, label: 'Уборка (транзит)', value: yearTotal.cleaning, color: 'text-muted-foreground' },
+          { key: 'expense' as const, label: 'Расходы', value: yearTotal.expense, color: 'text-red-500' },
+          { key: 'net' as const, label: 'Чистыми на руки', value: yearTotal.net, color: yearTotal.net < 0 ? 'text-destructive' : 'text-primary' },
+        ]).map(({ key, label, value, color }) => (
+          <button key={key} onClick={() => setBreakdownModal(key)}
+            className="bg-card border border-border rounded-2xl p-4 text-left hover:shadow-md hover:border-primary/30 transition-all">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide leading-tight flex items-center gap-1">
+              {label}
+              <Info size={11} className="opacity-50" />
+            </p>
+            <p className={`text-xl font-bold mt-1 ${color}`}>{fmtEur(Math.abs(value))}</p>
+          </button>
+        ))}
+      </div>
+
+      {/* Breakdown modal — explains where each summary number comes from */}
+      <AnimatePresence>
+        {breakdownModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4"
+            onClick={e => { if (e.target === e.currentTarget) setBreakdownModal(null) }}>
+            <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }}
+              className="bg-card rounded-2xl shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden">
+              <div className="px-5 py-4 border-b border-border flex items-center justify-between flex-shrink-0">
+                <h3 className="font-semibold">
+                  {breakdownModal === 'revenue' && 'Откуда взялся общий доход'}
+                  {breakdownModal === 'cleaning' && 'Откуда взялась сумма уборки'}
+                  {breakdownModal === 'expense' && 'Откуда взялись расходы'}
+                  {breakdownModal === 'net' && 'Как считаются чистые на руки'}
+                </h3>
+                <button onClick={() => setBreakdownModal(null)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X size={16} /></button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-5 py-4">
+                {(breakdownModal === 'revenue' || breakdownModal === 'cleaning') && (
+                  <>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      {breakdownModal === 'revenue'
+                        ? <>Сумма по всем подтверждённым броням, у которых <b>выезд приходится на {year} год</b> — включая уже прошедшие заезды и ещё предстоящие (уже подтверждённые, но гость ещё не заехал). Личные поездки считаются как €0.</>
+                        : <>Уборка — это сумма, которая проходит транзитом клинеру и не является доходом хозяина. Берётся из разбивки Airbnb (если письмо было обработано агентом), иначе — из фактической стоимости задачи на уборку этой брони.</>
+                      }
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mb-2">
+                      Это <b>не то же самое</b>, что карточка «Общий доход с начала {year} года» на Дашборде — та считает только уже завершённые заезды с начала года по сегодня, а здесь — весь {year} год целиком, включая будущие брони.
+                    </p>
+                    <div className="flex flex-col divide-y divide-border border border-border rounded-xl overflow-hidden">
+                      {yearBookings.map(b => {
+                        const amount = breakdownModal === 'revenue'
+                          ? (b.source === 'personal' ? 0 : (b.total_amount && b.total_amount > 0) ? b.total_amount
+                              : (apartments.find(a => a.id === b.apartment_id)?.price_per_night ?? 0) * Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000))
+                          : (b.cleaning_fee_amount ?? b.cleaning_tasks[0]?.cleaning_fee ?? 0)
+                        if (amount === 0) return null
+                        return (
+                          <div key={b.id} className="flex items-center justify-between px-3 py-2 text-sm">
+                            <div className="min-w-0">
+                              <p className="font-medium text-foreground truncate">{b.guest_name || 'Без имени'}</p>
+                              <p className="text-[11px] text-muted-foreground truncate">
+                                {b.apartments.title} · {format(parseISO(b.start_date), 'd MMM', { locale: ru })}–{format(parseISO(b.end_date), 'd MMM', { locale: ru })}
+                              </p>
+                            </div>
+                            <span className="font-semibold flex-shrink-0 ml-2">{fmtEur(amount)}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
+
+                {breakdownModal === 'expense' && (
+                  <>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      Все подтверждённые расходы (коммунальные, ремонт и т.д.) с датой в {year} году — те же записи, что и во вкладке «Расходы».
+                    </p>
+                    <div className="flex flex-col divide-y divide-border border border-border rounded-xl overflow-hidden">
+                      {expenses.slice().sort((a, b) => b.expense_date.localeCompare(a.expense_date)).map((e, i) => (
+                        <div key={i} className="flex items-center justify-between px-3 py-2 text-sm">
+                          <div className="min-w-0">
+                            <p className="font-medium text-foreground truncate">{EXP_CATEGORIES[e.category]?.label ?? e.category}{e.provider ? ` · ${e.provider}` : ''}</p>
+                            <p className="text-[11px] text-muted-foreground truncate">
+                              {apartments.find(a => a.id === e.apartment_id)?.title ?? '—'} · {format(parseISO(e.expense_date), 'd MMM yyyy', { locale: ru })}
+                            </p>
+                          </div>
+                          <span className="font-semibold flex-shrink-0 ml-2 text-red-500">{fmtEur(e.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {breakdownModal === 'net' && (
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex justify-between px-3 py-2 text-sm">
+                      <span className="text-muted-foreground">Общий доход</span>
+                      <span className="font-semibold">{fmtEur(yearTotal.revenue)}</span>
+                    </div>
+                    <div className="flex justify-between px-3 py-2 text-sm">
+                      <span className="text-muted-foreground">− Уборка (транзит)</span>
+                      <span className="font-semibold text-red-500">−{fmtEur(yearTotal.cleaning)}</span>
+                    </div>
+                    <div className="flex justify-between px-3 py-2 text-sm">
+                      <span className="text-muted-foreground">− Расходы по квартире</span>
+                      <span className="font-semibold text-red-500">−{fmtEur(yearTotal.expense)}</span>
+                    </div>
+                    <div className="flex justify-between px-3 py-3 mt-1 border-t border-border font-bold">
+                      <span>Чистыми на руки</span>
+                      <span className={yearTotal.net < 0 ? 'text-destructive' : 'text-primary'}>{fmtEur(yearTotal.net)}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-2">
+                      Комиссия Airbnb здесь отдельно не вычитается — она уже вычтена самим Airbnb из суммы, которая хранится как доход по брони.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Chart card */}
+      <div className="bg-card border border-border rounded-2xl shadow-sm p-4 md:p-5">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+          <p className="text-sm font-semibold text-foreground">Помесячно за {year}</p>
+          <div className="flex items-center gap-0.5 bg-muted rounded-xl p-0.5">
+            <button onClick={() => setChartMode('income_expense')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${chartMode === 'income_expense' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+              Доход / Расход
+            </button>
+            <button onClick={() => setChartMode('paid_pending')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${chartMode === 'paid_pending' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+              Завершено / Предстоит
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-12 gap-1.5 md:gap-2 h-40">
+          {monthly.map(d => (
+            <button key={d.m} onClick={() => setSelMonth(d.m)}
+              className="flex flex-col items-stretch justify-end h-full gap-1.5 group min-w-0">
+              <div className="flex-1 flex items-end min-h-0">
+                {chartMode === 'income_expense' ? (
+                  <div className="w-full h-full flex items-end justify-center gap-0.5">
+                    <div className="w-1/2 rounded-t-md transition-all group-hover:opacity-80"
+                      style={{
+                        height: `${Math.max((d.revenue / chartMax) * 100, d.revenue > 0 ? 3 : 0)}%`,
+                        background: d.m === selMonth ? 'hsl(var(--primary))' : 'hsl(var(--primary) / 0.45)',
+                      }} />
+                    <div className="w-1/2 rounded-t-md transition-all group-hover:opacity-80 bg-red-300 dark:bg-red-800/60"
+                      style={{ height: `${Math.max((d.expense / chartMax) * 100, d.expense > 0 ? 3 : 0)}%` }} />
+                  </div>
+                ) : (
+                  <div className="w-full h-full flex flex-col justify-end rounded-t-md overflow-hidden transition-all group-hover:opacity-80">
+                    <div style={{ height: `${(d.pending / chartMax) * 100}%`, background: 'hsl(var(--primary) / 0.25)' }} />
+                    <div style={{
+                      height: `${(d.paid / chartMax) * 100}%`,
+                      background: d.m === selMonth ? 'hsl(var(--primary))' : 'hsl(var(--primary) / 0.7)',
+                    }} />
+                  </div>
+                )}
+              </div>
+              <span className={`text-[10px] font-medium text-center flex-shrink-0 ${d.m === selMonth ? 'text-primary' : 'text-muted-foreground'}`}>
+                {MONTHS_RU_SHORT[d.m]}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-4 mt-3 text-[11px] text-muted-foreground">
+          {chartMode === 'income_expense' ? (
+            <>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: 'hsl(var(--primary))' }} />Доход</span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block bg-red-300 dark:bg-red-800/60" />Расход</span>
+            </>
+          ) : (
+            <>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: 'hsl(var(--primary))' }} />Завершено</span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: 'hsl(var(--primary) / 0.25)' }} />Предстоит</span>
+            </>
+          )}
+        </div>
+
+        {/* Selected month detail */}
+        <div className="mt-4 pt-4 border-t border-border">
+          <p className="text-sm font-semibold text-foreground mb-2">{MONTHS_RU[selMonth]} {year}</p>
+          {chartMode === 'income_expense' ? (
+            <div className="grid grid-cols-3 gap-3">
+              <div><p className="text-lg font-bold text-foreground">{fmtEur(selMonthData.revenue)}</p><p className="text-[11px] text-muted-foreground">Доход</p></div>
+              <div><p className="text-lg font-bold text-red-500">{fmtEur(selMonthData.expense)}</p><p className="text-[11px] text-muted-foreground">Расход</p></div>
+              <div><p className={`text-lg font-bold ${selMonthData.net < 0 ? 'text-destructive' : 'text-primary'}`}>{fmtEur(selMonthData.net)}</p><p className="text-[11px] text-muted-foreground">Чистыми на руки</p></div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-3">
+              <div><p className="text-lg font-bold text-foreground">{fmtEur(selMonthData.paid)}</p><p className="text-[11px] text-muted-foreground">Завершено</p></div>
+              <div><p className="text-lg font-bold text-foreground">{fmtEur(selMonthData.pending)}</p><p className="text-[11px] text-muted-foreground">Предстоит</p></div>
+              <div><p className="text-lg font-bold text-primary">{fmtEur(selMonthData.revenue)}</p><p className="text-[11px] text-muted-foreground">Итого</p></div>
+            </div>
+          )}
+          {selMonthData.cleaning > 0 && (
+            <p className="text-[11px] text-muted-foreground mt-2">Из них уборка (проходящая сумма, не доход хозяина): €{selMonthData.cleaning.toFixed(2)}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Tax Report Section ───────────────────────────────────────────────────────
 
 function TaxReportSection({ apartments, bookings, onGoToBooking }: {
@@ -6529,7 +6758,9 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
     let missingAmountCount = 0
     let totalCleaningExcluded = 0
     let totalServiceFeeExcluded = 0
+    let personalValue = 0
     const missingBookings: BookingRow[] = []
+    const personalBookings: BookingRow[] = []
 
     aptBookingsAll.forEach(b => {
       const bStart = new Date(b.start_date)
@@ -6544,10 +6775,15 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
       if (nightsInYear === 0) return
 
       if (b.source === 'personal') {
-        // Личная поездка хозяина — не сдача в аренду. Дохода нет (и это не "забыли внести
-        // сумму"), а её дни не должны раздувать пропорцию вычитаемых расходов — по IRPF
-        // расходы вычитаются пропорционально именно дням АРЕНДЫ, а не личного проживания.
+        // Личная поездка хозяина — не сдача в аренду. Дохода НЕТ, эта бронь полностью
+        // исключена из налогооблагаемого дохода (casilla 0102) и не считается "забытой суммой".
+        // Её дни также не должны раздувать пропорцию вычитаемых расходов — по IRPF расходы
+        // вычитаются пропорционально именно дням АРЕНДЫ, а не личного проживания.
+        // personalValue — чисто справочная (не налогооблагаемая) оценка стоимости проживания,
+        // в доход нигде не суммируется.
         personalDays += nightsInYear
+        personalValue += (apt.price_per_night ?? 0) * nightsInYear
+        personalBookings.push(b)
         return
       }
 
@@ -6591,6 +6827,7 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
       rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome,
       expByCategory, bookingsCount, missingAmountCount, missingBookings,
       totalCleaningExcluded, totalServiceFeeExcluded,
+      personalValue, personalBookings,
     }
   })
 
@@ -6600,6 +6837,9 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
   const grandNet = aptData.reduce((s, d) => s + d.netIncome, 0)
   const grandMissingAmount = aptData.reduce((s, d) => s + d.missingAmountCount, 0)
   const grandMissingBookings = aptData.flatMap(d => d.missingBookings)
+  const grandPersonalDays = aptData.reduce((s, d) => s + d.personalDays, 0)
+  const grandPersonalValue = aptData.reduce((s, d) => s + d.personalValue, 0)
+  const grandPersonalBookings = aptData.flatMap(d => d.personalBookings)
 
   const handlePrint = () => window.print()
 
@@ -6669,10 +6909,34 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
         </div>
       )}
 
+      {grandPersonalDays > 0 && (
+        <div className="flex flex-col gap-2 rounded-2xl border border-slate-300 bg-slate-50 dark:bg-slate-900/30 px-4 py-3 text-sm text-slate-700 dark:text-slate-300">
+          <div className="flex items-start gap-2">
+            <Home size={16} className="mt-0.5 flex-shrink-0" />
+            <span>
+              Личное использование за {year} год: {grandPersonalBookings.length} {grandPersonalBookings.length === 1 ? 'поездка' : 'поездки/поездок'},
+              {' '}{grandPersonalDays} {grandPersonalDays === 1 ? 'день' : 'дней'} (справочно ~€{grandPersonalValue.toFixed(2)}) —
+              {' '}эти дни не приносят дохода и <b>не входят в налогооблагаемую базу</b> (casilla 0102) выше. Учтены только для сдачи в аренду.
+            </span>
+          </div>
+          <div className="flex flex-col gap-1 pl-6">
+            {grandPersonalBookings.map(b => (
+              <button key={b.id} onClick={() => onGoToBooking(b.id)}
+                className="flex items-center gap-1.5 text-left hover:underline underline-offset-2 w-fit">
+                <span className="font-medium">{b.guest_name || 'Личная поездка'}</span>
+                <span className="opacity-70">
+                  · {b.apartments.title} · {format(parseISO(b.start_date), 'd MMM', { locale: ru })}–{format(parseISO(b.end_date), 'd MMM yyyy', { locale: ru })}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Per-apartment tables */}
       {aptData.map(({ apt, totalIncome, totalDays, personalDays,
         rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome, expByCategory, bookingsCount, missingAmountCount, missingBookings,
-        totalCleaningExcluded, totalServiceFeeExcluded }) => (
+        totalCleaningExcluded, totalServiceFeeExcluded, personalValue, personalBookings }) => (
         <div key={apt.id} className="bg-card border border-border rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-border bg-muted/30">
             <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -6702,7 +6966,14 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
                   <p className="text-xs text-muted-foreground">Дней аренды</p>
                   <p className="font-bold">
                     {totalDays}
-                    {personalDays > 0 && <span className="text-muted-foreground font-normal"> (+{personalDays} личных)</span>}
+                    {personalDays > 0 && (
+                      <button
+                        onClick={() => onGoToBooking(personalBookings[0].id)}
+                        title={personalBookings.map(b => `${b.guest_name || 'Личная поездка'} (${format(parseISO(b.start_date), 'd MMM', { locale: ru })}–${format(parseISO(b.end_date), 'd MMM', { locale: ru })})`).join(', ')}
+                        className="text-slate-500 font-normal hover:underline underline-offset-2">
+                        {' '}(+{personalDays} личных)
+                      </button>
+                    )}
                   </p>
                 </div>
                 <div><p className="text-xs text-muted-foreground">% использ.</p><p className="font-bold">{(rentalRatio * 100).toFixed(1)}%</p></div>
@@ -6722,6 +6993,15 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
                 <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
                   Уже не учтено в доходе: уборка €{totalCleaningExcluded.toFixed(2)}
                   {totalServiceFeeExcluded > 0 && <> и комиссия Airbnb €{totalServiceFeeExcluded.toFixed(2)} (вычтена Airbnb до выплаты)</>}
+                </p>
+              )}
+              {personalDays > 0 && (
+                <p className="text-[11px] text-slate-500 mt-1.5 leading-snug flex items-start gap-1">
+                  <Home size={11} className="mt-0.5 flex-shrink-0" />
+                  <span>
+                    Личное использование: {personalDays} {personalDays === 1 ? 'день' : 'дней'} (справочно ~€{personalValue.toFixed(2)}) —
+                    {' '}не доход, в сумму выше не входит, налогом не облагается.
+                  </span>
                 </p>
               )}
             </div>
@@ -7257,6 +7537,7 @@ const NAV_ITEMS: Array<{ id: Section; label: string; icon: React.ReactNode; admi
   { id: 'dashboard',   label: 'Дашборд',       icon: <LayoutDashboard size={16} /> },
   { id: 'bookings',    label: 'Бронирования',   icon: <CalendarCheck size={16} /> },
   { id: 'calendar',    label: 'Календарь',      icon: <CalendarDays size={16} /> },
+  { id: 'income',      label: 'Доходы',         icon: <BarChart2 size={16} /> },
   { id: 'expenses',    label: 'Расходы',        icon: <Receipt size={16} /> },
   { id: 'tax_report',  label: 'Налог IRPF',     icon: <FileSpreadsheet size={16} /> },
   { id: 'apartments',  label: 'Апартаменты',    icon: <Building2 size={16} /> },
@@ -7589,7 +7870,7 @@ export default function OwnerDashboard() {
         </header>
 
         {/* Mobile-only back header for "Ещё" sub-screens */}
-        {isMobile && topView === 'owner' && ['apartments', 'expenses', 'tax_report', 'settings', 'admin'].includes(section) && (
+        {isMobile && topView === 'owner' && ['apartments', 'expenses', 'income', 'tax_report', 'settings', 'admin'].includes(section) && (
           <div className="md:hidden flex-shrink-0 h-12 flex items-center px-3 border-b border-border bg-card">
             <button onClick={() => setSection('dashboard')} className="flex items-center gap-1 text-sm font-medium text-muted-foreground">
               <ChevronLeft size={18} /> Ещё
@@ -7610,6 +7891,7 @@ export default function OwnerDashboard() {
         <div className={`mx-auto ${
           section === 'calendar' ? 'px-2 py-2 md:px-4 md:py-4 w-full xl:flex-1 xl:min-h-0 xl:flex xl:flex-col' :
           section === 'dashboard' ? 'px-2 py-2 md:px-4 md:py-3 w-full xl:flex-1 xl:min-h-0 xl:flex xl:flex-col' :
+          section === 'income' ? 'px-3 py-4 md:px-6 md:py-8 max-w-6xl w-full' :
           'px-3 py-4 md:px-6 md:py-8 max-w-4xl'
         }`}>
           <AnimatePresence mode="wait">
@@ -7646,7 +7928,8 @@ export default function OwnerDashboard() {
                 </div>
               )}
               {section === 'cleaning' && <CleaningSection bookings={bookings} onRefresh={invalidate} />}
-              {section === 'expenses' && <ExpensesSection apartments={apartments} />}
+              {section === 'expenses' && <ExpensesSection apartments={apartments} bookings={bookings} />}
+              {section === 'income' && <IncomeSection apartments={apartments} bookings={bookings} />}
               {section === 'tax_report' && (
                 <TaxReportSection apartments={apartments} bookings={bookings}
                   onGoToBooking={(id) => { setJumpToBookingId(id); setSection('bookings') }} />
@@ -7727,6 +8010,7 @@ export default function OwnerDashboard() {
               initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ duration: 0.2 }}>
               <div className="w-10 h-1 rounded-full bg-border mx-auto mb-4" />
               {([
+                { id: 'income' as Section, label: 'Доходы', icon: <BarChart2 size={17} /> },
                 { id: 'expenses' as Section, label: 'Расходы', icon: <Receipt size={17} /> },
                 { id: 'tax_report' as Section, label: 'Налог IRPF', icon: <FileSpreadsheet size={17} /> },
                 { id: 'apartments' as Section, label: 'Апартаменты', icon: <Building2 size={17} /> },

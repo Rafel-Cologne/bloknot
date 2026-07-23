@@ -132,6 +132,7 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
   const b = task.bookings
   const today = new Date().toISOString().slice(0, 10)
   const isCur = b.start_date <= today && b.end_date > today
+  const isPast = b.end_date <= today
   const isDone = task.status === 'done'
   const isPaid = task.payment_status === 'paid'
   const isOwnerTransfer = task.payment_method === 'owner_transfer'
@@ -155,6 +156,22 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
       if (rating > 0) {
         const { error: bookingError } = await supabase.from('bookings').update({ guest_rating: rating }).eq('id', b.id)
         if (bookingError) throw bookingError
+      }
+    },
+    onSuccess: () => { invalidateAll(); onClose() },
+  })
+
+  // Задача уже отмечена "убрано" (например, старая запись до появления обязательной оценки),
+  // но оценки чистоты так и не было — даём её добавить отдельно, не трогая статус уборки.
+  const saveRatingOnly = useMutation({
+    mutationFn: async () => {
+      if (rating > 0) {
+        const { error: bookingError } = await supabase.from('bookings').update({ guest_rating: rating }).eq('id', b.id)
+        if (bookingError) throw bookingError
+      }
+      if (comment.trim()) {
+        const { error: taskError } = await supabase.from('cleaning_tasks').update({ cleaner_comment: comment.trim() }).eq('id', task.id)
+        if (taskError) throw taskError
       }
     },
     onSuccess: () => { invalidateAll(); onClose() },
@@ -228,13 +245,13 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
 
         {/* Client data */}
         <div className="flex flex-col gap-2.5 bg-secondary/50 rounded-2xl p-4">
-          {b.share_contact_with_cleaner && b.guest_name && (
+          {b.guest_name && (
             <div className="flex items-center justify-between gap-2 text-sm">
               <span className="text-muted-foreground">Гость</span>
               <span className="font-semibold text-foreground">{b.guest_name}</span>
             </div>
           )}
-          {b.share_contact_with_cleaner && b.guest_phone && (
+          {b.guest_phone && (
             <div className="flex items-center justify-between gap-2 text-sm">
               <span className="text-muted-foreground">Телефон</span>
               <span className="font-semibold text-foreground text-right">
@@ -299,8 +316,9 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
           </div>
         )}
 
-        {/* Rating + comment — before marking done (guest already checked out) */}
-        {!isDone && !isCur && (
+        {/* Rating + comment — only once the guest has actually checked out, and only if not rated yet
+            (covers both: not-yet-done tasks, and older "убрано" tasks that never got a rating) */}
+        {isPast && !b.guest_rating && (
           <div className="bg-secondary/50 rounded-2xl p-4 flex flex-col gap-2.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-foreground">Насколько чисто оставил гость?</span>
@@ -313,7 +331,7 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
         )}
 
         {/* Already-submitted rating + comment */}
-        {isDone && (b.guest_rating || task.cleaner_comment) && (
+        {(b.guest_rating || task.cleaner_comment) && (
           <div className="bg-secondary/50 rounded-2xl p-4 flex flex-col gap-1.5">
             {b.guest_rating ? (
               <div className="flex items-center gap-2">
@@ -327,7 +345,7 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
 
         {/* Actions */}
         <div className="flex flex-col gap-2">
-          {!isDone && !isCur && (
+          {!isDone && isPast && (
             <button onClick={() => markDone.mutate()} disabled={markDone.isPending || rating === 0}
               title={rating === 0 ? 'Сначала оцените чистоту' : undefined}
               className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50">
@@ -335,22 +353,33 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
               {markDone.isPending ? 'Сохраняем…' : 'Уборка выполнена'}
             </button>
           )}
-          {isCur && !isDone && (
+          {!isDone && !isPast && (
             <p className="text-xs text-muted-foreground italic text-center py-1">Отметить уборку можно после выезда гостя</p>
           )}
-          {!isPaid && (
+          {isDone && !b.guest_rating && (
+            <button onClick={() => saveRatingOnly.mutate()} disabled={saveRatingOnly.isPending || rating === 0}
+              title={rating === 0 ? 'Сначала оцените чистоту' : undefined}
+              className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50">
+              <Star size={15} />
+              {saveRatingOnly.isPending ? 'Сохраняем…' : 'Сохранить оценку'}
+            </button>
+          )}
+          {/* Наличные/касса — только для частных заездов (гость платит напрямую).
+              Для Airbnb/Booking оплату уборщице переводит хозяин отдельно —
+              здесь ей нужны только оценка, комментарий и кнопка "убрано". */}
+          {b.source === 'other' && !isPaid && (
             <button onClick={() => receivedFromClient.mutate()} disabled={receivedFromClient.isPending}
               className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-2xl bg-purple-100 text-purple-800 text-sm font-semibold hover:bg-purple-200 transition-colors disabled:opacity-60">
               <Banknote size={15} /> Получила от клиента {fmtEur(task.cleaning_fee)}
             </button>
           )}
-          {isOwnerTransfer && !isPaid && canWithdraw && (
+          {b.source === 'other' && isOwnerTransfer && !isPaid && canWithdraw && (
             <button onClick={() => withdrawFromTill.mutate()} disabled={withdrawFromTill.isPending}
               className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-2xl bg-amber-100 text-amber-900 text-sm font-semibold hover:bg-amber-200 transition-colors disabled:opacity-60">
               <Wallet size={15} /> Списать {fmtEur(task.cleaning_fee)} из кассы
             </button>
           )}
-          {isOwnerTransfer && !isPaid && !canWithdraw && (
+          {b.source === 'other' && isOwnerTransfer && !isPaid && !canWithdraw && (
             <p className="text-xs text-muted-foreground italic text-center py-1">Ждём перевода от хозяина</p>
           )}
           <button onClick={onClose} className="w-full py-2.5 rounded-2xl bg-secondary text-sm font-medium text-foreground hover:bg-muted transition-colors">
@@ -373,6 +402,7 @@ function TaskCard({ task, onSelect, aptColor }: { task: TaskRow; onSelect: () =>
   const isPartial = task.payment_status === 'partial'
   const nights = Math.max(1, Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000))
   const color = aptColor(b.apartments.id)
+  const country = b.guest_phone ? detectCountry(b.guest_phone) : null
 
   return (
     <button onClick={onSelect}
@@ -403,11 +433,19 @@ function TaskCard({ task, onSelect, aptColor }: { task: TaskRow; onSelect: () =>
                 ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">🧹 Нужна уборка</span>
                 : null}
           </div>
-          <p className="text-sm text-foreground/80 flex items-center gap-1.5 mt-0.5">
-            {nights} н.
-            <span className="inline-flex items-center gap-0.5 text-sm text-foreground/80">
+          {b.guest_name && (
+            <p className="text-sm font-semibold text-foreground/90 mt-0.5 truncate">{b.guest_name}</p>
+          )}
+          <p className="text-sm text-foreground/80 flex items-center gap-2.5 mt-0.5 flex-wrap">
+            <span>{nights} н.</span>
+            <span className="inline-flex items-center gap-0.5">
               <Users size={13} /> {b.guests_count}
             </span>
+            {b.guest_phone && (
+              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                {country && <span>{country.flag}</span>} {b.guest_phone}
+              </span>
+            )}
           </p>
           <p className="text-xs text-muted-foreground mt-1 font-medium">
             {format(parseISO(b.start_date), 'd MMM', { locale: ru })} — {format(parseISO(b.end_date), 'd MMM yyyy', { locale: ru })}
