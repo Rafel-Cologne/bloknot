@@ -55,6 +55,7 @@ import {
   Bot,
   PackageCheck,
   MoreHorizontal,
+  Repeat,
 } from 'lucide-react'
 import {
   format,
@@ -5461,6 +5462,7 @@ function AddExpenseModal({
   const [form, setForm, reset] = useExpenseForm(apartments, editing, prefill)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [makeRecurring, setMakeRecurring] = useState(false)
   const set = <K extends keyof ExpForm>(k: K, v: ExpForm[K]) => setForm(f => ({ ...f, [k]: v }))
 
   const handleSave = async () => {
@@ -5498,6 +5500,22 @@ function AddExpenseModal({
           source: 'manual',
           status: 'confirmed',
         })
+
+    if (!err && !editing && makeRecurring) {
+      // Заводим автоплатёж: приложение само будет создавать такой же расход каждый месяц.
+      // Текущий месяц уже покрыт только что сохранённой записью, поэтому отмечаем его как сгенерированный.
+      await supabase.from('recurring_expenses').insert({
+        owner_id: user!.id,
+        apartment_id: payload.apartment_id,
+        category: payload.category,
+        amount: payload.amount,
+        provider: payload.provider,
+        description: payload.description,
+        day_of_month: Number(form.expense_date.slice(8, 10)),
+        active: true,
+        last_generated_month: form.expense_date.slice(0, 7),
+      })
+    }
 
     setSaving(false)
     if (err) { setError(err.message); return }
@@ -5569,6 +5587,18 @@ function AddExpenseModal({
             <input type="text" placeholder="Необязательно" value={form.description}
               onChange={e => set('description', e.target.value)} className={expFld} />
           </div>
+          {!editing && (
+            <label className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl border border-dashed border-border cursor-pointer hover:border-primary/50 transition-colors">
+              <input type="checkbox" checked={makeRecurring} onChange={e => setMakeRecurring(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded accent-primary flex-shrink-0" />
+              <span className="text-sm">
+                <span className="font-medium">Списывается автоматически каждый месяц</span>
+                <span className="block text-xs text-muted-foreground mt-0.5">
+                  Например, тариф интернета без счетов на почту. Приложение само будет добавлять такую же сумму {form.expense_date.slice(8, 10)}-го числа каждого месяца.
+                </span>
+              </span>
+            </label>
+          )}
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Квитанция / счёт (PDF или фото)</label>
             <label className="flex items-center gap-2 cursor-pointer px-3 py-2.5 rounded-xl border border-dashed border-border hover:border-primary/50 transition-colors bg-background">
@@ -5696,11 +5726,32 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
 
   const missingInvoices = useMemo(() => computeMissingInvoices(allRecurringExpenses), [allRecurringExpenses])
 
+  // Активные автоплатежи (подписки) владельца — приложение само добавляет по ним расход каждый месяц.
+  const { data: recurringDefs = [] } = useQuery({
+    queryKey: ['recurring-expenses', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('recurring_expenses').select('*')
+        .eq('owner_id', user!.id).eq('active', true)
+        .order('created_at', { ascending: false })
+      return (data ?? []) as { id: string; apartment_id: string; category: string; amount: number; provider: string | null; day_of_month: number }[]
+    },
+    enabled: !!user,
+  })
+
+  const handleDisableRecurring = async (id: string) => {
+    await supabase.from('recurring_expenses').update({ active: false }).eq('id', id)
+    qc.invalidateQueries({ queryKey: ['recurring-expenses', user?.id] })
+  }
+
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['expenses-confirmed', user?.id] })
     qc.invalidateQueries({ queryKey: ['expenses-pending', user?.id] })
     qc.invalidateQueries({ queryKey: ['expenses-all-recurring', user?.id] })
     qc.invalidateQueries({ queryKey: ['expenses-used-categories', user?.id] })
+    // Вкладка "Налог" кэширует свои данные отдельно (staleTime 5 мин) — без явного
+    // сброса она могла бы показывать расходы без только что добавленной записи.
+    qc.invalidateQueries({ queryKey: ['tax-expenses', user?.id] })
+    qc.invalidateQueries({ queryKey: ['recurring-expenses', user?.id] })
   }
 
   const handleConfirm = async (id: string) => {
@@ -5912,6 +5963,36 @@ function ExpensesSection({ apartments }: { apartments: Apartment[] }) {
           )
         })}
       </div>
+
+      {/* Автоплатежи */}
+      {recurringDefs.length > 0 && (
+        <div className="bg-card border border-border rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+            <Repeat size={14} className="text-muted-foreground" />
+            <span className="font-semibold text-sm">Автоплатежи</span>
+            <span className="ml-auto text-xs text-muted-foreground">{recurringDefs.length}</span>
+          </div>
+          <div className="divide-y divide-border">
+            {recurringDefs.map(r => {
+              const cat = EXP_CATEGORIES[r.category] ?? EXP_CATEGORIES.other
+              return (
+                <div key={r.id} className="px-4 py-2.5 flex items-center gap-2.5 text-sm">
+                  <span className={cat.color}>{cat.icon}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${aptBadgeColor(apartments, r.apartment_id)}`}>{aptName(r.apartment_id)}</span>
+                  <span>{cat.label}</span>
+                  {r.provider && <span className="text-muted-foreground">· {r.provider}</span>}
+                  <span className="font-semibold">€{r.amount.toFixed(2)}</span>
+                  <span className="text-xs text-muted-foreground">{r.day_of_month}-го числа</span>
+                  <button onClick={() => handleDisableRecurring(r.id)}
+                    className="ml-auto px-2.5 py-1 rounded-lg bg-muted text-muted-foreground text-xs font-semibold hover:bg-destructive/10 hover:text-destructive transition-colors flex-shrink-0">
+                    Отключить
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Expense list */}
       <div className="bg-card border border-border rounded-2xl overflow-hidden">
