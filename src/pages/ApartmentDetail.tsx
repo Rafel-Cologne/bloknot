@@ -45,6 +45,24 @@ type BlockedDate = {
   reason: BlockedDateReason
 }
 
+// Занятые диапазоны дат по РЕАЛЬНЫМ бронированиям (не blocked_dates — та таблица только для
+// ручной блокировки хозяином и не отражает факт заезда гостя). Приходит из публичной
+// SECURITY DEFINER функции get_public_booked_ranges — без имени/телефона гостя.
+type BookedRange = { apartment_id: string; start_date: string; end_date: string; status: string }
+
+// Разворачивает диапазон [start, end) в список дней ISO — end_date это день выезда,
+// он свободен для нового заезда, поэтому не включается.
+function expandRangeDays(start: string, end: string): string[] {
+  const days: string[] = []
+  let d = new Date(start + 'T00:00:00Z')
+  const endD = new Date(end + 'T00:00:00Z')
+  while (d < endD) {
+    days.push(d.toISOString().slice(0, 10))
+    d = new Date(d.getTime() + 86400000)
+  }
+  return days
+}
+
 type CustomPricing = {
   id: string
   apartment_id: string
@@ -164,16 +182,24 @@ function ImageGallery({ images, title }: { images: ApartmentImage[]; title: stri
 
 // ─── Availability Calendar ─────────────────────────────────────────────────────
 
-function AvailabilityCalendar({ blockedDates }: { blockedDates: BlockedDate[] }) {
+function AvailabilityCalendar({ blockedDates, bookedRanges }: { blockedDates: BlockedDate[]; bookedRanges: BookedRange[] }) {
   const [month, setMonth] = useState(new Date())
 
   const blockedMap = useMemo(() => {
     const map = new Map<string, BlockedDateReason>()
+    // Сначала реальные брони — принятая бронь всегда "занято", даже если это же число
+    // почему-то помечено в blocked_dates как "pending".
+    for (const br of bookedRanges) {
+      const reason: BlockedDateReason = br.status === 'accepted' ? 'blocked' : 'pending'
+      for (const day of expandRangeDays(br.start_date, br.end_date)) {
+        if (reason === 'blocked' || map.get(day) !== 'blocked') map.set(day, reason)
+      }
+    }
     for (const bd of blockedDates) {
-      map.set(bd.date, bd.reason)
+      if (bd.reason === 'blocked' || map.get(bd.date) !== 'blocked') map.set(bd.date, bd.reason)
     }
     return map
-  }, [blockedDates])
+  }, [blockedDates, bookedRanges])
 
   const days = eachDayOfInterval({
     start: startOfMonth(month),
@@ -276,9 +302,10 @@ interface BookingFormProps {
   cleaningFee: number
   maxGuests: number
   prefillName?: string
+  bookedRanges: BookedRange[]
 }
 
-function BookingForm({ apartmentId, pricePerNight, cleaningFee, maxGuests, prefillName }: BookingFormProps) {
+function BookingForm({ apartmentId, pricePerNight, cleaningFee, maxGuests, prefillName, bookedRanges }: BookingFormProps) {
   const { t } = useTranslation()
   const { user } = useAuth()
   const [success, setSuccess] = useState(false)
@@ -300,8 +327,16 @@ function BookingForm({ apartmentId, pricePerNight, cleaningFee, maxGuests, prefi
 
   const total = nights * pricePerNight + cleaningFee
 
+  // Пересекается ли выбранный диапазон с уже занятыми/ожидающими датами — чтобы не дать
+  // гостю отправить заявку на даты, которые в этот момент уже забронированы кем-то другим.
+  const hasOverlap = useMemo(() => {
+    if (!form.start_date || !form.end_date || form.end_date <= form.start_date) return false
+    return bookedRanges.some((br) => form.start_date < br.end_date && form.end_date > br.start_date)
+  }, [form.start_date, form.end_date, bookedRanges])
+
   const submit = useMutation({
     mutationFn: async () => {
+      if (hasOverlap) throw new Error(t('booking.datesUnavailable', { defaultValue: 'Эти даты уже заняты — выберите другой период' }))
       const { error } = await supabase.from('bookings').insert({
         apartment_id: apartmentId,
         guest_id: user!.id,
@@ -461,6 +496,12 @@ function BookingForm({ apartmentId, pricePerNight, cleaningFee, maxGuests, prefi
         </div>
       )}
 
+      {hasOverlap && (
+        <p className="text-xs text-destructive bg-destructive/10 rounded-xl px-3 py-2">
+          {t('booking.datesUnavailable', { defaultValue: 'Эти даты уже заняты — выберите другой период' })}
+        </p>
+      )}
+
       {submit.isError && (
         <p className="text-xs text-destructive">
           {(submit.error as Error)?.message ?? t('common.error', { defaultValue: 'Ошибка. Попробуйте снова.' })}
@@ -469,7 +510,7 @@ function BookingForm({ apartmentId, pricePerNight, cleaningFee, maxGuests, prefi
 
       <button
         type="submit"
-        disabled={submit.isPending}
+        disabled={submit.isPending || hasOverlap}
         className="btn-primary rounded-xl py-2.5 text-sm font-semibold disabled:opacity-60 w-full"
       >
         {submit.isPending
@@ -500,6 +541,16 @@ export default function ApartmentDetail() {
       return data
     },
     enabled: !!user,
+  })
+
+  const { data: bookedRanges = [] } = useQuery({
+    queryKey: ['apartment-booked-ranges', id],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('get_public_booked_ranges', { p_apartment_ids: [id!] })
+      if (error) throw error
+      return (data ?? []) as BookedRange[]
+    },
+    enabled: !!id,
   })
 
   const { data: apartment, isLoading, isError } = useQuery({
@@ -635,7 +686,7 @@ export default function ApartmentDetail() {
               <Calendar size={18} />
               {t('apartment.availability', { defaultValue: 'Доступность' })}
             </h2>
-            <AvailabilityCalendar blockedDates={apartment.blocked_dates} />
+            <AvailabilityCalendar blockedDates={apartment.blocked_dates} bookedRanges={bookedRanges} />
           </div>
         </div>
 
@@ -648,6 +699,7 @@ export default function ApartmentDetail() {
               cleaningFee={apartment.cleaning_fee}
               maxGuests={apartment.max_guests}
               prefillName={profile?.name}
+              bookedRanges={bookedRanges}
             />
           ) : (
             <div className="bg-card border border-border rounded-2xl p-6 shadow-[var(--shadow-card)] text-center flex flex-col gap-4">

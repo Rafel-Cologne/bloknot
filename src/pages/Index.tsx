@@ -19,17 +19,19 @@ async function fetchApartments() {
 // Какие из публичных квартир заняты ПРЯМО СЕЙЧАС — по реальным бронированиям (не по
 // blocked_dates: эта таблица используется только для ручной блокировки хозяином и не
 // заполняется автоматически при подтверждении брони, поэтому не отражает факт заезда).
+// RLS не даёт анонимам читать таблицу bookings целиком (там телефон/имя гостя), поэтому
+// используем публичную SECURITY DEFINER функцию, которая отдаёт только даты и статус.
+type BookedRange = { apartment_id: string; start_date: string; end_date: string; status: string }
+
 async function fetchOccupiedTodayIds(): Promise<Set<string>> {
   const today = new Date().toISOString().slice(0, 10)
-  const { data, error } = await supabase
-    .from('bookings')
-    .select('apartment_id')
-    .eq('status', 'accepted')
-    .is('deleted_at', null)
-    .lte('start_date', today)
-    .gt('end_date', today)
+  const { data, error } = await supabase.rpc('get_public_booked_ranges')
   if (error) throw error
-  return new Set((data ?? []).map((b) => b.apartment_id))
+  return new Set(
+    ((data ?? []) as BookedRange[])
+      .filter((b) => b.status === 'accepted' && b.start_date <= today && b.end_date > today)
+      .map((b) => b.apartment_id)
+  )
 }
 
 export default function Index() {
