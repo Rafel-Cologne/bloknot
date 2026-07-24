@@ -1084,15 +1084,18 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
   const gridRowsCls = effectiveCount <= 3 ? 'grid-rows-1' : effectiveCount <= 6 ? 'grid-rows-2' : 'grid-rows-3'
   // useFlexFill: single-month and 6/год views let cells grow to fill viewport.
   // 2-3 months use fixed row heights so the card matches content (no empty space at bottom).
-  const useFlexFill = effectiveCount === 1 || effectiveCount > 3
+  // On phones we instead let the calendar take its natural height and the PAGE scroll —
+  // squeezing 6 week-rows into a fixed viewport box was what made day number / price / lock
+  // icon overlap and clip on narrow screens.
+  const useFlexFill = (effectiveCount === 1 || effectiveCount > 3) && !isMobile
   // Fixed week-row height for 2-3 month compact view — smaller on tablet.
   const fixedRowH = effectiveCount === 2
     ? (isTablet ? 'h-[60px]' : 'h-[80px]')
     : effectiveCount === 3
       ? (isTablet ? 'h-[50px]' : 'h-[66px]')
       : ''
-  // For the single-month flex-fill view, cap each row so cells stay square-ish.
-  const flexMaxRowH = effectiveCount === 1 ? (isMobile ? 'max-h-[90px]' : 'max-h-[112px]') : ''
+  // For the single-month flex-fill view (desktop only — mobile uses natural height instead), cap each row so cells stay square-ish.
+  const flexMaxRowH = effectiveCount === 1 ? 'max-h-[112px]' : ''
 
   // Month grid columns
   const gridCols = effectiveCount === 1 ? 'grid-cols-1'
@@ -1108,15 +1111,14 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
 
     const weeks = computeWeeks(monthDate)
     const compact = effectiveCount > 1
-    // Real phones show a single month, but the cell is still only ~50px wide there — too
-    // narrow for the desktop single-month cell content (avatar + full "name, N guests, M
-    // nights" label). Reuse the same tighter sizing as tablet "compact" mode, and on top of
-    // that fully hide the in-bar name/amount text (tap the day to see the booking popup).
-    const denseCell = compact || isMobile
-    const tiny = isMobile
+    // Phones get their own layout, modelled on the Airbnb host calendar: day number and
+    // price stacked top-left (both legible, ~11-13px, not squeezed to fit a fixed-height
+    // viewport box), booking bar along the bottom of the cell with the guest name truncated
+    // to whatever width is actually available instead of hidden or bleeding into neighbors.
+    const mobileCell = isMobile
 
     return (
-      <div key={`${mYear}-${mMonth}`} className={`bg-card border border-border rounded-2xl overflow-hidden shadow-[var(--shadow-card)] ${useFlexFill ? 'flex flex-col min-h-0' : ''}`}>
+      <div key={`${mYear}-${mMonth}`} className={`rounded-2xl overflow-hidden ${mobileCell ? 'bg-transparent' : 'bg-card border border-border shadow-[var(--shadow-card)]'} ${useFlexFill ? 'flex flex-col min-h-0' : ''}`}>
         {/* Month header */}
         <div className={`flex items-center justify-between border-b border-border flex-shrink-0 ${effectiveCount > 6 ? 'px-2 py-1' : compact ? 'px-3 py-1.5' : 'px-4 py-3'}`}>
           <h3
@@ -1229,33 +1231,42 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
                 const isYear = effectiveCount > 6
                 const isTurnover = isBooked && !!info!.turnoverGuestName
 
+                const dayNumberColor = isToday ? 'text-white'
+                  : isSelected ? (isDark ? 'text-amber-300' : 'text-amber-900')
+                  : isBlocked && !isBooked ? `line-through ${isDark ? 'text-slate-500' : 'text-slate-400'}`
+                  : (isDark ? 'text-slate-100' : 'text-gray-700')
+                const priceColor = isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400')
+                  : hasCustomPrice ? (isDark ? 'text-emerald-300' : 'text-emerald-600')
+                  : (isDark ? 'text-slate-300' : 'text-gray-700')
+
                 return (
                   <div
                     key={di}
                     onClick={() => handleDayClick(dateStr, info)}
                     onMouseEnter={() => { if (!info && abkAnchor && !abkRange) setAbkHover(dateStr) }}
-                    className={`flex flex-col min-h-0 relative select-none transition-colors overflow-hidden ${readOnly ? 'cursor-default' : 'cursor-pointer'} ${isYear ? 'p-0.5' : denseCell ? 'px-1 pt-1 pb-0.5' : 'px-2 pt-2 pb-1'} ${cellBg}`}
+                    className={`flex flex-col min-h-0 relative select-none transition-colors overflow-hidden ${readOnly ? 'cursor-default' : 'cursor-pointer'} ${isYear ? 'p-0.5' : compact ? 'px-1 pt-1 pb-0.5' : mobileCell ? 'px-1.5 pt-1.5 pb-1' : 'px-2 pt-2 pb-1'} ${cellBg}`}
                   >
 
                     {/* Booking bar — Airbnb-style: a solid pill anchored to the bottom of the cell,
                         continuous edge-to-edge across the days it spans, rounded only at the
                         booking's true start/end. В день стыковки (выезд+заезд в один день)
                         бар делится пополам, чтобы две брони не сливались в одну.
-                        On real phones (tiny) the bar is text-free — too narrow for any label
-                        without overlapping neighboring cells — tap the day for the popup instead. */}
+                        On phones/tablets the guest name is always truncated to whatever width
+                        the bar actually has (like Airbnb's own calendar) instead of bleeding
+                        into neighboring cells. */}
                     {isBooked && !isSelected && (
                       isTurnover ? (
-                        <div className={`absolute left-0 right-0 flex pointer-events-none ${isYear ? 'bottom-0.5 h-1.5' : denseCell ? 'bottom-1 h-5' : 'bottom-1.5 h-8'}`}>
+                        <div className={`absolute left-0 right-0 flex pointer-events-none ${isYear ? 'bottom-0.5 h-1.5' : compact ? 'bottom-1 h-5' : mobileCell ? 'bottom-1 h-6' : 'bottom-1.5 h-8'}`}>
                           <div className="flex-1 rounded-l-full mr-px" style={{ backgroundColor: aptColor }} />
                           <div className="flex-1 rounded-r-full ml-px flex items-center pl-1.5 overflow-hidden" style={{ backgroundColor: tintHex(aptColor, 0.3) }}>
-                            {!isYear && !denseCell && (
+                            {!isYear && !compact && (
                               <span className="text-[10px] font-bold text-white truncate">→ {info!.turnoverGuestName}</span>
                             )}
                           </div>
                         </div>
                       ) : (
                         <div
-                          className={`absolute flex items-center pointer-events-none ${!tiny && info!.isStart ? 'z-10 overflow-visible' : 'overflow-hidden'} ${isYear ? 'bottom-0.5 h-1.5' : denseCell ? 'bottom-1 h-5' : 'bottom-1.5 h-8'} ${
+                          className={`absolute flex items-center pointer-events-none ${!compact && !mobileCell && info!.isStart ? 'z-10 overflow-visible' : 'overflow-hidden'} ${isYear ? 'bottom-0.5 h-1.5' : compact ? 'bottom-1 h-5' : mobileCell ? 'bottom-1 h-6' : 'bottom-1.5 h-8'} ${
                             info!.isStart && info!.isEnd ? 'left-0.5 right-0.5 rounded-full'
                             : info!.isStart ? 'left-0.5 right-0 rounded-l-full'
                             : info!.isEnd ? 'left-0 right-0.5 rounded-r-full'
@@ -1263,21 +1274,21 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
                           }`}
                           style={{ backgroundColor: aptColor }}
                         >
-                          {info!.isStart && !isYear && !tiny && (
-                            <div className="flex items-center gap-1 px-1.5">
-                              {!denseCell && (
+                          {info!.isStart && !isYear && (
+                            <div className="flex items-center gap-1 px-1.5 min-w-0">
+                              {!compact && !mobileCell && (
                                 <span className="w-4 h-4 rounded-full bg-white/90 flex items-center justify-center text-[9px] font-bold text-gray-800 flex-shrink-0">
                                   {(info!.guestName || '?').trim().charAt(0).toUpperCase()}
                                 </span>
                               )}
-                              <span className={`${denseCell ? 'text-[9px]' : 'text-[11px]'} font-bold text-white whitespace-nowrap`}>
-                                {denseCell
+                              <span className={`${compact ? 'text-[9px]' : mobileCell ? 'text-[10px]' : 'text-[11px]'} font-bold text-white whitespace-nowrap truncate`}>
+                                {compact || mobileCell
                                   ? info!.guestName
                                   : `${info!.guestName}, ${info!.guestsCount} ${info!.guestsCount === 1 ? 'гость' : info!.guestsCount < 5 ? 'гостя' : 'гостей'}, ${info!.nights} ${info!.nights === 1 ? 'ночь' : info!.nights < 5 ? 'ночи' : 'ночей'}`}
                               </span>
                             </div>
                           )}
-                          {info!.isEnd && !info!.isStart && !isYear && !denseCell && info!.totalAmount != null && (
+                          {info!.isEnd && !info!.isStart && !isYear && !compact && !mobileCell && info!.totalAmount != null && (
                             <span className="ml-auto mr-2 text-[11px] font-bold text-white flex-shrink-0">
                               {fmtEur(info!.totalAmount)}
                             </span>
@@ -1288,31 +1299,38 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
 
                     <div className="relative flex flex-col min-h-0 flex-1">
                     {/* Day number — top left */}
-                    <div className={`rounded-full flex items-center justify-center flex-shrink-0 ${isYear ? 'w-3.5 h-3.5' : denseCell ? 'w-5 h-5' : 'w-6 h-6'} ${isToday ? 'bg-primary' : ''}`}>
-                      <span
-                        className={`font-bold leading-none ${isYear ? 'text-[8px]' : denseCell ? 'text-xs' : 'text-sm'} ${
-                          isToday ? 'text-white'
-                          : isSelected ? (isDark ? 'text-amber-300' : 'text-amber-900')
-                          : isBlocked && !isBooked ? `line-through ${isDark ? 'text-slate-500' : 'text-slate-400'}`
-                          : (isDark ? 'text-slate-100' : 'text-gray-700')
-                        }`}
-                      >
+                    <div className={`rounded-full flex items-center justify-center flex-shrink-0 ${isYear ? 'w-3.5 h-3.5' : compact ? 'w-5 h-5' : 'w-6 h-6'} ${isToday ? 'bg-primary' : ''}`}>
+                      <span className={`font-bold leading-none ${isYear ? 'text-[8px]' : compact ? 'text-xs' : 'text-sm'} ${dayNumberColor}`}>
                         {day}
                       </span>
                     </div>
 
-                    {/* Lock icon */}
-                    {isBlocked && !isBooked && !isSelected && (
-                      <Lock size={isYear ? 7 : denseCell ? 8 : 10} className={`mt-0.5 flex-shrink-0 ${isDark ? 'text-slate-500' : 'text-slate-400'}`} />
-                    )}
+                    {mobileCell ? (
+                      /* Phones: price sits right under the day number (Airbnb layout) and is
+                         visible even on booked days — the booking bar lives further down at
+                         the bottom of the cell so the two never overlap. */
+                      price !== undefined && !isSelected && (
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <span className={`text-[11px] font-bold leading-none truncate ${priceColor}`}>{price} €</span>
+                          {isBlocked && !isBooked && (
+                            <Lock size={10} className={`flex-shrink-0 ${isDark ? 'text-slate-500' : 'text-slate-400'}`} />
+                          )}
+                        </div>
+                      )
+                    ) : (
+                      <>
+                        {/* Lock icon */}
+                        {isBlocked && !isBooked && !isSelected && (
+                          <Lock size={isYear ? 7 : compact ? 8 : 10} className={`mt-0.5 flex-shrink-0 ${isDark ? 'text-slate-500' : 'text-slate-400'}`} />
+                        )}
 
-                    {/* Price — bottom right, free/blocked days only (booked days show info in the bar instead) */}
-                    {price !== undefined && !isSelected && !isBooked && (
-                      <span
-                        className={`mt-auto self-end leading-none truncate max-w-full ${isYear ? 'text-[8px]' : denseCell ? 'text-[9px]' : 'text-xs'} font-bold ${isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400') : (hasCustomPrice ? (isDark ? 'text-emerald-300' : 'text-emerald-600') : (isDark ? 'text-slate-300' : 'text-gray-700'))}`}
-                      >
-                        {price} €
-                      </span>
+                        {/* Price — bottom right, free/blocked days only (booked days show info in the bar instead) */}
+                        {price !== undefined && !isSelected && !isBooked && (
+                          <span className={`mt-auto self-end leading-none truncate max-w-full ${isYear ? 'text-[8px]' : compact ? 'text-[9px]' : 'text-xs'} font-bold ${priceColor}`}>
+                            {price} €
+                          </span>
+                        )}
+                      </>
                     )}
                     </div>
                   </div>
