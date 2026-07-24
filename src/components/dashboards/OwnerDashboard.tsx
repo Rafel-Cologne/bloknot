@@ -121,11 +121,25 @@ type BookingRow = {
   cleaning_tasks: CleaningTask[]
 }
 
+// Одна строка банковской выписки, распознанная агентом — хозяин разбирает список
+// в интерактивном окне (галочка/правка/удаление) перед тем как строки попадут в Расходы.
+export type BankStatementLineItem = {
+  date: string | null
+  description: string | null
+  amount: number | null
+  is_credit: boolean
+  provider: string | null
+  suggested_category: string | null
+  suggested_apartment_id: string | null
+  suggested_split: boolean
+  suggested_include: boolean
+}
+
 // Событие от почтового агента, ожидающее подтверждения хозяином (колокольчик).
 // Пока хозяин не нажал «Обновить», данные нигде в Заезды/Расходы не попадают.
 type AgentPendingEvent = {
   id: string
-  kind: 'booking_new' | 'booking_update' | 'booking_cancel' | 'expense'
+  kind: 'booking_new' | 'booking_update' | 'booking_cancel' | 'expense' | 'bank_statement'
   status: 'pending' | 'applied' | 'dismissed'
   seen: boolean
   apartment_id: string | null
@@ -151,6 +165,9 @@ type AgentPendingEvent = {
     period_label?: string | null
     provider?: string | null
     description?: string | null
+    filename?: string | null
+    statement_date_range?: string | null
+    line_items?: BankStatementLineItem[]
   }
 }
 
@@ -7968,6 +7985,176 @@ function SettingsSection({ userId }: { userId: string }) {
   )
 }
 
+// ─── Bank statement review modal ──────────────────────────────────────────────
+// Хозяин разбирает распознанные строки банковской выписки: снимает галочку с личных
+// покупок (Mercadona и т.п.), правит сумму/категорию/квартиру, при желании делит строку
+// пополам между обеими квартирами — и только после этого строки уходят в Расходы.
+
+type StatementRow = {
+  id: string
+  date: string
+  description: string
+  amount: number
+  provider: string
+  category: string
+  apartment_id: string
+  include: boolean
+}
+
+function lineItemsToRows(items: BankStatementLineItem[], apartments: Apartment[]): StatementRow[] {
+  return items
+    .filter(li => !li.is_credit) // выплаты Airbnb/Booking уже учтены через письма о бронях — сюда попадают только списания
+    .map((li, i) => ({
+      id: `${i}`,
+      date: li.date ?? new Date().toISOString().slice(0, 10),
+      description: li.description ?? '',
+      amount: li.amount ?? 0,
+      provider: li.provider ?? '',
+      category: li.suggested_category ?? 'other',
+      apartment_id: li.suggested_apartment_id ?? (li.suggested_split ? '' : (apartments[0]?.id ?? '')),
+      include: li.suggested_include,
+    }))
+}
+
+function BankStatementReviewModal({
+  event, apartments, onClose,
+}: { event: AgentPendingEvent; apartments: Apartment[]; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [rows, setRows] = useState<StatementRow[]>(() => lineItemsToRows(event.payload.line_items ?? [], apartments))
+
+  const updateRow = <K extends keyof StatementRow>(id: string, key: K, value: StatementRow[K]) =>
+    setRows(rs => rs.map(r => r.id === id ? { ...r, [key]: value } : r))
+
+  const removeRow = (id: string) => setRows(rs => rs.filter(r => r.id !== id))
+
+  const splitRow = (id: string) => {
+    if (apartments.length < 2) return
+    setRows(rs => rs.flatMap(r => {
+      if (r.id !== id) return [r]
+      const half = Math.round((r.amount / 2) * 100) / 100
+      return [
+        { ...r, id: `${r.id}a`, amount: half, apartment_id: apartments[0].id },
+        { ...r, id: `${r.id}b`, amount: half, apartment_id: apartments[1].id },
+      ]
+    }))
+  }
+
+  const includedRows = rows.filter(r => r.include)
+  const totalAmount = includedRows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
+  const hasInvalidIncluded = includedRows.some(r => !r.apartment_id || !r.category || !r.amount)
+
+  const applyMutation = useMutation({
+    mutationFn: async () => {
+      const p_items = includedRows.map(r => ({
+        apartment_id: r.apartment_id,
+        category: r.category,
+        amount: r.amount,
+        expense_date: r.date,
+        provider: r.provider || null,
+        description: r.description || null,
+      }))
+      const { error } = await supabase.rpc('apply_bank_statement_event', { p_event_id: event.id, p_items })
+      if (error) throw error
+      await supabase.rpc('mark_pending_events_seen', { p_ids: [event.id] })
+    },
+    onSuccess: () => { qc.invalidateQueries(); onClose() },
+  })
+
+  return (
+    <>
+      <motion.div className="fixed inset-0 bg-black/40 z-[60]"
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        onClick={onClose} />
+      <motion.div className="fixed inset-x-0 bottom-0 md:inset-0 md:m-auto md:max-w-2xl md:h-fit md:max-h-[85vh] z-[60] bg-card rounded-t-3xl md:rounded-2xl p-4 md:p-6 shadow-[var(--shadow-card-hover)] overflow-y-auto flex flex-col"
+        style={{ maxHeight: '85vh' }}
+        initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ duration: 0.2 }}>
+        <div className="flex items-center justify-between mb-1 flex-shrink-0">
+          <h3 className="text-base font-semibold flex items-center gap-2">
+            <FileSpreadsheet size={16} /> {event.payload.filename ?? 'Банковская выписка'}
+          </h3>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground">
+            <X size={18} />
+          </button>
+        </div>
+        {event.payload.statement_date_range && (
+          <p className="text-xs text-muted-foreground mb-3">{event.payload.statement_date_range}</p>
+        )}
+
+        <div className="flex-1 overflow-y-auto -mx-1 px-1 space-y-2 min-h-0">
+          {rows.length === 0 && (
+            <p className="text-sm text-muted-foreground py-8 text-center">Нет строк для добавления</p>
+          )}
+          {rows.map(r => (
+            <div key={r.id} className={`rounded-xl border p-3 ${r.include ? 'border-border' : 'border-border/50 opacity-50'}`}>
+              <div className="flex items-start gap-2.5">
+                <button
+                  onClick={() => updateRow(r.id, 'include', !r.include)}
+                  className={`mt-0.5 w-5 h-5 rounded-md border flex-shrink-0 flex items-center justify-center transition-colors ${
+                    r.include ? 'bg-primary border-primary text-primary-foreground' : 'border-border'
+                  }`}>
+                  {r.include && <Check size={13} />}
+                </button>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate" title={r.description}>{r.description || 'Без описания'}</p>
+                  <p className="text-xs text-muted-foreground">{r.date}{r.provider ? ` · ${r.provider}` : ''}</p>
+
+                  {r.include && (
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      <input type="number" step="0.01" value={r.amount}
+                        onChange={e => updateRow(r.id, 'amount', parseFloat(e.target.value) || 0)}
+                        className={inputCls} placeholder="Сумма €" />
+                      <select value={r.category} onChange={e => updateRow(r.id, 'category', e.target.value)} className={inputCls}>
+                        {Object.entries(EXP_CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                      </select>
+                      <select value={r.apartment_id} onChange={e => updateRow(r.id, 'apartment_id', e.target.value)} className={inputCls}>
+                        <option value="">Выберите квартиру</option>
+                        {apartments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
+                      </select>
+                      <div className="flex gap-1.5">
+                        {apartments.length >= 2 && (
+                          <button type="button" onClick={() => splitRow(r.id)}
+                            className="flex-1 rounded-xl px-2 py-2 text-xs bg-muted text-muted-foreground hover:bg-muted/70">
+                            50/50 на обе
+                          </button>
+                        )}
+                        <button type="button" onClick={() => removeRow(r.id)}
+                          className="rounded-xl px-2.5 py-2 text-xs bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-950/30">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex-shrink-0 pt-3 mt-2 border-t border-border">
+          <p className="text-sm text-muted-foreground mb-2">
+            Будет добавлено: <span className="font-semibold text-foreground">{includedRows.length}</span> расход{includedRows.length === 1 ? '' : includedRows.length >= 2 && includedRows.length <= 4 ? 'а' : 'ов'} на сумму{' '}
+            <span className="font-semibold text-foreground">{fmtEur(totalAmount)}</span>
+          </p>
+          {hasInvalidIncluded && (
+            <p className="text-xs text-red-600 mb-2">Заполните квартиру, категорию и сумму для всех отмеченных строк</p>
+          )}
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2.5 rounded-xl text-sm bg-muted text-muted-foreground">
+              Отмена
+            </button>
+            <button
+              onClick={() => applyMutation.mutate()}
+              disabled={applyMutation.isPending || includedRows.length === 0 || hasInvalidIncluded}
+              className="flex-1 btn-primary rounded-xl px-4 py-2.5 text-sm disabled:opacity-50">
+              {applyMutation.isPending ? 'Добавляю…' : `Добавить ${includedRows.length}`}
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </>
+  )
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 const NAV_ITEMS: Array<{ id: Section; label: string; icon: React.ReactNode; adminOnly?: boolean }> = [
@@ -7999,6 +8186,7 @@ export default function OwnerDashboard() {
   const [moreOpen, setMoreOpen] = useState(false)
   const [saasMenuOpen, setSaasMenuOpen] = useState(false)
   const [showAgentEvents, setShowAgentEvents] = useState(false)
+  const [reviewingStatementEvent, setReviewingStatementEvent] = useState<AgentPendingEvent | null>(null)
 
   const { data: apartments = [] } = useQuery({
     queryKey: ['owner-apartments', user?.id],
@@ -8553,8 +8741,11 @@ export default function OwnerDashboard() {
                   const isCancel = ev.kind === 'booking_cancel'
                   const isPending = ev.status === 'pending'
 
+                  const isStatement = ev.kind === 'bank_statement'
                   const titleFor = (prefix: string) => `${prefix}${p.apartment_title ? ` — ${p.apartment_title}` : ''}`
-                  const title = ev.kind === 'expense'
+                  const title = isStatement
+                    ? `📄 Банковская выписка`
+                    : ev.kind === 'expense'
                     ? titleFor(isPending ? '🧾 Новый счёт' : '🧾 Счёт добавлен агентом')
                     : ev.kind === 'booking_new'
                     ? titleFor(isPending ? '🛎️ Новая бронь' : '✅ Бронь добавлена агентом')
@@ -8562,11 +8753,21 @@ export default function OwnerDashboard() {
                     ? titleFor(isPending ? '🔄 Обновление по брони' : '🔄 Бронь обновлена агентом')
                     : titleFor(isPending ? '❌ Гость отменил бронь' : '❌ Бронь отменена агентом')
 
+                  const statementDebitItems = (p.line_items ?? []).filter(li => !li.is_credit)
+                  const statementSuggestedCount = statementDebitItems.filter(li => li.suggested_include).length
+
                   return (
                     <div key={ev.id} className={`rounded-xl border p-3.5 ${isCancel ? 'border-red-200 bg-red-50/50' : 'border-border'} ${!isPending ? 'opacity-80' : ''}`}>
                       <p className="text-sm font-medium mb-1">{title}</p>
 
-                      {ev.kind === 'expense' ? (
+                      {isStatement ? (
+                        <>
+                          <p className="text-sm text-muted-foreground truncate">{p.filename ?? 'Банковская выписка'}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Найдено {statementDebitItems.length} строк, отмечено {statementSuggestedCount}
+                          </p>
+                        </>
+                      ) : ev.kind === 'expense' ? (
                         <>
                           <p className="text-sm text-muted-foreground">
                             {p.provider ?? 'Поставщик не указан'}{p.category ? ` · ${p.category}` : ''}
@@ -8594,10 +8795,10 @@ export default function OwnerDashboard() {
                       {isPending ? (
                         <div className="flex gap-2 mt-3">
                           <button
-                            onClick={() => applyAgentEvent.mutate(ev.id)}
+                            onClick={() => isStatement ? setReviewingStatementEvent(ev) : applyAgentEvent.mutate(ev.id)}
                             disabled={isApplying || isDismissing}
                             className={`flex-1 rounded-xl px-3 py-2 text-sm disabled:opacity-50 ${isCancel ? 'bg-red-600 text-white hover:bg-red-700' : 'btn-primary'}`}>
-                            {isApplying ? 'Обновляю…' : isCancel ? 'Подтвердить отмену' : 'Обновить'}
+                            {isStatement ? 'Посмотреть и добавить' : isApplying ? 'Обновляю…' : isCancel ? 'Подтвердить отмену' : 'Обновить'}
                           </button>
                           <button
                             onClick={() => dismissAgentEvent.mutate(ev.id)}
@@ -8617,6 +8818,13 @@ export default function OwnerDashboard() {
               </div>
             </motion.div>
           </>
+        )}
+        {reviewingStatementEvent && (
+          <BankStatementReviewModal
+            event={reviewingStatementEvent}
+            apartments={apartments}
+            onClose={() => setReviewingStatementEvent(null)}
+          />
         )}
       </AnimatePresence>
     </div>
