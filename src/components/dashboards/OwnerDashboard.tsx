@@ -2053,8 +2053,10 @@ function DashboardOverview({
     ...tomorrowCheckIns.map(b => ({ b, kind: 'checkin' as const, when: 'tomorrow' as const })),
     ...soonCheckIns.filter(b => b.start_date > tomorrowStr).map(b => ({ b, kind: 'checkin' as const, when: 'soon' as const })),
   ]
-  const totalEventsCount = eventItems.length
-  const visibleEvents = eventItems.slice(0, 3)
+  // Real total shown in the "Ближайшие заезды" modal (upcoming bookings, incl. ones in progress) —
+  // used for the footer count so it always matches what actually opens on click.
+  const totalEventsCount = upcoming.length
+  const visibleEvents = eventItems.slice(0, 2)
   const isEventsClickable = totalEventsCount >= 2
 
   return (
@@ -2514,7 +2516,7 @@ function DashboardOverview({
           </div>
           {totalEventsCount > 0 && (
             <div className="flex-shrink-0 flex items-center justify-end gap-1 px-4 py-2.5 text-xs font-semibold text-primary border-t border-border">
-              {totalEventsCount > visibleEvents.length ? `Ещё ${totalEventsCount - visibleEvents.length} · Все события →` : 'Все события →'}
+              Все события ({totalEventsCount}) →
             </div>
           )}
         </div>
