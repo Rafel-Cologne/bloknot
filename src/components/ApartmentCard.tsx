@@ -13,6 +13,7 @@ type Apartment = Database['public']['Tables']['apartments']['Row'] & {
 interface Props {
   apartment: Apartment
   index?: number
+  isOccupied?: boolean
 }
 
 function calcAvgPrice(apartment: Apartment): number {
@@ -26,7 +27,7 @@ function calcAvgPrice(apartment: Apartment): number {
   return Math.round(total / 7)
 }
 
-export function ApartmentCard({ apartment, index = 0 }: Props) {
+export function ApartmentCard({ apartment, index = 0, isOccupied = false }: Props) {
   const { t } = useTranslation()
 
   const images = [...apartment.apartment_images].sort((a, b) => a.order_index - b.order_index)
@@ -61,8 +62,10 @@ export function ApartmentCard({ apartment, index = 0 }: Props) {
           <div>
             <div className="flex items-start justify-between gap-2">
               <h3 className="font-semibold text-foreground text-base leading-snug line-clamp-1">{apartment.title}</h3>
-              <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-lg bg-green-100 text-green-700 font-medium">
-                Свободно
+              <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-lg font-medium ${
+                isOccupied ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+              }`}>
+                {isOccupied ? t('dashboard.statusBlocked') : t('dashboard.statusFree')}
               </span>
             </div>
 

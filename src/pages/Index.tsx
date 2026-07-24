@@ -16,9 +16,26 @@ async function fetchApartments() {
   return data
 }
 
+// Какие из публичных квартир заняты ПРЯМО СЕЙЧАС — по реальным бронированиям (не по
+// blocked_dates: эта таблица используется только для ручной блокировки хозяином и не
+// заполняется автоматически при подтверждении брони, поэтому не отражает факт заезда).
+async function fetchOccupiedTodayIds(): Promise<Set<string>> {
+  const today = new Date().toISOString().slice(0, 10)
+  const { data, error } = await supabase
+    .from('bookings')
+    .select('apartment_id')
+    .eq('status', 'accepted')
+    .is('deleted_at', null)
+    .lte('start_date', today)
+    .gt('end_date', today)
+  if (error) throw error
+  return new Set((data ?? []).map((b) => b.apartment_id))
+}
+
 export default function Index() {
   const { t } = useTranslation()
   const { data: apartments, isLoading } = useQuery({ queryKey: ['apartments-public'], queryFn: fetchApartments })
+  const { data: occupiedIds } = useQuery({ queryKey: ['apartments-occupied-today'], queryFn: fetchOccupiedTodayIds })
 
   return (
     <div className="flex flex-col">
@@ -64,7 +81,7 @@ export default function Index() {
         ) : apartments && apartments.length > 0 ? (
           <div className="flex flex-col gap-4">
             {apartments.map((apt, i) => (
-              <ApartmentCard key={apt.id} apartment={apt as never} index={i} />
+              <ApartmentCard key={apt.id} apartment={apt as never} index={i} isOccupied={occupiedIds?.has(apt.id) ?? false} />
             ))}
           </div>
         ) : (
