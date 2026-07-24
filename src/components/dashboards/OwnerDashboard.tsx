@@ -2046,6 +2046,17 @@ function DashboardOverview({
   // Tomorrow check-ins
   const tomorrowCheckIns = bookings.filter(b => b.status === 'accepted' && b.start_date === tomorrowStr)
 
+  // Flattened list of upcoming events for the compact "Ближайшие события" card (Row 4)
+  const eventItems = [
+    ...todayCheckIns.map(b => ({ b, kind: 'checkin' as const, when: 'today' as const })),
+    ...todayCheckOuts.map(b => ({ b, kind: 'checkout' as const, when: 'today' as const })),
+    ...tomorrowCheckIns.map(b => ({ b, kind: 'checkin' as const, when: 'tomorrow' as const })),
+    ...soonCheckIns.filter(b => b.start_date > tomorrowStr).map(b => ({ b, kind: 'checkin' as const, when: 'soon' as const })),
+  ]
+  const totalEventsCount = eventItems.length
+  const visibleEvents = eventItems.slice(0, 3)
+  const isEventsClickable = totalEventsCount >= 2
+
   return (
     <div className="flex flex-col gap-3 xl:flex-1 xl:min-h-0 xl:overflow-hidden relative pb-4 xl:pb-0">
 
@@ -2409,103 +2420,13 @@ function DashboardOverview({
           </div>
         </div>
 
-        {/* Ближайшие события */}
+        {/* Текущие заезды */}
         <div className="xl:flex-[2] bg-card border border-border rounded-2xl shadow-sm flex flex-col overflow-hidden min-h-[150px] xl:min-h-0">
-          <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
-            <p className="text-sm font-semibold text-foreground">Ближайшие события</p>
-            <CalendarCheck size={15} className="text-muted-foreground" />
-          </div>
-          <div className="flex-1 overflow-y-auto px-3 pb-2 flex flex-col gap-0.5">
-            {/* Сегодня */}
-            {(todayCheckIns.length > 0 || todayCheckOuts.length > 0) && (
-              <div className="mb-1">
-                <p className="text-[10px] font-semibold text-muted-foreground mb-1 px-1">
-                  Сегодня • {format(today, 'd MMMM', { locale: ru })}
-                </p>
-                <div className="flex flex-col gap-1">
-                  {todayCheckIns.map(b => (
-                    <button key={`ci-${b.id}`} onClick={() => setEventBooking(b)}
-                      className="flex items-center gap-2 px-2 py-1.5 rounded-xl hover:bg-muted/60 transition-colors text-left w-full">
-                      <div className="p-1.5 rounded-lg bg-blue-50 text-blue-600 flex-shrink-0"><CalendarDays size={13} /></div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-foreground truncate">{b.guest_name}</p>
-                        <p className="text-xs text-muted-foreground truncate">{b.apartments.title} · заезд</p>
-                      </div>
-                      <ChevronRight size={13} className="text-muted-foreground flex-shrink-0" />
-                    </button>
-                  ))}
-                  {todayCheckOuts.map(b => (
-                    <button key={`co-${b.id}`} onClick={() => setEventBooking(b)}
-                      className="flex items-center gap-2 px-2 py-1.5 rounded-xl hover:bg-muted/60 transition-colors text-left w-full">
-                      <div className="p-1.5 rounded-lg bg-green-50 text-green-600 flex-shrink-0"><Brush size={13} /></div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-foreground truncate">{b.guest_name}</p>
-                        <p className="text-xs text-muted-foreground truncate">{b.apartments.title} · выезд</p>
-                      </div>
-                      <ChevronRight size={13} className="text-muted-foreground flex-shrink-0" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {/* Завтра */}
-            {tomorrowCheckIns.length > 0 && (
-              <div className="mb-1">
-                <p className="text-[10px] font-semibold text-muted-foreground mb-1 px-1">
-                  Завтра • {format(addDays(today, 1), 'd MMMM', { locale: ru })}
-                </p>
-                <div className="flex flex-col gap-1">
-                  {tomorrowCheckIns.map(b => (
-                    <button key={`t-${b.id}`} onClick={() => setEventBooking(b)}
-                      className="flex items-center gap-2 px-2 py-1.5 rounded-xl hover:bg-muted/60 transition-colors text-left w-full">
-                      <div className="p-1.5 rounded-lg bg-blue-50 text-blue-500 flex-shrink-0"><CalendarDays size={13} /></div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-foreground truncate">{b.guest_name}</p>
-                        <p className="text-xs text-muted-foreground truncate">{b.apartments.title} · заезд</p>
-                      </div>
-                      <ChevronRight size={13} className="text-muted-foreground flex-shrink-0" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {/* Скоро */}
-            {soonCheckIns.filter(b => b.start_date > tomorrowStr).slice(0, 3).map(b => {
-              const daysUntil = Math.round((parseISO(b.start_date).getTime() - today.getTime()) / 86400000)
-              return (
-                <button key={`s-${b.id}`} onClick={() => setEventBooking(b)}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded-xl hover:bg-muted/60 transition-colors text-left w-full">
-                  <div className="p-1.5 rounded-lg bg-secondary text-muted-foreground flex-shrink-0"><CalendarDays size={13} /></div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-foreground truncate">{b.guest_name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{b.apartments.title}</p>
-                  </div>
-                  <span className="text-xs font-medium text-muted-foreground flex-shrink-0">+{daysUntil}д</span>
-                </button>
-              )
-            })}
-            {todayCheckIns.length === 0 && todayCheckOuts.length === 0 &&
-              tomorrowCheckIns.length === 0 && soonCheckIns.length === 0 && (
-              <p className="text-xs text-muted-foreground/40 text-center py-6">Нет ближайших событий</p>
-            )}
-          </div>
-          <button onClick={() => setDashModal('upcoming')}
-            className="flex-shrink-0 flex items-center justify-end gap-1 px-4 py-2.5 text-xs font-semibold text-primary hover:opacity-80 border-t border-border transition-opacity">
-            Все события →
-          </button>
-        </div>
-      </div>
-
-      {/* ── Row 4: Current apartment + Quick actions ── */}
-      <div className="flex flex-col md:flex-row md:items-start gap-3 relative z-10">
-
-        {/* Текущая квартира / квартиры — height follows content (up to 2 stays), no forced scroll */}
-        <div className="md:flex-[3] bg-card border border-border rounded-2xl shadow-sm flex flex-col overflow-hidden min-w-0">
           <p className="text-sm font-semibold px-5 pt-4 pb-0 flex-shrink-0">
-            {currentStaysInfo.length > 1 ? 'Текущие квартиры' : 'Текущая квартира'}
+            {currentStaysInfo.length > 1 ? 'Текущие заезды' : 'Текущий заезд'}
           </p>
           {currentStaysInfo.length > 0 ? (
-            <div className="max-h-[420px] overflow-y-auto flex flex-col gap-3 p-4">
+            <div className="flex-1 overflow-y-auto flex flex-col gap-3 p-4">
               {currentStaysInfo.map(({ booking, apt, image, progress }) => (
                 <div key={booking.id} className="flex gap-3">
                   <div className="w-20 h-20 rounded-xl overflow-hidden flex-shrink-0 bg-secondary">
@@ -2539,14 +2460,67 @@ function DashboardOverview({
               ))}
             </div>
           ) : (
-            <div className="p-6 flex items-center justify-center">
+            <div className="flex-1 p-6 flex items-center justify-center">
               <p className="text-xs text-muted-foreground/40">Нет активных заездов</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Row 4: Upcoming events + Quick actions (symmetric, equal height) ── */}
+      <div className="flex flex-col md:flex-row md:items-stretch gap-3 relative z-10">
+
+        {/* Ближайшие события — compact, no internal scroll; clickable when 2+ events */}
+        <div
+          className={`md:flex-1 bg-card border border-border rounded-2xl shadow-sm flex flex-col overflow-hidden min-h-[150px] min-w-0 ${isEventsClickable ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
+          onClick={isEventsClickable ? () => setDashModal('upcoming') : undefined}
+          role={isEventsClickable ? 'button' : undefined}
+          tabIndex={isEventsClickable ? 0 : undefined}
+          onKeyDown={isEventsClickable ? (e => { if (e.key === 'Enter' || e.key === ' ') setDashModal('upcoming') }) : undefined}>
+          <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
+            <p className="text-sm font-semibold text-foreground">Ближайшие события</p>
+            <CalendarCheck size={15} className="text-muted-foreground" />
+          </div>
+          <div className="flex-1 px-3 pb-2 flex flex-col gap-1 justify-center">
+            {visibleEvents.length === 0 ? (
+              <p className="text-xs text-muted-foreground/40 text-center py-6">Нет ближайших событий</p>
+            ) : (
+              visibleEvents.map(({ b, kind, when }) => {
+                const isCheckout = kind === 'checkout'
+                const daysUntil = when === 'soon'
+                  ? Math.round((parseISO(b.start_date).getTime() - today.getTime()) / 86400000)
+                  : null
+                const subtitle = when === 'today' ? (isCheckout ? 'Сегодня · выезд' : 'Сегодня · заезд')
+                  : when === 'tomorrow' ? 'Завтра · заезд'
+                  : `${b.apartments.title}`
+                return (
+                  <button key={`${kind}-${b.id}`}
+                    onClick={e => { e.stopPropagation(); setEventBooking(b) }}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-xl hover:bg-muted/60 transition-colors text-left w-full">
+                    <div className={`p-1.5 rounded-lg flex-shrink-0 ${isCheckout ? 'bg-green-50 text-green-600' : when === 'soon' ? 'bg-secondary text-muted-foreground' : 'bg-blue-50 text-blue-600'}`}>
+                      {isCheckout ? <Brush size={13} /> : <CalendarDays size={13} />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-foreground truncate">{b.guest_name}</p>
+                      <p className="text-xs text-muted-foreground truncate">{subtitle}</p>
+                    </div>
+                    {daysUntil !== null && (
+                      <span className="text-xs font-medium text-muted-foreground flex-shrink-0">+{daysUntil}д</span>
+                    )}
+                  </button>
+                )
+              })
+            )}
+          </div>
+          {totalEventsCount > 0 && (
+            <div className="flex-shrink-0 flex items-center justify-end gap-1 px-4 py-2.5 text-xs font-semibold text-primary border-t border-border">
+              {totalEventsCount > visibleEvents.length ? `Ещё ${totalEventsCount - visibleEvents.length} · Все события →` : 'Все события →'}
             </div>
           )}
         </div>
 
         {/* Быстрые действия */}
-        <div className="md:flex-[2] bg-card border border-border rounded-2xl shadow-sm flex flex-col overflow-hidden min-h-[100px]">
+        <div className="md:flex-1 bg-card border border-border rounded-2xl shadow-sm flex flex-col overflow-hidden min-h-[150px] min-w-0">
           <p className="text-sm font-semibold px-5 pt-4 pb-3 flex-shrink-0">Быстрые действия</p>
           <div className="flex gap-2 px-4 pb-4 flex-1 items-center justify-around">
             {[
