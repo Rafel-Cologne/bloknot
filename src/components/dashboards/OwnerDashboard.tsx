@@ -3636,7 +3636,7 @@ function AgentRefreshControl() {
     <div className="flex items-center gap-2 flex-wrap">
       <button onClick={handleRun} disabled={running}
         className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border border-border bg-card hover:bg-muted transition-colors disabled:opacity-60 flex-shrink-0">
-        {running ? <RotateCw size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+        <RotateCw size={14} className={running ? 'animate-spin' : ''} />
         <span className="hidden sm:inline">{running ? 'Проверяю почту…' : 'Обновить данные'}</span>
       </button>
       <div className="text-[11px] text-muted-foreground leading-tight">
