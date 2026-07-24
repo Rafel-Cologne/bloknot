@@ -7032,6 +7032,13 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
 
   const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i)
 
+  // Тот же цвет, что и у полосок брони этой квартиры в календаре (CLEANER_APT_COLORS,
+  // по индексу квартиры в списке) — чтобы карточку было сразу видно, какой она квартире.
+  const aptColorOf = (id: string) => {
+    const i = apartments.findIndex(a => a.id === id)
+    return CLEANER_APT_COLORS[i >= 0 ? i % CLEANER_APT_COLORS.length : 0]
+  }
+
   // ── Частные брони: учитывать в налогооблагаемом доходе или нет ───────────────
   // Хозяин может вручную исключить отдельные частные (не Airbnb/Booking) брони из
   // дохода casilla 0102 — например, если гость по факту не заплатил. Дни аренды при
@@ -7296,45 +7303,45 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
         rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome, expByCategory, bookingsCount, missingAmountCount, missingBookings,
         totalCleaningExcluded, totalServiceFeeExcluded, personalValue, personalBookings }) => (
         <div key={apt.id} className="bg-card border border-border rounded-2xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-border bg-muted/30">
+          <div className="px-5 py-4" style={{ backgroundColor: aptColorOf(apt.id) }}>
             <div className="flex items-start justify-between gap-4 flex-wrap">
               <div>
-                <h3 className="font-semibold">{apt.title}</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">{apt.full_address ?? apt.address}</p>
+                <h3 className="font-semibold text-white">{apt.title}</h3>
+                <p className="text-xs text-white/80 mt-0.5">{apt.full_address ?? apt.address}</p>
                 {apt.cadastral_reference && (
-                  <p className="text-xs text-muted-foreground">Ref. catastral: <span className="font-mono">{apt.cadastral_reference}</span></p>
+                  <p className="text-xs text-white/80">Ref. catastral: <span className="font-mono">{apt.cadastral_reference}</span></p>
                 )}
               </div>
               <div className="flex gap-4 text-right">
                 <div>
-                  <p className="text-xs text-muted-foreground">Бронирований</p>
-                  <p className="font-bold">
+                  <p className="text-xs text-white/80">Бронирований</p>
+                  <p className="font-bold text-white">
                     {bookingsCount}
                     {missingAmountCount > 0 && (
                       <button
                         onClick={() => onGoToBooking(missingBookings[0].id)}
                         title={missingBookings.map(b => `${b.guest_name || 'Без имени'} (${format(parseISO(b.start_date), 'd MMM', { locale: ru })})`).join(', ')}
-                        className="text-amber-600 font-normal hover:underline underline-offset-2">
+                        className="text-amber-100 font-normal hover:underline underline-offset-2">
                         {' '}({missingAmountCount} без суммы)
                       </button>
                     )}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Дней аренды</p>
-                  <p className="font-bold">
+                  <p className="text-xs text-white/80">Дней аренды</p>
+                  <p className="font-bold text-white">
                     {totalDays}
                     {personalDays > 0 && (
                       <button
                         onClick={() => onGoToBooking(personalBookings[0].id)}
                         title={personalBookings.map(b => `${b.guest_name || 'Личная поездка'} (${format(parseISO(b.start_date), 'd MMM', { locale: ru })}–${format(parseISO(b.end_date), 'd MMM', { locale: ru })})`).join(', ')}
-                        className="text-slate-500 font-normal hover:underline underline-offset-2">
+                        className="text-white/80 font-normal hover:underline underline-offset-2">
                         {' '}(+{personalDays} личных)
                       </button>
                     )}
                   </p>
                 </div>
-                <div><p className="text-xs text-muted-foreground">% использ.</p><p className="font-bold">{(rentalRatio * 100).toFixed(1)}%</p></div>
+                <div><p className="text-xs text-white/80">% использ.</p><p className="font-bold text-white">{(rentalRatio * 100).toFixed(1)}%</p></div>
               </div>
             </div>
           </div>
