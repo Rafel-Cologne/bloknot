@@ -5852,6 +5852,12 @@ const EXP_CATEGORIES: Record<string, { label: string; icon: React.ReactNode; col
   other:       { label: 'Прочее',        icon: <Receipt size={14} />,      color: 'text-slate-500', bg: 'bg-slate-50 dark:bg-slate-950/30' },
 }
 
+// Категория может быть и произвольным текстом, который хозяин ввёл сам (не из пресетов) —
+// в этом случае показываем его собственное название вместо общего "Прочее".
+function catMeta(key: string): { label: string; icon: React.ReactNode; color: string; bg: string } {
+  return EXP_CATEGORIES[key] ?? { ...EXP_CATEGORIES.other, label: key }
+}
+
 // Стабильные цветные бейджи для квартир — чтобы визуально отличать записи по объекту.
 const APT_BADGE_COLORS = [
   'bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-400',
@@ -5972,6 +5978,9 @@ function AddExpenseModal({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [makeRecurring, setMakeRecurring] = useState(false)
+  // Если редактируем расход, категория которого не входит в пресеты (например "N.8077516647"
+  // сохранили руками как что-то нестандартное) — сразу открываем поле "своя категория".
+  const [customCatMode, setCustomCatMode] = useState<boolean>(() => !!editing && !EXP_CATEGORIES[editing.category])
   const set = <K extends keyof ExpForm>(k: K, v: ExpForm[K]) => setForm(f => ({ ...f, [k]: v }))
 
   const handleSave = async () => {
@@ -6062,19 +6071,36 @@ function AddExpenseModal({
           )}
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Категория *</label>
-            <div className="grid grid-cols-3 gap-1.5">
-              {Object.entries(EXP_CATEGORIES).map(([k, v]) => (
-                <button key={k} type="button" onClick={() => set('category', k)}
-                  className={`flex items-center gap-1.5 px-2 py-2 rounded-xl border text-xs font-medium transition-all ${
-                    form.category === k
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border bg-background text-muted-foreground hover:border-primary/40'
-                  }`}>
-                  <span className={form.category === k ? 'text-primary' : v.color}>{v.icon}</span>
-                  {v.label}
+            {customCatMode ? (
+              <div className="flex gap-1.5">
+                <input value={form.category} onChange={e => set('category', e.target.value)}
+                  placeholder="Например: Кредит за Del Cura" className={expFld} autoFocus />
+                <button type="button"
+                  onClick={() => { setCustomCatMode(false); set('category', 'other') }}
+                  className="flex-shrink-0 px-3 py-2 rounded-xl text-xs font-medium bg-muted text-muted-foreground hover:bg-muted/70">
+                  Из списка
                 </button>
-              ))}
-            </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-1.5">
+                {Object.entries(EXP_CATEGORIES).map(([k, v]) => (
+                  <button key={k} type="button" onClick={() => set('category', k)}
+                    className={`flex items-center gap-1.5 px-2 py-2 rounded-xl border text-xs font-medium transition-all ${
+                      form.category === k
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-background text-muted-foreground hover:border-primary/40'
+                    }`}>
+                    <span className={form.category === k ? 'text-primary' : v.color}>{v.icon}</span>
+                    {v.label}
+                  </button>
+                ))}
+                <button type="button" onClick={() => { setCustomCatMode(true); set('category', '') }}
+                  className="flex items-center gap-1.5 px-2 py-2 rounded-xl border border-dashed border-border text-xs font-medium text-muted-foreground hover:border-primary/40">
+                  <Plus size={14} />
+                  Своя категория
+                </button>
+              </div>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
@@ -6398,7 +6424,7 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
           </div>
           <div className="divide-y divide-amber-100 dark:divide-amber-900">
             {pendingExpenses.map(e => {
-              const cat = EXP_CATEGORIES[e.category] ?? EXP_CATEGORIES.other
+              const cat = catMeta(e.category)
               return (
                 <div key={e.id} className="px-4 py-3 flex items-start gap-3">
                   <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${cat.bg}`}>
@@ -6451,7 +6477,7 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
           </div>
           <div className="divide-y divide-red-100 dark:divide-red-900">
             {missingInvoices.map(mi => {
-              const cat = EXP_CATEGORIES[mi.category] ?? EXP_CATEGORIES.other
+              const cat = catMeta(mi.category)
               return (
                 <div key={`${mi.apartment_id}-${mi.category}-${mi.month}`} className="px-4 py-2.5 flex items-center gap-2.5 text-sm">
                   <span className={cat.color}>{cat.icon}</span>
@@ -6536,7 +6562,7 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
           <p className="text-xs text-muted-foreground">{confirmedExpenses.length} записей</p>
         </div>
         {Object.entries(byCategory).slice(0, 3).map(([cat, amt]) => {
-          const meta = EXP_CATEGORIES[cat] ?? EXP_CATEGORIES.other
+          const meta = catMeta(cat)
           return (
             <div key={cat} className="bg-card border border-border rounded-2xl p-4">
               <p className={`text-xs uppercase tracking-wide font-medium flex items-center gap-1 ${meta.color}`}>
@@ -6558,7 +6584,7 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
           </div>
           <div className="divide-y divide-border">
             {recurringDefs.map(r => {
-              const cat = EXP_CATEGORIES[r.category] ?? EXP_CATEGORIES.other
+              const cat = catMeta(r.category)
               return (
                 <div key={r.id} className="px-4 py-2.5 flex items-center gap-2.5 text-sm">
                   <span className={cat.color}>{cat.icon}</span>
@@ -6594,7 +6620,7 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
         ) : (
           <div className="divide-y divide-border">
             {confirmedExpenses.map(e => {
-              const cat = EXP_CATEGORIES[e.category] ?? EXP_CATEGORIES.other
+              const cat = catMeta(e.category)
               return (
                 <div key={e.id} className="px-4 py-3 flex items-start gap-3">
                   <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${cat.bg}`}>
@@ -7368,7 +7394,7 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
                 Расходы ({(rentalRatio * 100).toFixed(0)}% пропорционально)
               </p>
               {Object.entries(expByCategory).map(([cat, amt]) => {
-                const meta = EXP_CATEGORIES[cat] ?? EXP_CATEGORIES.other
+                const meta = catMeta(cat)
                 const deductible = amt * rentalRatio
                 return (
                   <div key={cat} className="flex justify-between py-1.5 border-b border-border/50 text-sm">
@@ -7741,7 +7767,7 @@ function AdminSection() {
             ) : (
               <div className="divide-y divide-border">
                 {deletedExpenses.map(e => {
-                  const cat = EXP_CATEGORIES[e.category] ?? EXP_CATEGORIES.other
+                  const cat = catMeta(e.category)
                   return (
                     <div key={e.id} className="px-4 py-3 flex items-center gap-3">
                       <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${cat.bg}`}>
