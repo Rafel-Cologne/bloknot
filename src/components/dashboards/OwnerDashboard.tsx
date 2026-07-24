@@ -257,7 +257,10 @@ function detectCountry(phone: string): { flag: string; name: string } | null {
 type BookingForm = {
   apartment_id: string; guest_name: string; guest_phone: string
   start_date: string; end_date: string; guests_count: number
-  source: BookingSourceLocal; cleaning_fee: number; total_amount: number; owner_notes: string
+  // Хранятся как сырой текст (не number), иначе контролируемый инпут "сбрасывает" запятую/точку
+  // сразу после ввода — при каждом keystroke значение округляется до parseFloat-результата,
+  // и десятичный разделитель, набранный последним, тут же стирается при следующем рендере.
+  source: BookingSourceLocal; cleaning_fee: string; total_amount: string; owner_notes: string
 }
 
 function AddBookingModal({
@@ -271,7 +274,7 @@ function AddBookingModal({
     guest_name: '', guest_phone: '',
     start_date: initialDates?.start ?? '',
     end_date: initialDates?.end ?? '',
-    guests_count: 0, source: 'airbnb', cleaning_fee: 60, total_amount: 0, owner_notes: '',
+    guests_count: 0, source: 'airbnb', cleaning_fee: '60', total_amount: '', owner_notes: '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -295,7 +298,7 @@ function AddBookingModal({
         guest_phone: form.guest_phone.trim(), start_date: form.start_date,
         end_date: form.end_date, guests_count: form.guests_count || 1,
         status: 'accepted', source: form.source, owner_notes: form.owner_notes.trim() || null,
-        total_amount: form.total_amount > 0 ? form.total_amount : null,
+        total_amount: parseFloat(form.total_amount.replace(',', '.')) > 0 ? parseFloat(form.total_amount.replace(',', '.')) : null,
       })
       .select('id').single()
 
@@ -309,7 +312,7 @@ function AddBookingModal({
     }
 
     await supabase.from('cleaning_tasks').insert({
-      booking_id: bd.id, cleaner_id: cleanerId, cleaning_fee: form.cleaning_fee,
+      booking_id: bd.id, cleaner_id: cleanerId, cleaning_fee: parseFloat(form.cleaning_fee.replace(',', '.')) || 60,
       payment_method: SOURCE_PAYMENT[form.source] as 'owner_transfer' | 'guest_cash',
       payment_status: 'pending', status: 'pending',
     })
@@ -407,15 +410,15 @@ function AddBookingModal({
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Аренда, €</label>
               <input type="text" inputMode="decimal"
-                value={form.total_amount === 0 ? '' : String(form.total_amount)}
-                onChange={e => set('total_amount', parseFloat(e.target.value.replace(',', '.')) || 0)}
+                value={form.total_amount}
+                onChange={e => set('total_amount', e.target.value)}
                 placeholder="0" className={inputCls} />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Уборка, €</label>
               <input type="text" inputMode="decimal"
-                value={form.cleaning_fee === 0 ? '' : String(form.cleaning_fee)}
-                onChange={e => set('cleaning_fee', parseFloat(e.target.value.replace(',', '.')) || 0)}
+                value={form.cleaning_fee}
+                onChange={e => set('cleaning_fee', e.target.value)}
                 placeholder="0" className={inputCls} />
             </div>
           </div>
@@ -7204,9 +7207,6 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
   const grandNet = aptData.reduce((s, d) => s + d.netIncome, 0)
   const grandMissingAmount = aptData.reduce((s, d) => s + d.missingAmountCount, 0)
   const grandMissingBookings = aptData.flatMap(d => d.missingBookings)
-  const grandPersonalDays = aptData.reduce((s, d) => s + d.personalDays, 0)
-  const grandPersonalValue = aptData.reduce((s, d) => s + d.personalValue, 0)
-  const grandPersonalBookings = aptData.flatMap(d => d.personalBookings)
 
   const handlePrint = () => window.print()
 
@@ -7282,30 +7282,6 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
               <button key={b.id} onClick={() => onGoToBooking(b.id)}
                 className="flex items-center gap-1.5 text-left text-amber-900 dark:text-amber-200 hover:underline underline-offset-2 w-fit">
                 <span className="font-medium">{b.guest_name || 'Без имени'}</span>
-                <span className="opacity-70">
-                  · {b.apartments.title} · {format(parseISO(b.start_date), 'd MMM', { locale: ru })}–{format(parseISO(b.end_date), 'd MMM yyyy', { locale: ru })}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {grandPersonalDays > 0 && (
-        <div className="flex flex-col gap-2 rounded-2xl border border-slate-300 bg-slate-50 dark:bg-slate-900/30 px-4 py-3 text-sm text-slate-700 dark:text-slate-300">
-          <div className="flex items-start gap-2">
-            <Home size={16} className="mt-0.5 flex-shrink-0" />
-            <span>
-              Личное использование за {year} год: {grandPersonalBookings.length} {grandPersonalBookings.length === 1 ? 'поездка' : 'поездки/поездок'},
-              {' '}{grandPersonalDays} {grandPersonalDays === 1 ? 'день' : 'дней'} (справочно ~{fmtEur(grandPersonalValue)}) —
-              {' '}эти дни не приносят дохода и <b>не входят в налогооблагаемую базу</b> (casilla 0102) выше. Учтены только для сдачи в аренду.
-            </span>
-          </div>
-          <div className="flex flex-col gap-1 pl-6">
-            {grandPersonalBookings.map(b => (
-              <button key={b.id} onClick={() => onGoToBooking(b.id)}
-                className="flex items-center gap-1.5 text-left hover:underline underline-offset-2 w-fit">
-                <span className="font-medium">{b.guest_name || 'Личная поездка'}</span>
                 <span className="opacity-70">
                   · {b.apartments.title} · {format(parseISO(b.start_date), 'd MMM', { locale: ru })}–{format(parseISO(b.end_date), 'd MMM yyyy', { locale: ru })}
                 </span>
