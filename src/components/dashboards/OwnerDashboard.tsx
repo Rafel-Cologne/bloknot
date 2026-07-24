@@ -112,6 +112,39 @@ type BookingRow = {
   cleaning_tasks: CleaningTask[]
 }
 
+// Событие от почтового агента, ожидающее подтверждения хозяином (колокольчик).
+// Пока хозяин не нажал «Обновить», данные нигде в Заезды/Расходы не попадают.
+type AgentPendingEvent = {
+  id: string
+  kind: 'booking_new' | 'booking_update' | 'booking_cancel' | 'expense'
+  status: 'pending' | 'applied' | 'dismissed'
+  seen: boolean
+  apartment_id: string | null
+  existing_booking_id: string | null
+  source_message_id: string | null
+  created_at: string
+  payload: {
+    apartment_title?: string | null
+    guest_name?: string | null
+    start_date?: string | null
+    end_date?: string | null
+    guests_count?: number | null
+    source?: string | null
+    total_amount?: number | null
+    cleaning_fee_amount?: number | null
+    host_service_fee_amount?: number | null
+    external_booking_id?: string | null
+    category?: string | null
+    amount?: number | null
+    invoice_date?: string | null
+    period_start?: string | null
+    period_end?: string | null
+    period_label?: string | null
+    provider?: string | null
+    description?: string | null
+  }
+}
+
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -7612,9 +7645,17 @@ function SettingsSection({ userId }: { userId: string }) {
   const { data: profileData } = useQuery({
     queryKey: ['profile', userId],
     queryFn: async () => {
-      const { data } = await supabase.from('profiles').select('name').eq('id', userId).maybeSingle()
+      const { data } = await supabase.from('profiles').select('name, agent_auto_apply').eq('id', userId).maybeSingle()
       return data
     },
+  })
+
+  const setAutoApply = useMutation({
+    mutationFn: async (value: boolean) => {
+      const { error } = await supabase.from('profiles').update({ agent_auto_apply: value } as never).eq('id', userId)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['profile', userId] }),
   })
 
   useEffect(() => {
@@ -7689,6 +7730,33 @@ function SettingsSection({ userId }: { userId: string }) {
             className="btn-primary rounded-xl px-4 py-2 text-sm disabled:opacity-50 flex-shrink-0"
           >
             {nameSaving ? 'Сохраняем…' : nameSaved ? '✓ Сохранено' : 'Сохранить'}
+          </button>
+        </div>
+      </div>
+
+      {/* Почтовый агент — авто-применение */}
+      <div className="bg-card border border-border rounded-2xl p-6 shadow-[var(--shadow-card)] mb-6">
+        <h3 className="font-semibold mb-1 flex items-center gap-2"><Bot size={16} /> Почтовый агент</h3>
+        <p className="text-sm text-muted-foreground mb-5">
+          Агент находит в почте новые брони, отмены и счета за коммуналку. По умолчанию каждое найденное
+          изменение ждёт вашего подтверждения в колокольчике (кнопки «Обновить»/«Отклонить»).
+        </p>
+        <div className="flex items-center justify-between gap-4 max-w-lg">
+          <div>
+            <p className="text-sm font-medium">Обновлять автоматически</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Новые брони, отмены и счета применяются сразу без подтверждения. Колокольчик всё равно
+              загорится красным и покажет, что именно изменилось.
+            </p>
+          </div>
+          <button
+            onClick={() => setAutoApply.mutate(!profileData?.agent_auto_apply)}
+            disabled={setAutoApply.isPending}
+            role="switch"
+            aria-checked={!!profileData?.agent_auto_apply}
+            className={`relative flex-shrink-0 w-11 h-6 rounded-full transition-colors disabled:opacity-50 ${profileData?.agent_auto_apply ? 'bg-primary' : 'bg-muted'}`}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${profileData?.agent_auto_apply ? 'translate-x-5' : ''}`} />
           </button>
         </div>
       </div>
@@ -7933,6 +8001,7 @@ export default function OwnerDashboard() {
   const [calSelectedApt, setCalSelectedApt] = useState(() => getLastAptId())
   const isMobile = useIsMobile()
   const [moreOpen, setMoreOpen] = useState(false)
+  const [showAgentEvents, setShowAgentEvents] = useState(false)
 
   const { data: apartments = [] } = useQuery({
     queryKey: ['owner-apartments', user?.id],
@@ -7987,6 +8056,61 @@ export default function OwnerDashboard() {
     enabled: !!user,
     refetchInterval: 60_000,
   })
+  // Новые события от почтового агента (новые/обновлённые/отменённые брони, счета).
+  // Если "Обновлять автоматически" выключено — статус 'pending' и ждёт кнопки в колокольчике.
+  // Если включено — агент уже применил изменение сам, но пока не показал его хозяину (seen=false).
+  const { data: agentPendingEvents = [] } = useQuery({
+    queryKey: ['agent-pending-events', user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('agent_pending_events')
+        .select('*')
+        .eq('owner_id', user!.id)
+        .eq('seen', false)
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      return data as AgentPendingEvent[]
+    },
+    enabled: !!user,
+    refetchInterval: 60_000,
+  })
+  const agentEventsCount = agentPendingEvents.length
+
+  const applyAgentEvent = useMutation({
+    mutationFn: async (eventId: string) => {
+      const { error } = await supabase.rpc('apply_pending_event', { p_event_id: eventId })
+      if (error) throw error
+      // Хозяин сам только что подтвердил — сразу помечаем прочитанным, не нужно показывать повторно
+      await supabase.rpc('mark_pending_events_seen', { p_ids: [eventId] })
+    },
+    onSuccess: () => { qc.invalidateQueries() },
+  })
+  const dismissAgentEvent = useMutation({
+    mutationFn: async (eventId: string) => {
+      const { error } = await supabase.rpc('dismiss_pending_event', { p_event_id: eventId })
+      if (error) throw error
+      await supabase.rpc('mark_pending_events_seen', { p_ids: [eventId] })
+    },
+    onSuccess: () => { qc.invalidateQueries() },
+  })
+  const markSeenAgentEvents = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const { error } = await supabase.rpc('mark_pending_events_seen', { p_ids: ids })
+      if (error) throw error
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['agent-pending-events'] }) },
+  })
+
+  // Как только хозяин открыл колокольчик и увидел список — помечаем показанные события прочитанными.
+  // Карточки, которые ждут решения (status pending), остаются видимыми до нажатия Обновить/Отклонить,
+  // а вот уже применённые автоматически — исчезнут при следующем открытии.
+  useEffect(() => {
+    if (!showAgentEvents) return
+    const toMark = agentPendingEvents.filter(e => e.status !== 'pending').map(e => e.id)
+    if (toMark.length > 0) markSeenAgentEvents.mutate(toMark)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAgentEvents])
+
   const handleSignOutRoot = async () => { await signOut(); navigate('/') }
 
   return (
@@ -8093,12 +8217,18 @@ export default function OwnerDashboard() {
           </div>
           {/* Right actions */}
           <div className="ml-auto flex items-center gap-2">
-            <button onClick={() => setSection('bookings')} className="relative p-2 rounded-lg hover:bg-muted text-muted-foreground transition-colors">
-              <Bell size={17} />
-              {pendingCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-primary text-primary-foreground text-[9px] font-bold rounded-full flex items-center justify-center">
-                  {pendingCount}
-                </span>
+            <button onClick={() => setShowAgentEvents(true)}
+              className={`relative p-2 rounded-lg hover:bg-muted transition-colors ${agentEventsCount > 0 ? 'text-red-600' : 'text-muted-foreground'}`}>
+              <motion.div animate={agentEventsCount > 0 ? { rotate: [0, -12, 12, -8, 8, 0] } : {}}
+                transition={{ duration: 0.6, repeat: agentEventsCount > 0 ? Infinity : 0, repeatDelay: 2 }}>
+                <Bell size={17} />
+              </motion.div>
+              {agentEventsCount > 0 && (
+                <motion.span
+                  animate={{ scale: [1, 1.15, 1] }} transition={{ duration: 1, repeat: Infinity }}
+                  className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                  {agentEventsCount}
+                </motion.span>
               )}
             </button>
             <button onClick={handleSignOutRoot}
@@ -8205,6 +8335,25 @@ export default function OwnerDashboard() {
         )}
       </AnimatePresence>
 
+      {/* Mobile floating bell — same agent-events entry point as the desktop header bell */}
+      {topView === 'owner' && (
+        <button onClick={() => setShowAgentEvents(true)}
+          className={`md:hidden fixed top-3 right-3 z-40 p-2.5 rounded-full shadow-[var(--shadow-card-hover)] bg-card border border-border ${agentEventsCount > 0 ? 'text-red-600' : 'text-muted-foreground'}`}
+          style={{ top: 'calc(0.75rem + env(safe-area-inset-top))' }}>
+          <motion.div animate={agentEventsCount > 0 ? { rotate: [0, -12, 12, -8, 8, 0] } : {}}
+            transition={{ duration: 0.6, repeat: agentEventsCount > 0 ? Infinity : 0, repeatDelay: 2 }}>
+            <Bell size={18} />
+          </motion.div>
+          {agentEventsCount > 0 && (
+            <motion.span
+              animate={{ scale: [1, 1.15, 1] }} transition={{ duration: 1, repeat: Infinity }}
+              className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+              {agentEventsCount}
+            </motion.span>
+          )}
+        </button>
+      )}
+
       {/* Mobile bottom tab bar */}
       <nav className="md:hidden fixed inset-x-0 bottom-0 z-40 flex items-stretch h-16 px-1"
         style={{ background: 'hsl(var(--sidebar))', borderTop: '1px solid hsl(var(--sidebar-border))', paddingBottom: 'env(safe-area-inset-bottom)' }}>
@@ -8266,6 +8415,103 @@ export default function OwnerDashboard() {
                 className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium text-destructive hover:bg-muted transition-colors">
                 <LogOut size={17} /> Выйти
               </button>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Панель событий от почтового агента — новые/обновлённые брони, счета.
+          Ничего не попадает в Заезды/Календарь/Расходы, пока хозяин не нажмёт «Обновить». */}
+      <AnimatePresence>
+        {showAgentEvents && (
+          <>
+            <motion.div className="fixed inset-0 bg-black/40 z-50"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setShowAgentEvents(false)} />
+            <motion.div className="fixed inset-x-0 bottom-0 md:inset-0 md:m-auto md:max-w-lg md:h-fit md:max-h-[85vh] z-50 bg-card rounded-t-3xl md:rounded-2xl p-4 md:p-6 shadow-[var(--shadow-card-hover)] overflow-y-auto"
+              style={{ maxHeight: '85vh' }}
+              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ duration: 0.2 }}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-base font-semibold flex items-center gap-2"><Bell size={16} /> Новое от агента</h3>
+                <button onClick={() => setShowAgentEvents(false)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground">
+                  <X size={18} />
+                </button>
+              </div>
+
+              {agentPendingEvents.length === 0 && (
+                <p className="text-sm text-muted-foreground py-8 text-center">Новых писем нет</p>
+              )}
+
+              <div className="space-y-3">
+                {agentPendingEvents.map(ev => {
+                  const p = ev.payload
+                  const isApplying = applyAgentEvent.isPending && applyAgentEvent.variables === ev.id
+                  const isDismissing = dismissAgentEvent.isPending && dismissAgentEvent.variables === ev.id
+                  const isCancel = ev.kind === 'booking_cancel'
+                  const isPending = ev.status === 'pending'
+
+                  const titleFor = (prefix: string) => `${prefix}${p.apartment_title ? ` — ${p.apartment_title}` : ''}`
+                  const title = ev.kind === 'expense'
+                    ? titleFor(isPending ? '🧾 Новый счёт' : '🧾 Счёт добавлен агентом')
+                    : ev.kind === 'booking_new'
+                    ? titleFor(isPending ? '🛎️ Новая бронь' : '✅ Бронь добавлена агентом')
+                    : ev.kind === 'booking_update'
+                    ? titleFor(isPending ? '🔄 Обновление по брони' : '🔄 Бронь обновлена агентом')
+                    : titleFor(isPending ? '❌ Гость отменил бронь' : '❌ Бронь отменена агентом')
+
+                  return (
+                    <div key={ev.id} className={`rounded-xl border p-3.5 ${isCancel ? 'border-red-200 bg-red-50/50' : 'border-border'} ${!isPending ? 'opacity-80' : ''}`}>
+                      <p className="text-sm font-medium mb-1">{title}</p>
+
+                      {ev.kind === 'expense' ? (
+                        <>
+                          <p className="text-sm text-muted-foreground">
+                            {p.provider ?? 'Поставщик не указан'}{p.category ? ` · ${p.category}` : ''}
+                            {p.invoice_date ? ` · ${format(parseISO(p.invoice_date), 'd MMM yyyy', { locale: ru })}` : ''}
+                          </p>
+                          {p.description && <p className="text-xs text-muted-foreground mt-0.5">{p.description}</p>}
+                          <p className="text-lg font-semibold mt-1">{fmtEur(p.amount ?? 0)}</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-sm text-muted-foreground">
+                            {p.guest_name || 'Гость не указан'}
+                            {p.start_date && p.end_date
+                              ? ` · ${format(parseISO(p.start_date), 'd MMM', { locale: ru })} – ${format(parseISO(p.end_date), 'd MMM yyyy', { locale: ru })}`
+                              : ''}
+                            {p.source && !isCancel ? ` · ${SOURCE_LABELS[p.source] ?? p.source}` : ''}
+                          </p>
+                          <p className={`text-lg font-semibold mt-1 ${isCancel ? 'text-red-700' : ''}`}>
+                            {isCancel ? '−' : ''}{fmtEur(p.total_amount ?? 0)}
+                          </p>
+                          {isCancel && <p className="text-xs text-red-700/80 mt-0.5">Эта сумма больше не поступит и нигде не учитывается</p>}
+                        </>
+                      )}
+
+                      {isPending ? (
+                        <div className="flex gap-2 mt-3">
+                          <button
+                            onClick={() => applyAgentEvent.mutate(ev.id)}
+                            disabled={isApplying || isDismissing}
+                            className={`flex-1 rounded-xl px-3 py-2 text-sm disabled:opacity-50 ${isCancel ? 'bg-red-600 text-white hover:bg-red-700' : 'btn-primary'}`}>
+                            {isApplying ? 'Обновляю…' : isCancel ? 'Подтвердить отмену' : 'Обновить'}
+                          </button>
+                          <button
+                            onClick={() => dismissAgentEvent.mutate(ev.id)}
+                            disabled={isApplying || isDismissing}
+                            className="px-3 py-2 rounded-xl text-sm bg-muted text-muted-foreground disabled:opacity-50">
+                            {isCancel ? 'Это ошибка' : 'Отклонить'}
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground mt-2">
+                          {ev.status === 'applied' ? 'Применено автоматически' : 'Отклонено'}
+                        </p>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             </motion.div>
           </>
         )}
