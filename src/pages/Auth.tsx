@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '@/integrations/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
+import { Logo } from '@/components/Logo'
 
 type Tab = 'signin' | 'signup' | 'forgot' | 'reset'
 
@@ -107,8 +108,8 @@ export default function Auth() {
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-16 bg-background">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-display font-semibold text-foreground mb-1">🏡 bloknot</h1>
+        <div className="flex justify-center mb-8">
+          <Logo className="h-10 w-auto" />
         </div>
 
         <div className="card-base p-8">

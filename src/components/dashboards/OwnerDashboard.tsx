@@ -2,6 +2,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
+import { Logo } from '@/components/Logo'
 import {
   LayoutDashboard,
   Building2,
@@ -8123,11 +8124,8 @@ export default function OwnerDashboard() {
         ${topView === 'cleaner' ? 'md:hidden' : ''}
       `}>
         {/* Logo — links back to public home */}
-        <button onClick={() => navigate('/')} className="px-2 mb-6 flex items-center gap-2.5 hover:opacity-75 transition-opacity text-left">
-          <span className="text-2xl">{theme === 'notebook' ? '📓' : '🏡'}</span>
-          <span className="font-display font-bold text-base tracking-tight" style={{ color: 'hsl(var(--sidebar-logo-fg))' }}>
-            Блокнот
-          </span>
+        <button onClick={() => navigate('/')} className="px-2 mb-6 flex items-center hover:opacity-75 transition-opacity text-left">
+          <Logo surface="sidebar" className="h-7 w-auto" />
         </button>
 
         {/* Nav */}

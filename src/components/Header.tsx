@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Menu, X, Home, LayoutDashboard, LogIn, LogOut } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
+import { Logo } from '@/components/Logo'
 
 export function Header() {
   const { user, signOut } = useAuth()
@@ -18,9 +19,8 @@ export function Header() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
-          <Link to="/" className="flex items-center gap-2 font-display font-semibold text-xl text-primary">
-            <span className="text-2xl">🏡</span>
-            bloknot
+          <Link to="/" className="flex items-center">
+            <Logo className="h-8 w-auto" />
           </Link>
 
           {/* Desktop nav */}
