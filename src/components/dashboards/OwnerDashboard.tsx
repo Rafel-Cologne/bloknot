@@ -1108,6 +1108,12 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
 
     const weeks = computeWeeks(monthDate)
     const compact = effectiveCount > 1
+    // Real phones show a single month, but the cell is still only ~50px wide there — too
+    // narrow for the desktop single-month cell content (avatar + full "name, N guests, M
+    // nights" label). Reuse the same tighter sizing as tablet "compact" mode, and on top of
+    // that fully hide the in-bar name/amount text (tap the day to see the booking popup).
+    const denseCell = compact || isMobile
+    const tiny = isMobile
 
     return (
       <div key={`${mYear}-${mMonth}`} className={`bg-card border border-border rounded-2xl overflow-hidden shadow-[var(--shadow-card)] ${useFlexFill ? 'flex flex-col min-h-0' : ''}`}>
@@ -1228,26 +1234,28 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
                     key={di}
                     onClick={() => handleDayClick(dateStr, info)}
                     onMouseEnter={() => { if (!info && abkAnchor && !abkRange) setAbkHover(dateStr) }}
-                    className={`flex flex-col min-h-0 relative select-none transition-colors ${readOnly ? 'cursor-default' : 'cursor-pointer'} ${isYear ? 'p-0.5' : compact ? 'px-1 pt-1 pb-0.5' : 'px-2 pt-2 pb-1'} ${cellBg}`}
+                    className={`flex flex-col min-h-0 relative select-none transition-colors overflow-hidden ${readOnly ? 'cursor-default' : 'cursor-pointer'} ${isYear ? 'p-0.5' : denseCell ? 'px-1 pt-1 pb-0.5' : 'px-2 pt-2 pb-1'} ${cellBg}`}
                   >
 
                     {/* Booking bar — Airbnb-style: a solid pill anchored to the bottom of the cell,
                         continuous edge-to-edge across the days it spans, rounded only at the
                         booking's true start/end. В день стыковки (выезд+заезд в один день)
-                        бар делится пополам, чтобы две брони не сливались в одну. */}
+                        бар делится пополам, чтобы две брони не сливались в одну.
+                        On real phones (tiny) the bar is text-free — too narrow for any label
+                        without overlapping neighboring cells — tap the day for the popup instead. */}
                     {isBooked && !isSelected && (
                       isTurnover ? (
-                        <div className={`absolute left-0 right-0 flex pointer-events-none ${isYear ? 'bottom-0.5 h-1.5' : compact ? 'bottom-1 h-5' : 'bottom-1.5 h-8'}`}>
+                        <div className={`absolute left-0 right-0 flex pointer-events-none ${isYear ? 'bottom-0.5 h-1.5' : denseCell ? 'bottom-1 h-5' : 'bottom-1.5 h-8'}`}>
                           <div className="flex-1 rounded-l-full mr-px" style={{ backgroundColor: aptColor }} />
                           <div className="flex-1 rounded-r-full ml-px flex items-center pl-1.5 overflow-hidden" style={{ backgroundColor: tintHex(aptColor, 0.3) }}>
-                            {!isYear && !compact && (
+                            {!isYear && !denseCell && (
                               <span className="text-[10px] font-bold text-white truncate">→ {info!.turnoverGuestName}</span>
                             )}
                           </div>
                         </div>
                       ) : (
                         <div
-                          className={`absolute flex items-center pointer-events-none ${info!.isStart ? 'z-10 overflow-visible' : 'overflow-hidden'} ${isYear ? 'bottom-0.5 h-1.5' : compact ? 'bottom-1 h-5' : 'bottom-1.5 h-8'} ${
+                          className={`absolute flex items-center pointer-events-none ${!tiny && info!.isStart ? 'z-10 overflow-visible' : 'overflow-hidden'} ${isYear ? 'bottom-0.5 h-1.5' : denseCell ? 'bottom-1 h-5' : 'bottom-1.5 h-8'} ${
                             info!.isStart && info!.isEnd ? 'left-0.5 right-0.5 rounded-full'
                             : info!.isStart ? 'left-0.5 right-0 rounded-l-full'
                             : info!.isEnd ? 'left-0 right-0.5 rounded-r-full'
@@ -1255,21 +1263,21 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
                           }`}
                           style={{ backgroundColor: aptColor }}
                         >
-                          {info!.isStart && !isYear && (
+                          {info!.isStart && !isYear && !tiny && (
                             <div className="flex items-center gap-1 px-1.5">
-                              {!compact && (
+                              {!denseCell && (
                                 <span className="w-4 h-4 rounded-full bg-white/90 flex items-center justify-center text-[9px] font-bold text-gray-800 flex-shrink-0">
                                   {(info!.guestName || '?').trim().charAt(0).toUpperCase()}
                                 </span>
                               )}
-                              <span className={`${compact ? 'text-[9px]' : 'text-[11px]'} font-bold text-white whitespace-nowrap`}>
-                                {compact
+                              <span className={`${denseCell ? 'text-[9px]' : 'text-[11px]'} font-bold text-white whitespace-nowrap`}>
+                                {denseCell
                                   ? info!.guestName
                                   : `${info!.guestName}, ${info!.guestsCount} ${info!.guestsCount === 1 ? 'гость' : info!.guestsCount < 5 ? 'гостя' : 'гостей'}, ${info!.nights} ${info!.nights === 1 ? 'ночь' : info!.nights < 5 ? 'ночи' : 'ночей'}`}
                               </span>
                             </div>
                           )}
-                          {info!.isEnd && !info!.isStart && !isYear && !compact && info!.totalAmount != null && (
+                          {info!.isEnd && !info!.isStart && !isYear && !denseCell && info!.totalAmount != null && (
                             <span className="ml-auto mr-2 text-[11px] font-bold text-white flex-shrink-0">
                               {fmtEur(info!.totalAmount)}
                             </span>
@@ -1280,9 +1288,9 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
 
                     <div className="relative flex flex-col min-h-0 flex-1">
                     {/* Day number — top left */}
-                    <div className={`rounded-full flex items-center justify-center flex-shrink-0 ${isYear ? 'w-3.5 h-3.5' : compact ? 'w-5 h-5' : 'w-6 h-6'} ${isToday ? 'bg-primary' : ''}`}>
+                    <div className={`rounded-full flex items-center justify-center flex-shrink-0 ${isYear ? 'w-3.5 h-3.5' : denseCell ? 'w-5 h-5' : 'w-6 h-6'} ${isToday ? 'bg-primary' : ''}`}>
                       <span
-                        className={`font-bold leading-none ${isYear ? 'text-[8px]' : compact ? 'text-xs' : 'text-sm'} ${
+                        className={`font-bold leading-none ${isYear ? 'text-[8px]' : denseCell ? 'text-xs' : 'text-sm'} ${
                           isToday ? 'text-white'
                           : isSelected ? (isDark ? 'text-amber-300' : 'text-amber-900')
                           : isBlocked && !isBooked ? `line-through ${isDark ? 'text-slate-500' : 'text-slate-400'}`
@@ -1295,13 +1303,13 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
 
                     {/* Lock icon */}
                     {isBlocked && !isBooked && !isSelected && (
-                      <Lock size={isYear ? 7 : compact ? 8 : 10} className={`mt-0.5 flex-shrink-0 ${isDark ? 'text-slate-500' : 'text-slate-400'}`} />
+                      <Lock size={isYear ? 7 : denseCell ? 8 : 10} className={`mt-0.5 flex-shrink-0 ${isDark ? 'text-slate-500' : 'text-slate-400'}`} />
                     )}
 
                     {/* Price — bottom right, free/blocked days only (booked days show info in the bar instead) */}
                     {price !== undefined && !isSelected && !isBooked && (
                       <span
-                        className={`mt-auto self-end leading-none ${isYear ? 'text-[8px]' : compact ? 'text-[10px]' : 'text-xs'} font-bold ${isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400') : (hasCustomPrice ? (isDark ? 'text-emerald-300' : 'text-emerald-600') : (isDark ? 'text-slate-300' : 'text-gray-700'))}`}
+                        className={`mt-auto self-end leading-none truncate max-w-full ${isYear ? 'text-[8px]' : denseCell ? 'text-[9px]' : 'text-xs'} font-bold ${isBlocked ? (isDark ? 'text-slate-400' : 'text-slate-400') : (hasCustomPrice ? (isDark ? 'text-emerald-300' : 'text-emerald-600') : (isDark ? 'text-slate-300' : 'text-gray-700'))}`}
                       >
                         {price} €
                       </span>
@@ -1720,6 +1728,7 @@ function DashboardOverview({
   const tomorrowStr = format(addDays(today, 1), 'yyyy-MM-dd')
   const qc = useQueryClient()
   const { user: authUser } = useAuth()
+  const isMobile = useIsMobile()
 
   const { data: profileData } = useQuery({
     queryKey: ['profile', authUser?.id],
@@ -2393,24 +2402,37 @@ function DashboardOverview({
                 )}
               </div>
 
-              {/* X-axis: day numbers + weekday names */}
+              {/* X-axis: day numbers + weekday names.
+                  On phones the fixed-size day circle (16px) no longer fits one per column once
+                  a month has 28+ days at a ~10px column width — that's what was causing the
+                  numbers to overlap/run past the card edge. Thin out to every 2nd/3rd day there,
+                  keeping "today" always visible, while the chart/gantt above stay full-resolution. */}
               <div className="flex-shrink-0 flex" style={{ height: '32px' }}>
                 {dayData.map((d, i) => {
                   const isToday = d.dateStr === todayStr
                   const color = dayBandColor[i]
+                  const skipStride = isMobile ? (dayData.length > 24 ? 3 : dayData.length > 15 ? 2 : 1) : 1
+                  const showLabel = isToday || i % skipStride === 0
                   return (
-                    <div key={i} className="flex-1 flex flex-col items-center justify-center gap-px overflow-hidden">
-                      <span className={`flex items-center justify-center rounded-full leading-none font-semibold text-[9px] w-4 h-4 flex-shrink-0
-                        ${isToday ? 'bg-primary text-primary-foreground' : ''}`}
-                        style={!isToday && color ? { color } : !isToday ? { color: 'hsl(var(--muted-foreground))' } : {}}>
-                        {d.dayNum}
-                      </span>
-                      <span className="text-[8px] font-medium leading-none"
-                        style={isToday ? { color: 'hsl(var(--primary))', fontWeight: 700 }
-                          : color ? { color, opacity: 0.7 }
-                          : { color: 'hsl(var(--muted-foreground))', opacity: 0.5 }}>
-                        {d.wd}
-                      </span>
+                    <div key={i} className="flex-1 flex flex-col items-center justify-center gap-px overflow-hidden min-w-0">
+                      {showLabel && (
+                        <>
+                          <span className={`flex items-center justify-center rounded-full leading-none font-semibold flex-shrink-0
+                            ${isMobile ? 'text-[7px] w-3 h-3' : 'text-[9px] w-4 h-4'}
+                            ${isToday ? 'bg-primary text-primary-foreground' : ''}`}
+                            style={!isToday && color ? { color } : !isToday ? { color: 'hsl(var(--muted-foreground))' } : {}}>
+                            {d.dayNum}
+                          </span>
+                          {!isMobile && (
+                            <span className="text-[8px] font-medium leading-none"
+                              style={isToday ? { color: 'hsl(var(--primary))', fontWeight: 700 }
+                                : color ? { color, opacity: 0.7 }
+                                : { color: 'hsl(var(--muted-foreground))', opacity: 0.5 }}>
+                              {d.wd}
+                            </span>
+                          )}
+                        </>
+                      )}
                     </div>
                   )
                 })}
