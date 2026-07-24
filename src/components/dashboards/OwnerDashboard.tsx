@@ -62,6 +62,10 @@ import {
   Menu,
   Moon,
   Sun,
+  Percent,
+  Landmark,
+  Scale,
+  PiggyBank,
 } from 'lucide-react'
 import {
   format,
@@ -5824,6 +5828,10 @@ const EXP_CATEGORIES: Record<string, { label: string; icon: React.ReactNode; col
   insurance:   { label: 'Страховка',     icon: <ShieldCheck size={14} />,  color: 'text-cyan-500',  bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
   ibi:         { label: 'IBI (налог)',   icon: <FileText size={14} />,     color: 'text-red-500',   bg: 'bg-red-50 dark:bg-red-950/30' },
   cleaning:    { label: 'Уборка',        icon: <Brush size={14} />,        color: 'text-teal-500',  bg: 'bg-teal-50 dark:bg-teal-950/30' },
+  community_fee:    { label: 'Комунидад (ТСЖ)',      icon: <Landmark size={14} />,  color: 'text-amber-700', bg: 'bg-amber-50 dark:bg-amber-950/40' },
+  tax_non_resident: { label: 'Налог нерезидента',    icon: <Scale size={14} />,     color: 'text-red-700',   bg: 'bg-red-50 dark:bg-red-950/40' },
+  loan_payment:     { label: 'Кредит',                icon: <PiggyBank size={14} />, color: 'text-violet-600',bg: 'bg-violet-50 dark:bg-violet-950/30' },
+  bank_fee:         { label: 'Банк. комиссия',        icon: <Percent size={14} />,  color: 'text-gray-600',  bg: 'bg-gray-50 dark:bg-gray-900/30' },
   other:       { label: 'Прочее',        icon: <Receipt size={14} />,      color: 'text-slate-500', bg: 'bg-slate-50 dark:bg-slate-950/30' },
 }
 
