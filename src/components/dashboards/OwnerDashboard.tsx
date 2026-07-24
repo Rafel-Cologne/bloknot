@@ -7934,141 +7934,6 @@ const NAV_ITEMS: Array<{ id: Section; label: string; icon: React.ReactNode; admi
   { id: 'admin',       label: 'Админ',          icon: <ShieldCheck size={16} />, adminOnly: true },
 ]
 
-// ─── Mobile · Owner Overview ────────────────────────────────────────────────────
-
-const MOBILE_MONTHS_SHORT = ['ЯНВ','ФЕВ','МАР','АПР','МАЙ','ИЮН','ИЮЛ','АВГ','СЕН','ОКТ','НОЯ','ДЕК']
-
-function MobileOwnerOverview({
-  bookings, apartments, onGoTo, onGoCleaning, ownerId,
-}: {
-  bookings: BookingRow[]; apartments: Apartment[]
-  onGoTo: (s: Section) => void; onGoCleaning: () => void; ownerId: string
-}) {
-  const { user } = useAuth()
-  const today = new Date().toISOString().slice(0, 10)
-  const thisYear = new Date().getFullYear()
-
-  const { data: ledger } = useQuery({
-    queryKey: ['owner-cash-ledger', ownerId],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('cash_ledger').select('*').eq('owner_id', ownerId)
-      if (error) throw error
-      return data as CashEntry[]
-    },
-    enabled: !!ownerId,
-  })
-  const cashBalance = (ledger ?? []).reduce((s, e) => s + (e.type === 'deposit' ? e.amount : -e.amount), 0)
-
-  const ytdEarnings = bookings
-    .filter(b => b.status === 'accepted' && new Date(b.start_date).getFullYear() === thisYear)
-    .reduce((s, b) => s + (b.total_amount ?? 0), 0)
-
-  const pendingCount = bookings.filter(b => b.status === 'pending').length
-
-  const upcoming = bookings
-    .filter(b => b.status === 'accepted' && b.end_date > today)
-    .sort((a, b) => a.start_date.localeCompare(b.start_date))
-    .slice(0, 4)
-
-  const aptColorOf = (apartmentId: string) => {
-    const i = apartments.findIndex(a => a.id === apartmentId)
-    return CLEANER_APT_COLORS[i >= 0 ? i % CLEANER_APT_COLORS.length : 0]
-  }
-
-  const dateBadge = (iso: string) => {
-    const d = new Date(iso)
-    return { day: d.getDate(), month: MOBILE_MONTHS_SHORT[d.getMonth()] }
-  }
-
-  return (
-    <div className="pb-4">
-      {/* Greeting */}
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-11 h-11 rounded-full flex items-center justify-center text-base font-bold flex-shrink-0"
-          style={{ background: 'hsl(var(--primary))', color: 'hsl(var(--primary-foreground))' }}>
-          {user?.email?.[0]?.toUpperCase() ?? 'R'}
-        </div>
-        <div>
-          <p className="text-xs text-muted-foreground">Добро пожаловать</p>
-          <p className="font-display font-semibold text-base">{user?.email?.split('@')[0] ?? 'Владелец'}</p>
-        </div>
-      </div>
-
-      {/* Revenue card */}
-      <div className="rounded-2xl p-5 mb-4 shadow-[var(--shadow-card)]" style={{
-        background: 'linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)))',
-        color: 'hsl(var(--primary-foreground))',
-      }}>
-        <p className="text-xs opacity-80 mb-1">Доход за {thisYear} год</p>
-        <p className="font-display font-bold text-3xl">{fmtEur(ytdEarnings)}</p>
-      </div>
-
-      {/* Stat row */}
-      <div className="grid grid-cols-3 gap-2 mb-5">
-        <div className="bg-card border border-border rounded-xl p-3 text-center">
-          <p className="font-display font-bold text-lg">{apartments.length}</p>
-          <p className="text-[10px] text-muted-foreground">Квартир</p>
-        </div>
-        <button onClick={() => onGoTo('bookings')} className="bg-card border border-border rounded-xl p-3 text-center">
-          <p className="font-display font-bold text-lg">{pendingCount}</p>
-          <p className="text-[10px] text-muted-foreground">Ожидают</p>
-        </button>
-        <div className="bg-card border border-border rounded-xl p-3 text-center">
-          <p className="font-display font-bold text-lg">{fmtEur(cashBalance)}</p>
-          <p className="text-[10px] text-muted-foreground">Касса</p>
-        </div>
-      </div>
-
-      {/* Upcoming check-ins */}
-      <div className="mb-5">
-        <h3 className="text-sm font-semibold mb-2">Ближайшие заезды</h3>
-        {upcoming.length === 0 ? (
-          <div className="bg-card border border-border rounded-xl p-4 text-center text-sm text-muted-foreground">
-            Нет предстоящих броней
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {upcoming.map(b => {
-              const color = aptColorOf(b.apartment_id)
-              const badge = dateBadge(b.start_date)
-              const isStaying = b.start_date <= today
-              return (
-                <button key={b.id} onClick={() => onGoTo('bookings')}
-                  className="bg-card border border-border rounded-xl p-3 flex items-center gap-3 text-left w-full">
-                  <div className="w-11 h-11 rounded-lg flex flex-col items-center justify-center flex-shrink-0"
-                    style={{ background: tintHex(color, 0.82), color }}>
-                    <span className="text-sm font-bold leading-none">{badge.day}</span>
-                    <span className="text-[8px] font-semibold leading-none mt-0.5">{badge.month}</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{b.guest_name || 'Без имени'}</p>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {b.apartments?.title} · {isStaying ? 'Сейчас проживает' : 'Заезд'}
-                    </p>
-                  </div>
-                  <p className="text-sm font-semibold flex-shrink-0">{fmtEur(b.total_amount ?? 0)}</p>
-                </button>
-              )
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Quick links */}
-      <div className="grid grid-cols-2 gap-2">
-        <button onClick={() => onGoTo('calendar')}
-          className="bg-card border border-border rounded-xl p-4 flex items-center gap-2 text-sm font-medium">
-          <CalendarDays size={17} /> Календарь
-        </button>
-        <button onClick={onGoCleaning}
-          className="bg-card border border-border rounded-xl p-4 flex items-center gap-2 text-sm font-medium">
-          <Brush size={17} /> Уборка
-        </button>
-      </div>
-    </div>
-  )
-}
-
 export default function OwnerDashboard() {
   const { user, signOut, roles } = useAuth()
   const isAdmin = roles.includes('admin')
@@ -8363,12 +8228,9 @@ export default function OwnerDashboard() {
             <motion.div key={section} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
               className={section === 'dashboard' || section === 'calendar' ? 'xl:flex-1 xl:min-h-0 xl:flex xl:flex-col' : ''}>
               {section === 'dashboard' && (
-                isMobile
-                  ? <MobileOwnerOverview bookings={bookings} apartments={apartments}
-                      onGoTo={setSection} onGoCleaning={() => setTopView('cleaner')} ownerId={user.id} />
-                  : <DashboardOverview bookings={bookings} apartments={apartments}
-                      onGoTo={setSection} ownerId={user.id}
-                    />
+                <DashboardOverview bookings={bookings} apartments={apartments}
+                  onGoTo={setSection} ownerId={user.id}
+                />
               )}
               {section === 'apartments' && (
                 <ApartmentsSection apartments={apartments} bookings={bookings} ownerId={user.id} onRefresh={invalidate} />
