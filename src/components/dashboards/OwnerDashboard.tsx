@@ -2064,6 +2064,8 @@ function DashboardOverview({
         <h1 className="text-xl sm:text-2xl font-display font-bold text-foreground truncate">
           Привет {displayName}! 👋
         </h1>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+        <AgentRefreshControl />
         <div className="relative">
           <button
             onClick={() => setShowTopMonthPicker(p => !p)}
@@ -2090,6 +2092,7 @@ function DashboardOverview({
               </div>
             </div>
           )}
+        </div>
         </div>
       </div>
 
@@ -3580,20 +3583,45 @@ function AgentRefreshControl() {
     setRunning(true)
     setResultMsg(null)
     setIsError(false)
+    const baselineRunAt = lastRun?.run_at ?? null
     try {
-      const { data, error } = await supabase.functions.invoke('trigger-agent-run')
+      // trigger-agent-run запускает проверку в фоне и отвечает сразу — сама проверка почты
+      // может идти 60–90+ секунд на большом ящике, поэтому не ждём один долгий ответ,
+      // а опрашиваем agent_logs, пока не появится более свежая запись.
+      const { error } = await supabase.functions.invoke('trigger-agent-run')
       if (error) throw error
-      const created = (data?.bookings_created ?? 0) + (data?.expenses_created ?? 0)
-      const updated = data?.bookings_updated ?? 0
-      if (created > 0 || updated > 0) {
-        const parts: string[] = []
-        if (created > 0) parts.push(`добавлено: ${created}`)
-        if (updated > 0) parts.push(`обновлено: ${updated}`)
-        setResultMsg(parts.join(', '))
-      } else {
-        setResultMsg('новых данных нет — всё актуально')
+
+      const deadline = Date.now() + 120_000
+      let found: { run_at: string; bookings_created: number; bookings_updated: number; expenses_created: number; status: string } | null = null
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 4000))
+        const { data } = await supabase
+          .from('agent_logs')
+          .select('run_at, bookings_created, bookings_updated, expenses_created, status')
+          .order('run_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (data && data.run_at !== baselineRunAt) { found = data; break }
       }
-      invalidateAll()
+
+      if (found) {
+        const created = (found.bookings_created ?? 0) + (found.expenses_created ?? 0)
+        const updated = found.bookings_updated ?? 0
+        if (found.status === 'failed') {
+          setIsError(true)
+          setResultMsg('проверка завершилась с ошибкой')
+        } else if (created > 0 || updated > 0) {
+          const parts: string[] = []
+          if (created > 0) parts.push(`добавлено: ${created}`)
+          if (updated > 0) parts.push(`обновлено: ${updated}`)
+          setResultMsg(parts.join(', '))
+        } else {
+          setResultMsg('новых данных нет — всё актуально')
+        }
+        invalidateAll()
+      } else {
+        setResultMsg('проверка идёт дольше обычного — загляните через минуту')
+      }
     } catch {
       setIsError(true)
       setResultMsg('не удалось проверить почту')
@@ -3754,7 +3782,6 @@ function BookingsSection({
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h2 className="text-xl font-display font-semibold">Бронирования</h2>
         <div className="flex items-center gap-2 flex-wrap">
-          <AgentRefreshControl />
           <button onClick={onAddBooking} className="btn-primary rounded-xl px-3 py-2 text-sm flex items-center gap-1.5 flex-shrink-0">
             <Plus size={15} /> <span className="hidden sm:inline">Добавить вручную</span><span className="sm:hidden">Добавить</span>
           </button>
@@ -6212,7 +6239,6 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
           <p className="text-sm text-muted-foreground mt-0.5">Коммунальные услуги, ремонт и прочие расходы</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <AgentRefreshControl />
           <button onClick={() => { setQuickPrefill(null); setShowAdd(true) }}
             className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:opacity-90">
             <Plus size={16} /> Добавить расход
