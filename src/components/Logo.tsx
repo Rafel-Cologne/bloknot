@@ -3,8 +3,8 @@ import logoLightBg from '@/assets/logo-light-bg.png'
 import logoDarkBg from '@/assets/logo-dark-bg.png'
 
 // Which themes render each surface with a DARK background (needs the white/light logo variant).
-const DARK_CARD_THEMES = new Set(['business'])                    // bg-card / bg-background is dark only in "business"
-const DARK_SIDEBAR_THEMES = new Set(['standard', 'business', 'notebook']) // sidebar is dark in all but "light"
+const DARK_CARD_THEMES = new Set(['business', 'saas-dark'])                    // bg-card / bg-background is dark in these
+const DARK_SIDEBAR_THEMES = new Set(['standard', 'business', 'notebook', 'saas-dark']) // sidebar is dark in all but "light" / "saas-light"
 
 /**
  * Bloknot logo (icon + wordmark), auto-switching between the navy variant (light backgrounds)

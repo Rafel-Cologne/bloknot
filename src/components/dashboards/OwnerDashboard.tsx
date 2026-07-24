@@ -59,6 +59,9 @@ import {
   MoreHorizontal,
   Repeat,
   Info,
+  Menu,
+  Moon,
+  Sun,
 } from 'lucide-react'
 import {
   format,
@@ -762,7 +765,7 @@ function tintHex(hex: string, amount: number): string {
 export function CalendarSection({ apartments, selectedApt, setSelectedApt, readOnly }: { apartments: Apartment[]; selectedApt: string; setSelectedApt: (id: string) => void; readOnly?: boolean }) {
   const qc = useQueryClient()
   const { theme } = useTheme()
-  const isDark = theme === 'business'
+  const isDark = theme === 'business' || theme === 'saas-dark'
 
   // Responsive screen size
   const [screenW, setScreenW] = useState(typeof window !== 'undefined' ? window.innerWidth : 1440)
@@ -2111,23 +2114,86 @@ function DashboardOverview({
         </div>
       </div>
 
-      {/* ── Row 2: 5 stat cards ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 md:gap-3 flex-shrink-0 relative z-10">
+      {/* ── Row 2 (mobile/tablet): hero revenue card + 2×2 stat grid ── */}
+      <div className="lg:hidden flex flex-col gap-2.5 flex-shrink-0 relative z-10">
+        <button onClick={() => setShowRevenueModal(true)}
+          className="w-full text-left rounded-2xl p-5 bg-gradient-primary text-primary-foreground relative overflow-hidden shadow-md hover:shadow-lg transition-shadow">
+          <div className="absolute -right-6 -top-7 w-36 h-36 rounded-full bg-primary-foreground/10 pointer-events-none" aria-hidden="true" />
+          <p className="text-xs font-medium opacity-90 relative">Общий доход с начала {today.getFullYear()} года</p>
+          <p className="font-display text-4xl font-bold mt-2 relative leading-tight">{fmtEur(actualRevenue)}</p>
+          <p className="text-xs font-semibold opacity-90 relative mt-2.5">
+            {completedBookings.length} заезд{completedBookings.length === 1 ? '' : completedBookings.length < 5 ? 'а' : 'ов'} с начала года
+          </p>
+        </button>
+
+        <div className="grid grid-cols-2 gap-2.5">
+          {/* Заезды */}
+          <button onClick={() => setDashModal('upcoming')}
+            className="bg-card border border-border rounded-2xl p-3.5 text-left hover:shadow-md transition-all shadow-sm flex flex-col min-h-[96px]">
+            <div className="flex items-start justify-between mb-2.5">
+              <p className="text-xs text-muted-foreground">Заезды</p>
+              <div className="p-1.5 rounded-lg bg-blue-50 text-blue-500 flex-shrink-0"><CalendarDays size={15} /></div>
+            </div>
+            <p className="text-2xl font-bold text-foreground leading-tight">{monthCheckIns}</p>
+            <p className="text-[11px] text-muted-foreground mt-1.5">в этом месяце</p>
+          </button>
+
+          {/* Уборки */}
+          <button onClick={() => setDashModal('cleanings')}
+            className="bg-card border border-border rounded-2xl p-3.5 text-left hover:shadow-md transition-all shadow-sm flex flex-col min-h-[96px]">
+            <div className="flex items-start justify-between mb-2.5">
+              <p className="text-xs text-muted-foreground">Уборки</p>
+              <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 flex-shrink-0"><Brush size={15} /></div>
+            </div>
+            <p className="text-2xl font-bold text-foreground leading-tight">{monthCleanings}</p>
+            <p className="text-[11px] text-muted-foreground mt-1.5">в этом месяце</p>
+          </button>
+
+          {/* Долги */}
+          <button onClick={() => setDashModal('debt')}
+            className="bg-card border border-border rounded-2xl p-3.5 text-left hover:shadow-md transition-all shadow-sm flex flex-col min-h-[96px]">
+            <div className="flex items-start justify-between mb-2.5">
+              <p className="text-xs text-muted-foreground">Долги</p>
+              <div className="p-1.5 rounded-lg bg-red-50 text-red-400 flex-shrink-0"><ClipboardX size={15} /></div>
+            </div>
+            <p className="text-xl font-bold text-foreground leading-tight">{fmtEur(owedTotal)}</p>
+            <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
+              {debtPlatformCount > 0 && <span>{debtPlatformCount} airbnb/booking</span>}
+              {debtPlatformCount > 0 && debtPrivateCount > 0 && <span className="mx-0.5">·</span>}
+              {debtPrivateCount > 0 && <span>{debtPrivateCount} частн.</span>}
+              {debtBookings.length === 0 && <span>нет долгов</span>}
+            </p>
+          </button>
+
+          {/* Чистая прибыль */}
+          <div className="bg-card border border-border rounded-2xl p-3.5 shadow-sm flex flex-col min-h-[96px]">
+            <div className="flex items-start justify-between mb-2.5">
+              <p className="text-xs text-muted-foreground leading-snug">Чистая прибыль</p>
+              <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 flex-shrink-0"><TrendingUp size={15} /></div>
+            </div>
+            <p className={`text-xl font-bold leading-tight ${actualIncome < 0 ? 'text-destructive' : 'text-foreground'}`}>{fmtEur(actualIncome)}</p>
+            <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">доход − расходы</p>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Row 2 (desktop): original 5 stat cards, unchanged ── */}
+      <div className="hidden lg:grid grid-cols-5 gap-3 flex-shrink-0 relative z-10">
         {/* Общий доход */}
         <button onClick={() => setShowRevenueModal(true)}
-          className="bg-card border border-border rounded-2xl p-3 md:p-4 text-left hover:shadow-md transition-all shadow-sm flex flex-col min-h-[96px] md:min-h-[116px]">
+          className="bg-card border border-border rounded-2xl p-4 text-left hover:shadow-md transition-all shadow-sm flex flex-col min-h-[116px]">
           <div className="flex items-start justify-between mb-3">
             <p className="text-xs text-muted-foreground leading-snug">Общий доход с начала {today.getFullYear()} года</p>
             <div className="p-1.5 rounded-lg bg-rose-50 text-rose-500 flex-shrink-0"><BarChart2 size={15} /></div>
           </div>
-          <p className="text-xl md:text-2xl font-bold text-foreground leading-tight">{fmtEur(actualRevenue)}</p>
+          <p className="text-2xl font-bold text-foreground leading-tight">{fmtEur(actualRevenue)}</p>
           <p className="text-[11px] text-muted-foreground mt-1.5">{completedBookings.length} заезд{completedBookings.length === 1 ? '' : completedBookings.length < 5 ? 'а' : 'ов'}</p>
           <p className="text-[10px] text-transparent select-none mt-0.5">&nbsp;</p>
         </button>
 
         {/* Заезды */}
         <button onClick={() => setDashModal('upcoming')}
-          className="bg-card border border-border rounded-2xl p-3 md:p-4 text-left hover:shadow-md transition-all shadow-sm flex flex-col min-h-[96px] md:min-h-[116px]">
+          className="bg-card border border-border rounded-2xl p-4 text-left hover:shadow-md transition-all shadow-sm flex flex-col min-h-[116px]">
           <div className="flex items-start justify-between mb-3">
             <p className="text-xs text-muted-foreground">Заезды</p>
             <div className="p-1.5 rounded-lg bg-blue-50 text-blue-500 flex-shrink-0"><CalendarDays size={15} /></div>
@@ -2139,7 +2205,7 @@ function DashboardOverview({
 
         {/* Уборки */}
         <button onClick={() => setDashModal('cleanings')}
-          className="bg-card border border-border rounded-2xl p-3 md:p-4 text-left hover:shadow-md transition-all shadow-sm flex flex-col min-h-[96px] md:min-h-[116px]">
+          className="bg-card border border-border rounded-2xl p-4 text-left hover:shadow-md transition-all shadow-sm flex flex-col min-h-[116px]">
           <div className="flex items-start justify-between mb-3">
             <p className="text-xs text-muted-foreground">Уборки</p>
             <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 flex-shrink-0"><Brush size={15} /></div>
@@ -2151,12 +2217,12 @@ function DashboardOverview({
 
         {/* Долги */}
         <button onClick={() => setDashModal('debt')}
-          className="bg-card border border-border rounded-2xl p-3 md:p-4 text-left hover:shadow-md transition-all shadow-sm flex flex-col min-h-[96px] md:min-h-[116px]">
+          className="bg-card border border-border rounded-2xl p-4 text-left hover:shadow-md transition-all shadow-sm flex flex-col min-h-[116px]">
           <div className="flex items-start justify-between mb-3">
             <p className="text-xs text-muted-foreground">Долги</p>
             <div className="p-1.5 rounded-lg bg-red-50 text-red-400 flex-shrink-0"><ClipboardX size={15} /></div>
           </div>
-          <p className="text-xl md:text-2xl font-bold text-foreground leading-tight">{fmtEur(owedTotal)}</p>
+          <p className="text-2xl font-bold text-foreground leading-tight">{fmtEur(owedTotal)}</p>
           <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
             {debtPlatformCount > 0 && <span>{debtPlatformCount} airbnb/booking</span>}
             {debtPlatformCount > 0 && debtPrivateCount > 0 && <span className="mx-0.5">·</span>}
@@ -2171,12 +2237,12 @@ function DashboardOverview({
         </button>
 
         {/* Актуальный доход (чистая прибыль) */}
-        <div className="col-span-2 lg:col-span-1 bg-card border border-border rounded-2xl p-3 md:p-4 shadow-sm flex flex-col min-h-[96px] md:min-h-[116px]">
+        <div className="bg-card border border-border rounded-2xl p-4 shadow-sm flex flex-col min-h-[116px]">
           <div className="flex items-start justify-between mb-3">
             <p className="text-xs text-muted-foreground leading-snug">Чистая прибыль</p>
             <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 flex-shrink-0"><TrendingUp size={15} /></div>
           </div>
-          <p className={`text-xl md:text-2xl font-bold leading-tight ${actualIncome < 0 ? 'text-destructive' : 'text-foreground'}`}>{fmtEur(actualIncome)}</p>
+          <p className={`text-2xl font-bold leading-tight ${actualIncome < 0 ? 'text-destructive' : 'text-foreground'}`}>{fmtEur(actualIncome)}</p>
           <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">доход − расходы</p>
           {monthExpenses > 0 && (
             <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">−{fmtEur(monthExpenses)} расходов</p>
@@ -7705,6 +7771,18 @@ function SettingsSection({ userId }: { userId: string }) {
       description: 'Бумажный тёплый стиль с кольцами',
       preview: { sidebar: '#201a15', bg: '#e8e1d6', card: '#faf7f2', accent: '#c47830' },
     },
+    {
+      id: 'saas-dark',
+      name: 'SaaS тёмная',
+      description: 'Премиум-стиль, гамбургер-меню на телефоне',
+      preview: { sidebar: '#181c21', bg: '#14181c', card: '#1e2328', accent: '#3b82f6' },
+    },
+    {
+      id: 'saas-light',
+      name: 'SaaS светлая',
+      description: 'Тот же премиум-стиль, светлый вариант',
+      preview: { sidebar: '#ffffff', bg: '#f5f7fa', card: '#ffffff', accent: '#2563eb' },
+    },
   ]
 
   return (
@@ -7770,7 +7848,7 @@ function SettingsSection({ userId }: { userId: string }) {
         <h3 className="font-semibold mb-1">Тема оформления</h3>
         <p className="text-sm text-muted-foreground mb-5">Выберите стиль интерфейса</p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {themes.map(t => {
             const isActive = theme === t.id
             return (
@@ -7994,7 +8072,8 @@ function MobileOwnerOverview({
 export default function OwnerDashboard() {
   const { user, signOut, roles } = useAuth()
   const isAdmin = roles.includes('admin')
-  const { theme } = useTheme()
+  const { theme, setTheme } = useTheme()
+  const isSaasTheme = theme === 'saas-dark' || theme === 'saas-light'
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [section, setSection] = useState<Section>('dashboard')
@@ -8005,6 +8084,7 @@ export default function OwnerDashboard() {
   const [calSelectedApt, setCalSelectedApt] = useState(() => getLastAptId())
   const isMobile = useIsMobile()
   const [moreOpen, setMoreOpen] = useState(false)
+  const [saasMenuOpen, setSaasMenuOpen] = useState(false)
   const [showAgentEvents, setShowAgentEvents] = useState(false)
 
   const { data: apartments = [] } = useQuery({
@@ -8117,6 +8197,21 @@ export default function OwnerDashboard() {
 
   const handleSignOutRoot = async () => { await signOut(); navigate('/') }
 
+  // Menu items for the saas-theme mobile hamburger slide-out (same real sections as the
+  // desktop sidebar + the "Уборка" shortcut that the classic bottom tab bar has).
+  const saasMenuItems: Array<{ id: string; label: string; icon: React.ReactNode; active: boolean; action: () => void; badge?: number }> = [
+    { id: 'dashboard', label: 'Дашборд', icon: <LayoutDashboard size={17} />, active: topView === 'owner' && section === 'dashboard', action: () => { setTopView('owner'); setSection('dashboard'); setSaasMenuOpen(false) } },
+    { id: 'bookings', label: 'Бронирования', icon: <CalendarCheck size={17} />, active: topView === 'owner' && section === 'bookings', action: () => { setTopView('owner'); setSection('bookings'); setSaasMenuOpen(false) }, badge: pendingCount },
+    { id: 'calendar', label: 'Календарь', icon: <CalendarDays size={17} />, active: topView === 'owner' && section === 'calendar', action: () => { setTopView('owner'); setSection('calendar'); setSaasMenuOpen(false) } },
+    { id: 'cleaning', label: 'Уборка', icon: <Brush size={17} />, active: topView === 'cleaner', action: () => { setTopView('cleaner'); setSaasMenuOpen(false) } },
+    { id: 'income', label: 'Доходы', icon: <BarChart2 size={17} />, active: topView === 'owner' && section === 'income', action: () => { setTopView('owner'); setSection('income'); setSaasMenuOpen(false) } },
+    { id: 'expenses', label: 'Расходы', icon: <Receipt size={17} />, active: topView === 'owner' && section === 'expenses', action: () => { setTopView('owner'); setSection('expenses'); setSaasMenuOpen(false) }, badge: pendingExpensesCount },
+    { id: 'tax_report', label: 'Налог IRPF', icon: <FileSpreadsheet size={17} />, active: topView === 'owner' && section === 'tax_report', action: () => { setTopView('owner'); setSection('tax_report'); setSaasMenuOpen(false) } },
+    { id: 'apartments', label: 'Апартаменты', icon: <Building2 size={17} />, active: topView === 'owner' && section === 'apartments', action: () => { setTopView('owner'); setSection('apartments'); setSaasMenuOpen(false) } },
+    { id: 'settings', label: 'Настройки', icon: <Settings size={17} />, active: topView === 'owner' && section === 'settings', action: () => { setTopView('owner'); setSection('settings'); setSaasMenuOpen(false) } },
+    ...(isAdmin ? [{ id: 'admin', label: 'Админ', icon: <ShieldCheck size={17} />, active: topView === 'owner' && section === 'admin', action: () => { setTopView('owner'); setSection('admin'); setSaasMenuOpen(false) } }] : []),
+  ]
+
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* Sidebar — desktop only, mobile uses the bottom tab bar instead */}
@@ -8196,7 +8291,7 @@ export default function OwnerDashboard() {
       )}
 
       {/* Main content column */}
-      <div className="flex-1 flex flex-col min-h-0">
+      <div className={`flex-1 flex flex-col min-h-0 ${isSaasTheme ? 'pt-[calc(52px+env(safe-area-inset-top))] md:pt-0' : ''}`}>
         {/* Top header bar — desktop only, mobile uses the bottom tab bar instead */}
         <header className="hidden md:flex flex-shrink-0 h-14 bg-card border-b border-border relative items-center px-3 md:px-6">
           {/* Center tabs — absolutely centered */}
@@ -8250,11 +8345,11 @@ export default function OwnerDashboard() {
 
         {/* Content area — cleaner view */}
         {topView === 'cleaner' && (
-          <main className="flex-1 flex overflow-hidden pb-16 md:pb-0">
+          <main className={`flex-1 flex overflow-hidden ${isSaasTheme ? 'pb-0' : 'pb-16'} md:pb-0`}>
             <CleanerView bookings={bookings} onRefresh={invalidate} ownerId={user.id} fullApartments={apartments} />
           </main>
         )}
-        <main className={`flex-1 relative min-h-0 pb-16 md:pb-0 ${topView === 'cleaner' ? 'hidden' : ''} ${section === 'dashboard' || section === 'calendar' ? 'overflow-y-auto xl:overflow-hidden flex flex-col' : 'overflow-y-auto'}`}
+        <main className={`flex-1 relative min-h-0 ${isSaasTheme ? 'pb-0' : 'pb-16'} md:pb-0 ${topView === 'cleaner' ? 'hidden' : ''} ${section === 'dashboard' || section === 'calendar' ? 'overflow-y-auto xl:overflow-hidden flex flex-col' : 'overflow-y-auto'}`}
           style={section === 'dashboard' ? {
             backgroundImage: 'radial-gradient(ellipse at 15% 0%, hsl(var(--primary) / 0.05) 0%, transparent 55%), radial-gradient(ellipse at 85% 95%, hsl(var(--primary) / 0.04) 0%, transparent 50%)',
           } : undefined}>
@@ -8336,90 +8431,187 @@ export default function OwnerDashboard() {
         )}
       </AnimatePresence>
 
-      {/* Mobile floating bell — same agent-events entry point as the desktop header bell */}
-      {topView === 'owner' && (
-        <button onClick={() => setShowAgentEvents(true)}
-          className={`md:hidden fixed top-3 right-3 z-40 p-2.5 rounded-full shadow-[var(--shadow-card-hover)] bg-card border border-border ${agentEventsCount > 0 ? 'text-red-600' : 'text-muted-foreground'}`}
-          style={{ top: 'calc(0.75rem + env(safe-area-inset-top))' }}>
-          <motion.div animate={agentEventsCount > 0 ? { rotate: [0, -12, 12, -8, 8, 0] } : {}}
-            transition={{ duration: 0.6, repeat: agentEventsCount > 0 ? Infinity : 0, repeatDelay: 2 }}>
-            <Bell size={18} />
-          </motion.div>
-          {agentEventsCount > 0 && (
-            <motion.span
-              animate={{ scale: [1, 1.15, 1] }} transition={{ duration: 1, repeat: Infinity }}
-              className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
-              {agentEventsCount}
-            </motion.span>
-          )}
-        </button>
-      )}
-
-      {/* Mobile bottom tab bar */}
-      <nav className="md:hidden fixed inset-x-0 bottom-0 z-40 flex items-stretch h-16 px-1"
-        style={{ background: 'hsl(var(--sidebar))', borderTop: '1px solid hsl(var(--sidebar-border))', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-        {([
-          { key: 'dashboard', label: 'Обзор', icon: <LayoutDashboard size={19} />, action: () => { setTopView('owner'); setSection('dashboard') } },
-          { key: 'bookings', label: 'Брони', icon: <CalendarCheck size={19} />, action: () => { setTopView('owner'); setSection('bookings') } },
-          { key: 'calendar', label: 'Календарь', icon: <CalendarDays size={19} />, action: () => { setTopView('owner'); setSection('calendar') } },
-          { key: 'cleaning', label: 'Уборка', icon: <Brush size={19} />, action: () => setTopView('cleaner') },
-          { key: 'more', label: 'Ещё', icon: <MoreHorizontal size={19} />, action: () => setMoreOpen(true) },
-        ] as const).map(tab => {
-          const isActive = tab.key === 'cleaning' ? topView === 'cleaner'
-            : tab.key === 'more' ? moreOpen
-            : (topView === 'owner' && section === tab.key)
-          return (
-            <button key={tab.key} onClick={tab.action}
-              className="flex-1 flex flex-col items-center justify-center gap-0.5 relative"
-              style={{ color: isActive ? 'hsl(var(--sidebar-active-fg))' : 'hsl(var(--sidebar-fg))' }}>
-              {isActive && (
-                <span className="absolute top-1 inset-x-6 h-0.5 rounded-full" style={{ background: 'hsl(var(--sidebar-active-fg))' }} />
-              )}
-              {tab.icon}
-              <span className="text-[10px] font-medium">{tab.label}</span>
-              {tab.key === 'bookings' && pendingCount > 0 && (
-                <span className="absolute top-0 right-4 w-4 h-4 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center">
-                  {pendingCount}
-                </span>
+      {!isSaasTheme && (
+        <>
+          {/* Mobile floating bell — same agent-events entry point as the desktop header bell */}
+          {topView === 'owner' && (
+            <button onClick={() => setShowAgentEvents(true)}
+              className={`md:hidden fixed top-3 right-3 z-40 p-2.5 rounded-full shadow-[var(--shadow-card-hover)] bg-card border border-border ${agentEventsCount > 0 ? 'text-red-600' : 'text-muted-foreground'}`}
+              style={{ top: 'calc(0.75rem + env(safe-area-inset-top))' }}>
+              <motion.div animate={agentEventsCount > 0 ? { rotate: [0, -12, 12, -8, 8, 0] } : {}}
+                transition={{ duration: 0.6, repeat: agentEventsCount > 0 ? Infinity : 0, repeatDelay: 2 }}>
+                <Bell size={18} />
+              </motion.div>
+              {agentEventsCount > 0 && (
+                <motion.span
+                  animate={{ scale: [1, 1.15, 1] }} transition={{ duration: 1, repeat: Infinity }}
+                  className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                  {agentEventsCount}
+                </motion.span>
               )}
             </button>
-          )
-        })}
-      </nav>
+          )}
 
-      {/* "Ещё" bottom sheet */}
-      <AnimatePresence>
-        {moreOpen && (
-          <>
-            <motion.div className="md:hidden fixed inset-0 bg-black/40 z-40"
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => setMoreOpen(false)} />
-            <motion.div className="md:hidden fixed inset-x-0 bottom-0 z-50 bg-card rounded-t-3xl p-4 shadow-[var(--shadow-card-hover)]"
-              style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
-              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ duration: 0.2 }}>
-              <div className="w-10 h-1 rounded-full bg-border mx-auto mb-4" />
-              {([
-                { id: 'income' as Section, label: 'Доходы', icon: <BarChart2 size={17} /> },
-                { id: 'expenses' as Section, label: 'Расходы', icon: <Receipt size={17} /> },
-                { id: 'tax_report' as Section, label: 'Налог IRPF', icon: <FileSpreadsheet size={17} /> },
-                { id: 'apartments' as Section, label: 'Апартаменты', icon: <Building2 size={17} /> },
-                { id: 'settings' as Section, label: 'Настройки', icon: <Settings size={17} /> },
-                ...(isAdmin ? [{ id: 'admin' as Section, label: 'Админ', icon: <ShieldCheck size={17} /> }] : []),
-              ]).map(item => (
-                <button key={item.id} onClick={() => { setTopView('owner'); setSection(item.id); setMoreOpen(false) }}
-                  className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium hover:bg-muted transition-colors">
-                  {item.icon} {item.label}
+          {/* Mobile bottom tab bar */}
+          <nav className="md:hidden fixed inset-x-0 bottom-0 z-40 flex items-stretch h-16 px-1"
+            style={{ background: 'hsl(var(--sidebar))', borderTop: '1px solid hsl(var(--sidebar-border))', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+            {([
+              { key: 'dashboard', label: 'Обзор', icon: <LayoutDashboard size={19} />, action: () => { setTopView('owner'); setSection('dashboard') } },
+              { key: 'bookings', label: 'Брони', icon: <CalendarCheck size={19} />, action: () => { setTopView('owner'); setSection('bookings') } },
+              { key: 'calendar', label: 'Календарь', icon: <CalendarDays size={19} />, action: () => { setTopView('owner'); setSection('calendar') } },
+              { key: 'cleaning', label: 'Уборка', icon: <Brush size={19} />, action: () => setTopView('cleaner') },
+              { key: 'more', label: 'Ещё', icon: <MoreHorizontal size={19} />, action: () => setMoreOpen(true) },
+            ] as const).map(tab => {
+              const isActive = tab.key === 'cleaning' ? topView === 'cleaner'
+                : tab.key === 'more' ? moreOpen
+                : (topView === 'owner' && section === tab.key)
+              return (
+                <button key={tab.key} onClick={tab.action}
+                  className="flex-1 flex flex-col items-center justify-center gap-0.5 relative"
+                  style={{ color: isActive ? 'hsl(var(--sidebar-active-fg))' : 'hsl(var(--sidebar-fg))' }}>
+                  {isActive && (
+                    <span className="absolute top-1 inset-x-6 h-0.5 rounded-full" style={{ background: 'hsl(var(--sidebar-active-fg))' }} />
+                  )}
+                  {tab.icon}
+                  <span className="text-[10px] font-medium">{tab.label}</span>
+                  {tab.key === 'bookings' && pendingCount > 0 && (
+                    <span className="absolute top-0 right-4 w-4 h-4 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center">
+                      {pendingCount}
+                    </span>
+                  )}
                 </button>
-              ))}
-              <div className="h-px bg-border my-2" />
-              <button onClick={() => { setMoreOpen(false); handleSignOutRoot() }}
-                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium text-destructive hover:bg-muted transition-colors">
-                <LogOut size={17} /> Выйти
+              )
+            })}
+          </nav>
+
+          {/* "Ещё" bottom sheet */}
+          <AnimatePresence>
+            {moreOpen && (
+              <>
+                <motion.div className="md:hidden fixed inset-0 bg-black/40 z-40"
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                  onClick={() => setMoreOpen(false)} />
+                <motion.div className="md:hidden fixed inset-x-0 bottom-0 z-50 bg-card rounded-t-3xl p-4 shadow-[var(--shadow-card-hover)]"
+                  style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
+                  initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ duration: 0.2 }}>
+                  <div className="w-10 h-1 rounded-full bg-border mx-auto mb-4" />
+                  {([
+                    { id: 'income' as Section, label: 'Доходы', icon: <BarChart2 size={17} /> },
+                    { id: 'expenses' as Section, label: 'Расходы', icon: <Receipt size={17} /> },
+                    { id: 'tax_report' as Section, label: 'Налог IRPF', icon: <FileSpreadsheet size={17} /> },
+                    { id: 'apartments' as Section, label: 'Апартаменты', icon: <Building2 size={17} /> },
+                    { id: 'settings' as Section, label: 'Настройки', icon: <Settings size={17} /> },
+                    ...(isAdmin ? [{ id: 'admin' as Section, label: 'Админ', icon: <ShieldCheck size={17} /> }] : []),
+                  ]).map(item => (
+                    <button key={item.id} onClick={() => { setTopView('owner'); setSection(item.id); setMoreOpen(false) }}
+                      className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium hover:bg-muted transition-colors">
+                      {item.icon} {item.label}
+                    </button>
+                  ))}
+                  <div className="h-px bg-border my-2" />
+                  <button onClick={() => { setMoreOpen(false); handleSignOutRoot() }}
+                    className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium text-destructive hover:bg-muted transition-colors">
+                    <LogOut size={17} /> Выйти
+                  </button>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+        </>
+      )}
+
+      {isSaasTheme && (
+        <>
+          {/* Mobile top bar — hamburger + logo + theme toggle + bell + avatar (replaces bottom tab bar) */}
+          <div className="md:hidden fixed inset-x-0 top-0 z-40 flex items-center justify-between gap-2 px-3"
+            style={{ background: 'hsl(var(--sidebar))', borderBottom: '1px solid hsl(var(--sidebar-border))', height: 'calc(52px + env(safe-area-inset-top))', paddingTop: 'env(safe-area-inset-top)' }}>
+            <div className="flex items-center gap-2 min-w-0">
+              <button onClick={() => setSaasMenuOpen(true)} aria-label="Меню"
+                className="p-1.5 rounded-lg flex-shrink-0" style={{ color: 'hsl(var(--sidebar-logo-fg))' }}>
+                <Menu size={20} />
               </button>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+              <Logo surface="sidebar" className="h-6 w-auto flex-shrink-0" />
+            </div>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <button onClick={() => setTheme(theme === 'saas-dark' ? 'saas-light' : 'saas-dark')} aria-label="Переключить тему"
+                className="relative w-10 h-[22px] rounded-full flex-shrink-0" style={{ background: 'hsl(var(--sidebar-hover))' }}>
+                <span className="absolute top-0.5 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-white transition-all"
+                  style={{ left: theme === 'saas-dark' ? '20px' : '2px' }}>
+                  {theme === 'saas-dark' ? <Moon size={10} className="text-slate-800" /> : <Sun size={10} className="text-amber-500" />}
+                </span>
+              </button>
+              <button onClick={() => setShowAgentEvents(true)}
+                className={`relative p-1.5 rounded-lg ${agentEventsCount > 0 ? 'text-red-500' : ''}`}
+                style={agentEventsCount > 0 ? undefined : { color: 'hsl(var(--sidebar-fg))' }}>
+                <motion.div animate={agentEventsCount > 0 ? { rotate: [0, -12, 12, -8, 8, 0] } : {}}
+                  transition={{ duration: 0.6, repeat: agentEventsCount > 0 ? Infinity : 0, repeatDelay: 2 }}>
+                  <Bell size={18} />
+                </motion.div>
+                {agentEventsCount > 0 && (
+                  <motion.span
+                    animate={{ scale: [1, 1.15, 1] }} transition={{ duration: 1, repeat: Infinity }}
+                    className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                    {agentEventsCount}
+                  </motion.span>
+                )}
+              </button>
+              <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                style={{ background: 'hsl(var(--sidebar-active-bg))', color: 'hsl(var(--sidebar-active-fg))' }}>
+                {user?.email?.[0]?.toUpperCase() ?? 'U'}
+              </div>
+            </div>
+          </div>
+
+          {/* Slide-out left menu */}
+          <AnimatePresence>
+            {saasMenuOpen && (
+              <>
+                <motion.div className="md:hidden fixed inset-0 bg-black/45 z-40"
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                  onClick={() => setSaasMenuOpen(false)} />
+                <motion.div className="md:hidden fixed inset-y-0 left-0 z-50 w-[250px] flex flex-col gap-0.5 p-3"
+                  style={{ background: 'hsl(var(--sidebar))', borderRight: '1px solid hsl(var(--sidebar-border))', paddingTop: 'calc(0.75rem + env(safe-area-inset-top))', paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+                  initial={{ x: '-100%' }} animate={{ x: 0 }} exit={{ x: '-100%' }} transition={{ duration: 0.2 }}>
+                  <p className="text-[11px] font-bold uppercase tracking-wide px-2 mb-2" style={{ color: 'hsl(var(--sidebar-fg))' }}>Меню</p>
+                  {saasMenuItems.map(item => (
+                    <button key={item.id} onClick={item.action}
+                      className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold relative transition-colors"
+                      style={{
+                        background: item.active ? 'hsl(var(--sidebar-active-bg))' : 'transparent',
+                        color: item.active ? 'hsl(var(--sidebar-active-fg))' : 'hsl(var(--sidebar-logo-fg))',
+                      }}>
+                      {item.icon} {item.label}
+                      {!!item.badge && item.badge > 0 && (
+                        <span className="ml-auto w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                          {item.badge}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                  <div className="mt-auto pt-3" style={{ borderTop: '1px solid hsl(var(--sidebar-border))' }}>
+                    <div className="flex items-center gap-2.5 px-2 py-1.5 mb-1">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+                        style={{ background: 'hsl(var(--sidebar-active-bg))', color: 'hsl(var(--sidebar-active-fg))' }}>
+                        {user?.email?.[0]?.toUpperCase() ?? 'U'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold truncate" style={{ color: 'hsl(var(--sidebar-logo-fg))' }}>
+                          {user?.email?.split('@')[0] ?? 'Пользователь'}
+                        </p>
+                        <p className="text-[10px]" style={{ color: 'hsl(var(--sidebar-fg))' }}>Владелец</p>
+                      </div>
+                    </div>
+                    <button onClick={() => { setSaasMenuOpen(false); handleSignOutRoot() }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold text-destructive">
+                      <LogOut size={17} /> Выйти
+                    </button>
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+        </>
+      )}
 
       {/* Панель событий от почтового агента — новые/обновлённые брони, счета.
           Ничего не попадает в Заезды/Календарь/Расходы, пока хозяин не нажмёт «Обновить». */}

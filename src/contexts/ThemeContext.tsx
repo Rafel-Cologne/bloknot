@@ -1,6 +1,6 @@
 import { createContext, useContext, useState } from 'react'
 
-export type AppTheme = 'standard' | 'light' | 'business' | 'notebook'
+export type AppTheme = 'standard' | 'light' | 'business' | 'notebook' | 'saas-dark' | 'saas-light'
 
 interface ThemeContextType {
   theme: AppTheme

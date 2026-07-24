@@ -182,6 +182,94 @@
     --sidebar-logo-fg: 38 68% 70%;
   }
 
+  /* ── SAAS-DARK theme ──────────────────────────────── */
+  [data-theme="saas-dark"] {
+    --background: 210 17% 9%;
+    --foreground: 0 0% 100%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 14% 20%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 210 14% 18%;
+    --muted-foreground: 215 14% 67%;
+
+    --accent: 217 91% 60%;
+    --accent-foreground: 0 0% 100%;
+
+    --card: 210 14% 14%;
+    --card-foreground: 0 0% 100%;
+
+    --border: 210 14% 22%;
+    --ring: 217 91% 60%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --radius: 1rem;
+
+    --gradient-warm: linear-gradient(135deg, hsl(210, 14%, 16%) 0%, hsl(210, 17%, 11%) 100%);
+    --gradient-primary: linear-gradient(135deg, hsl(217, 91%, 60%) 0%, hsl(221, 83%, 50%) 100%);
+
+    --shadow-card: 0 2px 20px 0 hsl(0 0% 0% / 0.35), 0 1px 6px 0 hsl(0 0% 0% / 0.25);
+    --shadow-card-hover: 0 8px 40px 0 hsl(0 0% 0% / 0.5), 0 2px 12px 0 hsl(0 0% 0% / 0.3);
+
+    /* Sidebar / nav */
+    --sidebar: 213 16% 11%;
+    --sidebar-fg: 215 14% 67%;
+    --sidebar-border: 210 14% 22%;
+    --sidebar-active-bg: 217 40% 22%;
+    --sidebar-active-fg: 217 91% 65%;
+    --sidebar-hover: 213 16% 16%;
+    --sidebar-logo-fg: 0 0% 100%;
+  }
+
+  /* ── SAAS-LIGHT theme ─────────────────────────────── */
+  [data-theme="saas-light"] {
+    --background: 216 33% 97%;
+    --foreground: 218 15% 14%;
+
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 214 32% 91%;
+    --secondary-foreground: 218 15% 14%;
+
+    --muted: 214 32% 93%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 221 83% 53%;
+    --accent-foreground: 0 0% 100%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 218 15% 14%;
+
+    --border: 214 32% 91%;
+    --ring: 221 83% 53%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+
+    --radius: 1rem;
+
+    --gradient-warm: linear-gradient(135deg, hsl(216, 33%, 96%) 0%, hsl(214, 32%, 91%) 100%);
+    --gradient-primary: linear-gradient(135deg, hsl(221, 83%, 53%) 0%, hsl(230, 70%, 48%) 100%);
+
+    --shadow-card: 0 2px 16px 0 hsl(218 15% 14% / 0.08), 0 1px 4px 0 hsl(218 15% 14% / 0.04);
+    --shadow-card-hover: 0 8px 32px 0 hsl(218 15% 14% / 0.12), 0 2px 8px 0 hsl(218 15% 14% / 0.06);
+
+    /* Sidebar / nav */
+    --sidebar: 0 0% 100%;
+    --sidebar-fg: 218 15% 14%;
+    --sidebar-border: 214 32% 91%;
+    --sidebar-active-bg: 214 95% 93%;
+    --sidebar-active-fg: 221 83% 53%;
+    --sidebar-hover: 214 32% 96%;
+    --sidebar-logo-fg: 218 15% 14%;
+  }
+
   * {
     @apply border-border box-border;
   }
