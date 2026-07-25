@@ -367,15 +367,32 @@ function BookingForm({
     return expandRangeDays(startDate, endDate).some((d) => hardBlockedDays.has(d))
   }, [startDate, endDate, hardBlockedDays])
 
+  const guestsExceeded = form.guests_count > maxGuests
+
+  const [formError, setFormError] = useState<string | null>(null)
+
+  // Своя проверка формы вместо браузерной (form имеет noValidate) — иначе всплывающие
+  // подсказки браузера показываются на языке системы/браузера, а не на русском.
+  const validate = (): string | null => {
+    if (!startDate || !endDate) return 'Укажите даты заезда и выезда'
+    if (endDate <= startDate) return 'Дата выезда должна быть позже даты заезда'
+    if (hasOverlap) return 'Эти даты уже заняты — выберите другой период'
+    if (!form.guests_count || form.guests_count < 1) return 'Укажите количество гостей'
+    if (guestsExceeded) return `Бронирование недоступно: превышено максимальное количество гостей (максимум ${maxGuests})`
+    if (!form.guest_name.trim()) return 'Укажите ваше имя'
+    if (form.guest_phone.replace(/\D/g, '').length < 6) return 'Укажите корректный номер телефона'
+    if (!form.guest_message.trim()) return 'Оставьте короткое сообщение хозяину'
+    return null
+  }
+
   const submit = useMutation({
     mutationFn: async () => {
-      if (hasOverlap) throw new Error(t('booking.datesUnavailable', { defaultValue: 'Эти даты уже заняты — выберите другой период' }))
       const { error } = await supabase.from('bookings').insert({
         apartment_id: apartmentId,
         guest_id: user!.id,
-        guest_name: form.guest_name,
+        guest_name: form.guest_name.trim(),
         guest_phone: form.guest_phone,
-        guest_message: form.guest_message,
+        guest_message: form.guest_message.trim(),
         start_date: startDate,
         end_date: endDate,
         guests_count: form.guests_count,
@@ -392,6 +409,9 @@ function BookingForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    const err = validate()
+    setFormError(err)
+    if (err) return
     submit.mutate()
   }
 
@@ -419,6 +439,7 @@ function BookingForm({
   return (
     <form
       onSubmit={handleSubmit}
+      noValidate
       className="bg-card border border-border rounded-2xl p-5 shadow-[var(--shadow-card)] flex flex-col gap-4"
     >
       <h3 className="font-display font-semibold text-foreground text-base">
@@ -464,15 +485,28 @@ function BookingForm({
           {t('booking.guestsCount', { defaultValue: 'Количество гостей' })}
         </label>
         <input
-          type="number"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
           required
-          min={1}
-          max={maxGuests}
-          value={form.guests_count}
-          onChange={(e) => set('guests_count', parseInt(e.target.value) || 1)}
-          className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          value={form.guests_count === 0 ? '' : String(form.guests_count)}
+          onChange={(e) => {
+            // Только цифры, максимум 2 знака — исключает и "стрелки лечат 2, а с клавиатуры
+            // можно набрать сколько угодно", и абсурдные значения вроде 10000000000000.
+            const digits = e.target.value.replace(/\D/g, '').slice(0, 2)
+            set('guests_count', digits ? parseInt(digits, 10) : 0)
+          }}
+          className={`rounded-xl border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring ${guestsExceeded ? 'border-destructive focus:ring-destructive' : 'border-border'}`}
         />
         <p className="text-xs text-muted-foreground">{t('booking.maxGuests', { defaultValue: 'Максимум:' })} {maxGuests}</p>
+        <p className="text-[11px] text-muted-foreground leading-snug">
+          {t('booking.guestsWarning', { defaultValue: 'Указывайте фактическое число гостей — заниженное количество может повлечь штраф или доплату по факту заезда.' })}
+        </p>
+        {guestsExceeded && (
+          <p className="text-xs text-destructive bg-destructive/10 rounded-xl px-3 py-2 mt-1">
+            {t('booking.guestsExceeded', { defaultValue: `Бронирование недоступно: превышено максимальное количество гостей (максимум ${maxGuests})` })}
+          </p>
+        )}
       </div>
 
       {/* Guest info */}
@@ -505,9 +539,13 @@ function BookingForm({
           <span className="pl-2 text-sm text-muted-foreground select-none">+</span>
           <input
             type="tel"
+            inputMode="numeric"
+            pattern="[0-9]*"
             required
             value={form.guest_phone.replace(/^\+/, '')}
-            onChange={(e) => set('guest_phone', '+' + e.target.value.replace(/^\+*/, ''))}
+            // Только цифры — раньше вырезался лишь ведущий "+", и в поле можно было
+            // случайно вставить/напечатать буквы (даже кириллицу).
+            onChange={(e) => set('guest_phone', '+' + e.target.value.replace(/\D/g, '').slice(0, 15))}
             placeholder="7 999 000-00-00"
             className="flex-1 bg-transparent outline-none px-1 py-2 text-sm text-foreground min-w-0"
           />
@@ -563,6 +601,10 @@ function BookingForm({
         </p>
       )}
 
+      {formError && !hasOverlap && !guestsExceeded && (
+        <p className="text-xs text-destructive bg-destructive/10 rounded-xl px-3 py-2">{formError}</p>
+      )}
+
       {submit.isError && (
         <p className="text-xs text-destructive">
           {(submit.error as Error)?.message ?? t('common.error', { defaultValue: 'Ошибка. Попробуйте снова.' })}
@@ -571,7 +613,7 @@ function BookingForm({
 
       <button
         type="submit"
-        disabled={submit.isPending || hasOverlap}
+        disabled={submit.isPending || hasOverlap || guestsExceeded}
         className="btn-primary rounded-xl py-2.5 text-sm font-semibold disabled:opacity-60 w-full"
       >
         {submit.isPending
