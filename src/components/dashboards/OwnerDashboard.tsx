@@ -1,5 +1,5 @@
 ﻿import { useState, useMemo, useEffect, useRef, Fragment } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { Logo } from '@/components/Logo'
@@ -120,6 +120,7 @@ type BookingRow = {
   host_service_fee_amount: number | null
   external_booking_id: string | null
   guest_rating: number | null
+  exclude_from_tax: boolean
   apartments: { title: string; address: string }
   cleaning_tasks: CleaningTask[]
 }
@@ -3095,6 +3096,201 @@ function DashboardOverview({
 
 // ─── Apartments Section ───────────────────────────────────────────────────────
 
+// ─── Co-owners (доли владения + налоговое резидентство для Modelo 210) ─────────
+
+type TaxResidency = 'resident_es' | 'non_resident_eu' | 'non_resident_other'
+const TAX_RESIDENCY_LABELS: Record<TaxResidency, string> = {
+  resident_es: 'Резидент Испании (Modelo 100)',
+  non_resident_eu: 'Резидент ЕС/ЕЭЗ (19%)',
+  non_resident_other: 'Резидент вне ЕС/ЕЭЗ (24%)',
+}
+
+type ApartmentOwnerRow = {
+  id: string | null // null = ещё не сохранён в БД
+  full_name: string
+  nif_nie: string
+  tax_country_code: string
+  tax_residency: TaxResidency
+  ownership_pct: string
+}
+
+const blankOwnerRow = (pct: number): ApartmentOwnerRow => ({
+  id: null, full_name: '', nif_nie: '', tax_country_code: '', tax_residency: 'non_resident_eu',
+  ownership_pct: pct > 0 ? String(pct) : '',
+})
+
+function ApartmentOwnersModal({ apartment, onClose, onSaved }: {
+  apartment: Apartment; onClose: () => void; onSaved: () => void
+}) {
+  const [rows, setRows] = useState<ApartmentOwnerRow[]>([])
+  const [deletedIds, setDeletedIds] = useState<string[]>([])
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const loadedRef = useRef(false)
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['apartment-owners', apartment.id],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('apartment_owners').select('*')
+        .eq('apartment_id', apartment.id).order('created_at')
+      if (error) throw error
+      return data as never as (ApartmentOwnerRow & { id: string })[]
+    },
+  })
+
+  useEffect(() => {
+    if (data && !loadedRef.current) {
+      loadedRef.current = true
+      setRows(data.length > 0 ? data.map(d => ({
+        id: d.id, full_name: d.full_name ?? '', nif_nie: d.nif_nie ?? '',
+        tax_country_code: d.tax_country_code ?? '', tax_residency: (d.tax_residency as TaxResidency) ?? 'non_resident_eu',
+        ownership_pct: String(d.ownership_pct ?? ''),
+      })) : [blankOwnerRow(100)])
+    }
+  }, [data])
+
+  const sumPct = rows.reduce((s, r) => s + (parseFloat(r.ownership_pct) || 0), 0)
+
+  const updateRow = (i: number, patch: Partial<ApartmentOwnerRow>) =>
+    setRows(rs => rs.map((r, idx) => idx === i ? { ...r, ...patch } : r))
+
+  const addRow = () => setRows(rs => [...rs, blankOwnerRow(Math.max(0, 100 - sumPct))])
+
+  const removeRow = (i: number) => {
+    const row = rows[i]
+    if (row.id) setDeletedIds(ids => [...ids, row.id!])
+    setRows(rs => rs.filter((_, idx) => idx !== i))
+  }
+
+  const handleSave = async () => {
+    setError(null)
+    const cleaned = rows.filter(r => r.full_name.trim())
+    if (cleaned.length === 0) { setError('Добавьте хотя бы одного совладельца') ; return }
+    if (cleaned.some(r => !r.ownership_pct || parseFloat(r.ownership_pct) <= 0)) {
+      setError('У каждого совладельца должна быть доля больше 0%'); return
+    }
+    if (Math.round(sumPct * 100) / 100 !== 100) {
+      setError(`Сумма долей должна быть 100% (сейчас ${sumPct}%)`); return
+    }
+    setSaving(true)
+    try {
+      for (const id of deletedIds) {
+        const { error } = await supabase.from('apartment_owners').delete().eq('id', id)
+        if (error) throw error
+      }
+      for (const r of cleaned) {
+        const payload = {
+          apartment_id: apartment.id, full_name: r.full_name.trim(),
+          nif_nie: r.nif_nie.trim() || null, tax_country_code: r.tax_country_code.trim() || null,
+          tax_residency: r.tax_residency, ownership_pct: parseFloat(r.ownership_pct),
+        }
+        if (r.id) {
+          const { error } = await supabase.from('apartment_owners').update(payload).eq('id', r.id)
+          if (error) throw error
+        } else {
+          const { error } = await supabase.from('apartment_owners').insert(payload)
+          if (error) throw error
+        }
+      }
+      onSaved(); onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка сохранения')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 backdrop-blur-sm px-4">
+      <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }}
+        className="bg-card rounded-2xl shadow-[var(--shadow-card-hover)] w-full max-w-lg p-6 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-display font-semibold flex items-center gap-2"><Users size={18} /> Совладельцы</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">{apartment.title} — доли и налоговое резидентство для Modelo 210/100</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X size={18} /></button>
+        </div>
+
+        {isLoading ? (
+          <div className="text-sm text-muted-foreground py-6 text-center">Загрузка…</div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {rows.map((r, i) => (
+              <div key={r.id ?? `new-${i}`} className="border border-border rounded-xl p-3 flex flex-col gap-2 relative">
+                {rows.length > 1 && (
+                  <button onClick={() => removeRow(i)} title="Удалить совладельца"
+                    className="absolute top-2 right-2 p-1 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
+                    <Trash2 size={13} />
+                  </button>
+                )}
+                <div className="grid grid-cols-2 gap-2 pr-6">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Имя</label>
+                    <input type="text" value={r.full_name} onChange={e => updateRow(i, { full_name: e.target.value })}
+                      placeholder="Имя совладельца" className={inputCls} />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Доля, %</label>
+                    <input type="number" min={0} max={100} step={0.01} value={r.ownership_pct}
+                      onChange={e => updateRow(i, { ownership_pct: e.target.value })}
+                      placeholder="50" className={inputCls} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">NIF/NIE</label>
+                    <input type="text" value={r.nif_nie} onChange={e => updateRow(i, { nif_nie: e.target.value })}
+                      placeholder="X1234567L" className={inputCls} />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Страна (код)</label>
+                    <input type="text" value={r.tax_country_code} onChange={e => updateRow(i, { tax_country_code: e.target.value.toUpperCase().slice(0, 2) })}
+                      placeholder="DE" className={inputCls} />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Налоговое резидентство</label>
+                  <select value={r.tax_residency} onChange={e => updateRow(i, { tax_residency: e.target.value as TaxResidency })}
+                    className={inputCls}>
+                    {(Object.keys(TAX_RESIDENCY_LABELS) as TaxResidency[]).map(k => (
+                      <option key={k} value={k}>{TAX_RESIDENCY_LABELS[k]}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            ))}
+
+            <button onClick={addRow}
+              className="flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-medium bg-muted text-muted-foreground hover:bg-secondary transition-colors">
+              <Plus size={14} /> Добавить совладельца
+            </button>
+
+            <div className={`text-xs font-medium px-1 ${Math.round(sumPct * 100) / 100 === 100 ? 'text-emerald-600' : 'text-amber-600'}`}>
+              Сумма долей: {sumPct}% {Math.round(sumPct * 100) / 100 !== 100 && '— должно быть 100%'}
+            </div>
+
+            {error && (
+              <div className="text-sm text-destructive bg-destructive/10 rounded-xl px-3 py-2">{error}</div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={onClose} disabled={saving}
+                className="flex-1 py-2.5 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:bg-muted transition-colors">
+                Отмена
+              </button>
+              <button onClick={handleSave} disabled={saving}
+                className="flex-1 btn-primary rounded-xl py-2.5 text-sm font-semibold disabled:opacity-50">
+                {saving ? 'Сохранение…' : 'Сохранить'}
+              </button>
+            </div>
+          </div>
+        )}
+      </motion.div>
+    </div>
+  )
+}
+
 function ApartmentsSection({
   apartments, bookings, ownerId, onRefresh,
 }: {
@@ -3104,6 +3300,7 @@ function ApartmentsSection({
   const [modalOpen, setModalOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<Apartment | null>(null)
   const [pricingApt, setPricingApt] = useState<Apartment | null>(null)
+  const [ownersApt, setOwnersApt] = useState<Apartment | null>(null)
 
   const occupancyMap = useMemo(() => {
     const now = new Date()
@@ -3221,6 +3418,10 @@ function ApartmentsSection({
                         className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-xl text-xs font-medium bg-muted text-muted-foreground hover:bg-secondary transition-colors">
                         <Euro size={12} /> Цены
                       </button>
+                      <button onClick={() => setOwnersApt(apt)} title="Совладельцы и налоговое резидентство"
+                        className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-xl text-xs font-medium bg-muted text-muted-foreground hover:bg-secondary transition-colors">
+                        <Users size={12} /> Владельцы
+                      </button>
                       <button onClick={() => togglePublic.mutate({ id: apt.id, is_public: !apt.is_public })}
                         className="p-1.5 rounded-xl bg-muted text-muted-foreground hover:bg-secondary transition-colors" title={apt.is_public ? 'Скрыть' : 'Опубликовать'}>
                         {apt.is_public ? <Eye size={14} /> : <EyeOff size={14} />}
@@ -3245,6 +3446,9 @@ function ApartmentsSection({
         )}
         {pricingApt && (
           <PricingModal apartment={pricingApt} onClose={() => setPricingApt(null)} />
+        )}
+        {ownersApt && (
+          <ApartmentOwnersModal apartment={ownersApt} onClose={() => setOwnersApt(null)} onSaved={onRefresh} />
         )}
       </AnimatePresence>
     </div>
@@ -5987,6 +6191,8 @@ type Expense = {
   attachment_url: string | null
   deleted_at: string | null
   created_at: string
+  is_tax_deductible: boolean
+  proration_method: 'time_based' | 'per_booking'
 }
 
 const EXP_CATEGORIES: Record<string, { label: string; icon: React.ReactNode; color: string; bg: string }> = {
@@ -6100,7 +6306,17 @@ type ExpForm = {
   apartment_id: string; category: string; amount: string
   expense_date: string; invoice_period_start: string; invoice_period_end: string
   provider: string; description: string; file: File | null
+  is_tax_deductible: boolean
+  proration_method: 'time_based' | 'per_booking'
 }
+
+// Клининг и другие расходы "по конкретной сдаче" списываются на 100% (без пропорции
+// по дням аренды за год) — они и так возникают только благодаря сдаче. Остальное
+// (коммуналка, IBI, страховка, ипотека) — пропорционально дням сдачи в году.
+// Сам налог нерезидента (уплата Modelo 210/100) не является вычитаемым расходом —
+// по умолчанию выключаем флаг, хозяин может включить руками, если посчитает нужным.
+const defaultProration = (category: string): 'time_based' | 'per_booking' => category === 'cleaning' ? 'per_booking' : 'time_based'
+const defaultDeductible = (category: string) => category !== 'tax_non_resident'
 
 // Частичные значения для быстрого предзаполнения формы нового (не редактируемого) расхода —
 // например, из подсказки "отсутствует счёт" с уже известными суммой/датой/поставщиком.
@@ -6114,9 +6330,13 @@ function useExpenseForm(apartments: Apartment[], initial?: Expense | null, prefi
     expense_date: initial.expense_date,
     invoice_period_start: initial.invoice_period_start ?? '', invoice_period_end: initial.invoice_period_end ?? '',
     provider: initial.provider ?? '', description: initial.description ?? '', file: null,
+    is_tax_deductible: initial.is_tax_deductible ?? true,
+    proration_method: initial.proration_method ?? defaultProration(initial.category),
   } : {
     apartment_id: prefill?.apartment_id ?? apartments[0]?.id ?? '',
     category: prefill?.category ?? 'electricity', amount: prefill?.amount ?? '',
+    is_tax_deductible: defaultDeductible(prefill?.category ?? 'electricity'),
+    proration_method: defaultProration(prefill?.category ?? 'electricity'),
     expense_date: prefill?.expense_date ?? today,
     invoice_period_start: '', invoice_period_end: '',
     provider: prefill?.provider ?? '', description: '', file: null,
@@ -6164,6 +6384,8 @@ function AddExpenseModal({
       provider: form.provider.trim() || null,
       description: form.description.trim() || null,
       attachment_url,
+      is_tax_deductible: form.is_tax_deductible,
+      proration_method: form.proration_method,
     }
 
     const { error: err } = editing
@@ -6240,7 +6462,7 @@ function AddExpenseModal({
             ) : (
               <div className="grid grid-cols-3 gap-1.5">
                 {Object.entries(EXP_CATEGORIES).map(([k, v]) => (
-                  <button key={k} type="button" onClick={() => set('category', k)}
+                  <button key={k} type="button" onClick={() => { set('category', k); set('proration_method', defaultProration(k)); set('is_tax_deductible', defaultDeductible(k)) }}
                     className={`flex items-center gap-1.5 px-2 py-2 rounded-xl border text-xs font-medium transition-all ${
                       form.category === k
                         ? 'border-primary bg-primary/10 text-primary'
@@ -6300,6 +6522,28 @@ function AddExpenseModal({
               </span>
             </label>
           )}
+          <div className="flex flex-col gap-2 rounded-xl border border-border p-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Для налогового отчёта</p>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={form.is_tax_deductible} onChange={e => set('is_tax_deductible', e.target.checked)}
+                className="w-4 h-4 rounded accent-primary" />
+              <span className="text-sm">Вычитаемый расход</span>
+            </label>
+            {!form.is_tax_deductible && (
+              <p className="text-[11px] text-muted-foreground -mt-1">
+                Не войдёт в вычеты Modelo 210/100 (личные траты, штрафы, сам налог и т.п.)
+              </p>
+            )}
+            {form.is_tax_deductible && (
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Тип начисления</label>
+                <select value={form.proration_method} onChange={e => set('proration_method', e.target.value as ExpForm['proration_method'])} className={expFld}>
+                  <option value="time_based">Пропорционально дням сдачи (IBI, коммуналка, страховка)</option>
+                  <option value="per_booking">Полностью, без пропорции (клининг, разовые расходы по брони)</option>
+                </select>
+              </div>
+            )}
+          </div>
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Квитанция / счёт (PDF или фото)</label>
             <label className="flex items-center gap-2 cursor-pointer px-3 py-2.5 rounded-xl border border-dashed border-border hover:border-primary/50 transition-colors bg-background">
@@ -7176,12 +7420,135 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
 
 // ─── Tax Report Section ───────────────────────────────────────────────────────
 
+type TaxFilingStatus = 'draft' | 'filed' | 'paid'
+const FILING_STATUS_LABELS: Record<TaxFilingStatus, string> = { draft: 'Черновик', filed: 'Подано', paid: 'Оплачено' }
+
+type OwnerTaxRow = {
+  apartment_owner_id: string
+  owner_id: string | null
+  owner_name: string
+  nif_nie: string | null
+  ownership_pct: number
+  tax_residency: TaxResidency
+  tax_rate: number | null
+  gross_income: number
+  rental_days: number
+  calendar_days: number
+  platform_commission: number
+  time_based_expenses: number
+  per_booking_expenses: number
+  depreciation: number
+  deductible_expenses: number
+  taxable_base: number
+  tax_due: number
+}
+
+type TaxFiling = {
+  id: string; apartment_owner_id: string; fiscal_year: number; tax_model: string
+  status: TaxFilingStatus; filed_at: string | null; nrc: string | null; justificante_number: string | null
+  tax_due: number
+}
+
+function TaxRow({ label, value, positive, bold, accent }: { label: string; value: number; positive?: boolean; bold?: boolean; accent?: boolean }) {
+  return (
+    <div className={`flex justify-between py-1 ${bold ? 'font-semibold border-t border-border mt-1 pt-2' : ''}`}>
+      <span className="text-muted-foreground">{label}</span>
+      <span className={accent ? 'text-primary' : positive ? 'text-green-600' : value < 0 ? 'text-red-500' : ''}>
+        {value < 0 ? '−' : ''}{fmtEur(Math.abs(value))}
+      </span>
+    </div>
+  )
+}
+
+function OwnerTaxCard({ row, filing, onSave, saving }: {
+  row: OwnerTaxRow; filing: TaxFiling | null
+  onSave: (status: TaxFilingStatus, nrc: string, justificante: string) => void
+  saving: boolean
+}) {
+  const [status, setStatus] = useState<TaxFilingStatus>(filing?.status ?? 'draft')
+  const [nrc, setNrc] = useState(filing?.nrc ?? '')
+  const [justificante, setJustificante] = useState(filing?.justificante_number ?? '')
+
+  useEffect(() => {
+    if (filing) {
+      setStatus(filing.status); setNrc(filing.nrc ?? ''); setJustificante(filing.justificante_number ?? '')
+    }
+  }, [filing?.id])
+
+  const isResidentEs = row.tax_residency === 'resident_es'
+
+  return (
+    <div className="border border-border rounded-2xl p-4 flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <p className="font-semibold text-foreground flex items-center gap-2">
+            {row.owner_name} <span className="text-xs font-normal text-muted-foreground">— {row.ownership_pct}%</span>
+          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {TAX_RESIDENCY_LABELS[row.tax_residency]}{row.nif_nie ? ` · ${row.nif_nie}` : ''}
+          </p>
+        </div>
+        {filing && (
+          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+            filing.status === 'paid' ? 'bg-emerald-100 text-emerald-700' : filing.status === 'filed' ? 'bg-blue-100 text-blue-700' : 'bg-muted text-muted-foreground'
+          }`}>{FILING_STATUS_LABELS[filing.status]}</span>
+        )}
+      </div>
+
+      {isResidentEs ? (
+        <p className="text-sm text-muted-foreground bg-muted/40 rounded-xl px-3 py-2">
+          Валовый доход: {fmtEur(row.gross_income)}. Резидент Испании считается по Modelo 100 (IRPF, прогрессивная шкала) —
+          это приложение эту сумму не считает. Обратитесь к налоговому консультанту.
+        </p>
+      ) : (
+        <>
+          <div className="grid sm:grid-cols-2 gap-x-6 gap-y-0.5 text-sm">
+            <TaxRow label="Валовый доход (гость заплатил)" value={row.gross_income} positive />
+            <TaxRow label="Комиссия площадки" value={-row.platform_commission} />
+            <TaxRow label="Расходы (по дням сдачи)" value={-row.time_based_expenses} />
+            <TaxRow label="Расходы (по конкретной брони)" value={-row.per_booking_expenses} />
+            <TaxRow label="Амортизация 3%" value={-row.depreciation} />
+            <TaxRow label="Налоговая база" value={row.taxable_base} bold />
+            <TaxRow label={`Ставка ${row.tax_rate ?? 0}%`} value={row.tax_due} bold accent />
+          </div>
+
+          <div className="border-t border-border pt-3 flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <select value={status} onChange={e => setStatus(e.target.value as TaxFilingStatus)}
+                className="rounded-xl border border-border bg-background px-2.5 py-1.5 text-xs">
+                {(Object.keys(FILING_STATUS_LABELS) as TaxFilingStatus[]).map(s => (
+                  <option key={s} value={s}>{FILING_STATUS_LABELS[s]}</option>
+                ))}
+              </select>
+              {status !== 'draft' && (
+                <>
+                  <input type="text" value={justificante} onChange={e => setJustificante(e.target.value)}
+                    placeholder="Número de justificante" className="rounded-xl border border-border bg-background px-2.5 py-1.5 text-xs w-40" />
+                  <input type="text" value={nrc} onChange={e => setNrc(e.target.value)}
+                    placeholder="NRC (номер платежа)" className="rounded-xl border border-border bg-background px-2.5 py-1.5 text-xs w-40" />
+                </>
+              )}
+              <button onClick={() => onSave(status, nrc, justificante)} disabled={saving}
+                className="ml-auto px-3 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:opacity-90 disabled:opacity-50">
+                {saving ? 'Сохранение…' : filing ? 'Обновить' : 'Сохранить декларацию'}
+              </button>
+            </div>
+            {filing?.filed_at && (
+              <p className="text-[11px] text-muted-foreground">Подано: {filing.filed_at}</p>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function TaxReportSection({ apartments, bookings, onGoToBooking }: {
   apartments: Apartment[]; bookings: BookingRow[]; onGoToBooking: (bookingId: string) => void
 }) {
   const [year, setYear] = useState(new Date().getFullYear())
   const [aptFilter, setAptFilter] = useState('all')
-  const { user } = useAuth()
+  const qc = useQueryClient()
 
   const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i)
 
@@ -7192,181 +7559,98 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
     return CLEANER_APT_COLORS[i >= 0 ? i % CLEANER_APT_COLORS.length : 0]
   }
 
-  // ── Частные брони: учитывать в налогооблагаемом доходе или нет ───────────────
-  // Хозяин может вручную исключить отдельные частные (не Airbnb/Booking) брони из
-  // дохода casilla 0102 — например, если гость по факту не заплатил. Дни аренды при
-  // этом всё равно учитываются в пропорции вычитаемых расходов — жильё сдавалось.
-  const [excludedPrivateIds, setExcludedPrivateIds] = useState<Set<string>>(new Set())
-  const [privateModalOpen, setPrivateModalOpen] = useState(false)
-
-  useEffect(() => {
-    if (!user) return
-    try {
-      const raw = localStorage.getItem(`tax-excluded-private-${user.id}`)
-      setExcludedPrivateIds(new Set(raw ? JSON.parse(raw) : []))
-    } catch { setExcludedPrivateIds(new Set()) }
-  }, [user?.id])
-
-  const saveExcluded = (next: Set<string>) => {
-    setExcludedPrivateIds(next)
-    if (!user) return
-    try { localStorage.setItem(`tax-excluded-private-${user.id}`, JSON.stringify([...next])) } catch { /* ignore */ }
-  }
-
-  const calcPrivateRevenue = (b: BookingRow) => {
-    if (b.total_amount && b.total_amount > 0) return b.total_amount
-    const apt = apartments.find(a => a.id === b.apartment_id)
-    const nights = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
-    return (apt?.price_per_night ?? 0) * nights
-  }
-
-  const privateBookingsThisYear = useMemo(() => bookings
-    .filter(b => b.status === 'accepted' && b.source === 'other' && new Date(b.start_date) < new Date(`${year + 1}-01-01T00:00:00`) && new Date(b.end_date) > new Date(`${year}-01-01T00:00:00`))
-    .sort((a, b) => a.start_date.localeCompare(b.start_date)),
-  [bookings, year])
-  const includedPrivateCount = privateBookingsThisYear.filter(b => !excludedPrivateIds.has(b.id)).length
-  const allPrivateIncluded = includedPrivateCount === privateBookingsThisYear.length
-  const includedPrivateTotal = privateBookingsThisYear
-    .filter(b => !excludedPrivateIds.has(b.id))
-    .reduce((s, b) => s + calcPrivateRevenue(b), 0)
-
-  const togglePrivateOne = (id: string) => {
-    const next = new Set(excludedPrivateIds)
-    if (next.has(id)) next.delete(id); else next.add(id)
-    saveExcluded(next)
-  }
-  const togglePrivateAll = () => {
-    const next = new Set(excludedPrivateIds)
-    if (allPrivateIncluded) privateBookingsThisYear.forEach(b => next.add(b.id))
-    else privateBookingsThisYear.forEach(b => next.delete(b.id))
-    saveExcluded(next)
-  }
-
-  const { data: expenses = [] } = useQuery({
-    queryKey: ['tax-expenses', user?.id, year],
-    queryFn: async () => {
-      const { data } = await supabase.from('expenses').select('*')
-        .eq('owner_id', user!.id).eq('status', 'confirmed').is('deleted_at', null)
-        .gte('expense_date', `${year}-01-01`).lte('expense_date', `${year}-12-31`)
-      return (data ?? []) as Expense[]
-    },
-    enabled: !!user,
-  })
-
   const filteredApts = aptFilter === 'all' ? apartments : apartments.filter(a => a.id === aptFilter)
-
-  // Границы налогового года
   const yearStart = new Date(`${year}-01-01T00:00:00`)
   const yearEndExclusive = new Date(`${year + 1}-01-01T00:00:00`)
 
-  const aptData = filteredApts.map(apt => {
-    // Берём все брони, которые ХОТЯ БЫ ЧАСТИЧНО пересекаются с годом
-    // (а не только те, что начались в этом году — иначе бронь с заездом
-    // в декабре и выездом в январе целиком уходила бы в прошлый год)
-    const aptBookingsAll = bookings.filter(b =>
-      b.apartment_id === apt.id &&
-      b.status === 'accepted' &&
-      new Date(b.start_date) < yearEndExclusive &&
-      new Date(b.end_date) > yearStart
-    )
-    const aptExpenses = expenses.filter(e => e.apartment_id === apt.id)
+  // ── Официальный расчёт Modelo 210 по каждому совладельцу — считает СУБД (RPC
+  // calculate_annual_tax_report), фронтенд только отображает и даёт сохранить как
+  // декларацию (tax_filings). Один запрос на квартиру, чтобы лоадинг/ошибки были раздельно.
+  const rpcQueries = useQueries({
+    queries: filteredApts.map(apt => ({
+      queryKey: ['tax-rpc', apt.id, year],
+      queryFn: async () => {
+        const { data, error } = await supabase.rpc('calculate_annual_tax_report', { p_apartment_id: apt.id, p_year: year })
+        if (error) throw error
+        return (data ?? []) as OwnerTaxRow[]
+      },
+    })),
+  })
+  const isRpcLoading = rpcQueries.some(q => q.isLoading)
+  const ownerRowsByApt = new Map(filteredApts.map((apt, i) => [apt.id, rpcQueries[i]?.data ?? []]))
+  const allRows = [...ownerRowsByApt.values()].flat()
+  const allOwnerIds = allRows.map(r => r.apartment_owner_id)
 
-    let totalIncome = 0
-    let totalDays = 0
-    let personalDays = 0
-    let bookingsCount = 0
-    let missingAmountCount = 0
-    let totalCleaningExcluded = 0
-    let totalServiceFeeExcluded = 0
-    let personalValue = 0
-    const missingBookings: BookingRow[] = []
-    const personalBookings: BookingRow[] = []
+  const { data: filings = [] } = useQuery({
+    queryKey: ['tax-filings', year, allOwnerIds.join(',')],
+    queryFn: async () => {
+      if (allOwnerIds.length === 0) return []
+      const { data, error } = await supabase.from('tax_filings').select('*')
+        .eq('fiscal_year', year).in('apartment_owner_id', allOwnerIds)
+      if (error) throw error
+      return data as TaxFiling[]
+    },
+    enabled: allOwnerIds.length > 0,
+  })
+  const filingFor = (apartmentOwnerId: string) => filings.find(f => f.apartment_owner_id === apartmentOwnerId) ?? null
 
-    aptBookingsAll.forEach(b => {
-      const bStart = new Date(b.start_date)
-      const bEnd = new Date(b.end_date)
-      const bNights = Math.max(0, Math.round((bEnd.getTime() - bStart.getTime()) / 86400000))
-      if (bNights === 0) return
-
-      // Доля ночей этой брони, которая приходится именно на выбранный год
-      const overlapStart = bStart > yearStart ? bStart : yearStart
-      const overlapEnd = bEnd < yearEndExclusive ? bEnd : yearEndExclusive
-      const nightsInYear = Math.max(0, Math.round((overlapEnd.getTime() - overlapStart.getTime()) / 86400000))
-      if (nightsInYear === 0) return
-
-      if (b.source === 'personal') {
-        // Личная поездка хозяина — не сдача в аренду. Дохода НЕТ, эта бронь полностью
-        // исключена из налогооблагаемого дохода (casilla 0102) и не считается "забытой суммой".
-        // Её дни также не должны раздувать пропорцию вычитаемых расходов — по IRPF расходы
-        // вычитаются пропорционально именно дням АРЕНДЫ, а не личного проживания.
-        // personalValue — чисто справочная (не налогооблагаемая) оценка стоимости проживания,
-        // в доход нигде не суммируется.
-        personalDays += nightsInYear
-        personalValue += (apt.price_per_night ?? 0) * nightsInYear
-        personalBookings.push(b)
-        return
+  const saveFiling = useMutation({
+    mutationFn: async (vars: { row: OwnerTaxRow; status: TaxFilingStatus; nrc: string; justificante_number: string }) => {
+      const { row, status, nrc, justificante_number } = vars
+      const existing = filingFor(row.apartment_owner_id)
+      const payload = {
+        apartment_owner_id: row.apartment_owner_id, fiscal_year: year,
+        tax_model: row.tax_residency === 'resident_es' ? '100' : '210',
+        gross_income: row.gross_income, rental_days: row.rental_days, calendar_days: row.calendar_days,
+        platform_commission: row.platform_commission, time_based_expenses: row.time_based_expenses,
+        per_booking_expenses: row.per_booking_expenses, depreciation: row.depreciation,
+        deductible_expenses: row.deductible_expenses, taxable_base: row.taxable_base,
+        tax_rate: row.tax_rate, tax_due: row.tax_due,
+        status, nrc: nrc.trim() || null, justificante_number: justificante_number.trim() || null,
+        filed_at: status !== 'draft' ? (existing?.filed_at ?? new Date().toISOString().slice(0, 10)) : null,
       }
-
-      bookingsCount++
-      totalDays += nightsInYear
-
-      if (b.source === 'other' && excludedPrivateIds.has(b.id)) {
-        // Хозяин вручную исключил эту частную бронь из налогооблагаемого дохода (например,
-        // гость по факту не заплатил) — день аренды выше уже учтён, но сумма никуда не идёт.
-        return
-      }
-
-      if (b.total_amount == null) {
-        missingAmountCount++
-        missingBookings.push(b)
-      } else {
-        // total_amount — это то, что реально получает хозяин (комиссия Airbnb, host_service_fee_amount,
-        // уже вычтена самим Airbnb из этой суммы — её вычитать второй раз не нужно). Но внутри total_amount
-        // всё ещё транзитом сидит уборочный сбор — он не доход хозяина, а проходящая сумма, поэтому для
-        // чистого дохода по аренде вычитаем именно её. Берём фактическую сумму задачи на уборку (то, что
-        // реально получает уборщица), а не то, что Airbnb указал гостю в письме — если Airbnb показал
-        // гостю бОльшую стоимость уборки, чем реально платится уборщице, разница остаётся доходом хозяина
-        // и должна облагаться налогом, а не исключаться как "транзит".
-        const share = nightsInYear / bNights
-        const actualCleaningFee = b.cleaning_tasks[0]?.cleaning_fee ?? b.cleaning_fee_amount ?? 0
-        const netAmount = b.total_amount - actualCleaningFee
-        totalIncome += netAmount * share
-        totalCleaningExcluded += actualCleaningFee * share
-        totalServiceFeeExcluded += (b.host_service_fee_amount ?? 0) * share
-      }
-    })
-
-    const totalExpenses = aptExpenses.reduce((s, e) => s + e.amount, 0)
-
-    // Амортизация: 3% от стоимости строения
-    const depreciation = apt.construction_value ? apt.construction_value * 0.03 : 0
-
-    // Пропорция дней аренды от 365
-    const rentalRatio = Math.min(totalDays / 365, 1)
-    const deductibleExpenses = totalExpenses * rentalRatio
-    const deductibleDepreciation = depreciation * rentalRatio
-
-    const netIncome = totalIncome - deductibleExpenses - deductibleDepreciation
-
-    const expByCategory = aptExpenses.reduce<Record<string, number>>((acc, e) => {
-      acc[e.category] = (acc[e.category] ?? 0) + e.amount; return acc
-    }, {})
-
-    return {
-      apt, totalIncome, totalDays, personalDays,
-      rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome,
-      expByCategory, bookingsCount, missingAmountCount, missingBookings,
-      totalCleaningExcluded, totalServiceFeeExcluded,
-      personalValue, personalBookings,
-    }
+      const { error } = await supabase.from('tax_filings').upsert(payload as never, { onConflict: 'apartment_owner_id,fiscal_year' })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tax-filings'] }),
   })
 
-  const grandIncome = aptData.reduce((s, d) => s + d.totalIncome, 0)
-  const grandExpenses = aptData.reduce((s, d) => s + d.deductibleExpenses, 0)
-  const grandDepreciation = aptData.reduce((s, d) => s + d.deductibleDepreciation, 0)
-  const grandNet = aptData.reduce((s, d) => s + d.netIncome, 0)
-  const grandMissingAmount = aptData.reduce((s, d) => s + d.missingAmountCount, 0)
-  const grandMissingBookings = aptData.flatMap(d => d.missingBookings)
+  // ── Брони без указанной суммы — не участвуют в доходе, итог ниже реального ──────
+  const missingBookings = useMemo(() => bookings.filter(b =>
+    b.status === 'accepted' && b.source !== 'personal' && !b.exclude_from_tax && b.total_amount == null &&
+    filteredApts.some(a => a.id === b.apartment_id) &&
+    new Date(b.start_date) < yearEndExclusive && new Date(b.end_date) > yearStart
+  ), [bookings, year, filteredApts])
+
+  // ── Частные брони (source='other'): хозяин может вручную исключить из дохода Modelo 210
+  // (например, гость по факту не заплатил). Настоящее поле в БД (bookings.exclude_from_tax) —
+  // влияет прямо на расчёт RPC выше, видно совладельцам/администратору, не привязано к браузеру.
+  const privateBookingsThisYear = useMemo(() => bookings
+    .filter(b => b.status === 'accepted' && b.source === 'other' && filteredApts.some(a => a.id === b.apartment_id) &&
+      new Date(b.start_date) < yearEndExclusive && new Date(b.end_date) > yearStart)
+    .sort((a, b) => a.start_date.localeCompare(b.start_date)),
+  [bookings, year, filteredApts])
+  const includedPrivateCount = privateBookingsThisYear.filter(b => !b.exclude_from_tax).length
+  const allPrivateIncluded = includedPrivateCount === privateBookingsThisYear.length
+  const [privateModalOpen, setPrivateModalOpen] = useState(false)
+
+  const toggleExclude = useMutation({
+    mutationFn: async ({ id, exclude }: { id: string; exclude: boolean }) => {
+      const { error } = await supabase.from('bookings').update({ exclude_from_tax: exclude } as never).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['owner-bookings-full'] }),
+  })
+  const togglePrivateOne = (b: BookingRow) => toggleExclude.mutate({ id: b.id, exclude: !b.exclude_from_tax })
+  const togglePrivateAll = () => {
+    const nextExclude = allPrivateIncluded // сейчас все включены -> "Снять все" исключает все, и наоборот
+    privateBookingsThisYear.forEach(b => toggleExclude.mutate({ id: b.id, exclude: nextExclude }))
+  }
+
+  const grandGross = allRows.reduce((s, r) => s + r.gross_income, 0)
+  const grandDeductible = allRows.reduce((s, r) => s + r.deductible_expenses, 0)
+  const grandBase = allRows.reduce((s, r) => s + r.taxable_base, 0)
+  const grandTaxDue = allRows.reduce((s, r) => s + (r.tax_due ?? 0), 0)
 
   const handlePrint = () => window.print()
 
@@ -7375,9 +7659,9 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-xl font-display font-semibold flex items-center gap-2">
-            <FileSpreadsheet size={20} className="text-primary" /> Налоговый отчёт IRPF
+            <FileSpreadsheet size={20} className="text-primary" /> Налоговый отчёт
           </h2>
-          <p className="text-sm text-muted-foreground mt-0.5">Modelo 100 — данные для декларации о доходах</p>
+          <p className="text-sm text-muted-foreground mt-0.5">Modelo 210 (IRNR) — автоматический расчёт по каждому совладельцу</p>
         </div>
         <div className="flex gap-2">
           <select value={year} onChange={e => setYear(Number(e.target.value))}
@@ -7416,10 +7700,10 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
       {/* Summary banner */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Доходы (casilla 0102)', value: grandIncome, color: 'text-green-600' },
-          { label: 'Расходы вычитаемые', value: grandExpenses, color: 'text-red-500' },
-          { label: 'Амортизация (3%)', value: grandDepreciation, color: 'text-orange-500' },
-          { label: 'Чистый доход', value: grandNet, color: grandNet >= 0 ? 'text-primary' : 'text-destructive' },
+          { label: 'Валовый доход (гость заплатил)', value: grandGross, color: 'text-green-600' },
+          { label: 'Вычитаемые расходы', value: grandDeductible, color: 'text-red-500' },
+          { label: 'Налоговая база', value: grandBase, color: 'text-primary' },
+          { label: 'К оплате (Modelo 210)', value: grandTaxDue, color: 'text-destructive' },
         ].map(({ label, value, color }) => (
           <div key={label} className="bg-card border border-border rounded-2xl p-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wide leading-tight">{label}</p>
@@ -7428,17 +7712,17 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
         ))}
       </div>
 
-      {grandMissingAmount > 0 && (
+      {missingBookings.length > 0 && (
         <div className="flex flex-col gap-2 rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
           <div className="flex items-start gap-2">
             <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
             <span>
-              {grandMissingAmount} {grandMissingAmount === 1 ? 'бронирование' : 'бронирований'} за {year} год без указанной суммы —
+              {missingBookings.length} {missingBookings.length === 1 ? 'бронирование' : 'бронирований'} за {year} год без указанной суммы —
               {' '}эти брони не учтены в доходах, и итог ниже реального. Нажми на бронь, чтобы указать сумму.
             </span>
           </div>
           <div className="flex flex-col gap-1 pl-6">
-            {grandMissingBookings.map(b => (
+            {missingBookings.map(b => (
               <button key={b.id} onClick={() => onGoToBooking(b.id)}
                 className="flex items-center gap-1.5 text-left text-amber-900 dark:text-amber-200 hover:underline underline-offset-2 w-fit">
                 <span className="font-medium">{b.guest_name || 'Без имени'}</span>
@@ -7451,127 +7735,61 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
         </div>
       )}
 
-      {/* Per-apartment tables */}
-      {aptData.map(({ apt, totalIncome, totalDays, personalDays,
-        rentalRatio, deductibleExpenses, deductibleDepreciation, netIncome, expByCategory, bookingsCount, missingAmountCount, missingBookings,
-        totalCleaningExcluded, totalServiceFeeExcluded, personalValue, personalBookings }) => (
-        <div key={apt.id} className="bg-card border border-border rounded-2xl overflow-hidden">
-          <div className="px-5 py-4" style={{ backgroundColor: aptColorOf(apt.id) }}>
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <h3 className="font-semibold text-white">{apt.title}</h3>
-                <p className="text-xs text-white/80 mt-0.5">{apt.full_address ?? apt.address}</p>
-                {apt.cadastral_reference && (
-                  <p className="text-xs text-white/80">Ref. catastral: <span className="font-mono">{apt.cadastral_reference}</span></p>
-                )}
-              </div>
-              <div className="flex gap-4 text-right">
+      {isRpcLoading && (
+        <div className="text-sm text-muted-foreground py-4 text-center">Считаем…</div>
+      )}
+
+      {/* Per-apartment, per-owner Modelo 210 breakdown */}
+      {filteredApts.map(apt => {
+        const rows = ownerRowsByApt.get(apt.id) ?? []
+        const rentalDays = rows[0]?.rental_days ?? 0
+        return (
+          <div key={apt.id} className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="px-5 py-4" style={{ backgroundColor: aptColorOf(apt.id) }}>
+              <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div>
-                  <p className="text-xs text-white/80">Бронирований</p>
-                  <p className="font-bold text-white">
-                    {bookingsCount}
-                    {missingAmountCount > 0 && (
-                      <button
-                        onClick={() => onGoToBooking(missingBookings[0].id)}
-                        title={missingBookings.map(b => `${b.guest_name || 'Без имени'} (${format(parseISO(b.start_date), 'd MMM', { locale: ru })})`).join(', ')}
-                        className="text-amber-100 font-normal hover:underline underline-offset-2">
-                        {' '}({missingAmountCount} без суммы)
-                      </button>
-                    )}
-                  </p>
+                  <h3 className="font-semibold text-white">{apt.title}</h3>
+                  <p className="text-xs text-white/80 mt-0.5">{apt.full_address ?? apt.address}</p>
+                  {apt.cadastral_reference && (
+                    <p className="text-xs text-white/80">Ref. catastral: <span className="font-mono">{apt.cadastral_reference}</span></p>
+                  )}
                 </div>
-                <div>
-                  <p className="text-xs text-white/80">Дней аренды</p>
-                  <p className="font-bold text-white">
-                    {totalDays}
-                    {personalDays > 0 && (
-                      <button
-                        onClick={() => onGoToBooking(personalBookings[0].id)}
-                        title={personalBookings.map(b => `${b.guest_name || 'Личная поездка'} (${format(parseISO(b.start_date), 'd MMM', { locale: ru })}–${format(parseISO(b.end_date), 'd MMM', { locale: ru })})`).join(', ')}
-                        className="text-white/80 font-normal hover:underline underline-offset-2">
-                        {' '}(+{personalDays} личных)
-                      </button>
-                    )}
-                  </p>
+                <div className="text-right">
+                  <p className="text-xs text-white/80">Дней сдачи за {year}</p>
+                  <p className="font-bold text-white">{rentalDays} / {rows[0]?.calendar_days ?? 365}</p>
                 </div>
-                <div><p className="text-xs text-white/80">% использ.</p><p className="font-bold text-white">{(rentalRatio * 100).toFixed(1)}%</p></div>
               </div>
             </div>
-          </div>
 
-          <div className="p-5 grid sm:grid-cols-2 gap-6">
-            {/* Income */}
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Доходы</p>
-              <div className="flex justify-between py-2 border-b border-border">
-                <span className="text-sm">Доходы от аренды (casilla 0102)</span>
-                <span className="font-semibold text-green-600">{fmtEur(totalIncome)}</span>
+            {!apt.construction_value && (
+              <div className="px-5 py-2 text-[11px] text-amber-700 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-300 border-b border-amber-200 dark:border-amber-900">
+                Не указана стоимость строения — амортизация 3%/год не учтена. Заполните в карточке квартиры («Изменить» → «Данные для налогового отчёта»).
               </div>
-              {(totalCleaningExcluded > 0 || totalServiceFeeExcluded > 0) && (
-                <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
-                  Уже не учтено в доходе: уборка {fmtEur(totalCleaningExcluded)}
-                  {totalServiceFeeExcluded > 0 && <> и комиссия Airbnb {fmtEur(totalServiceFeeExcluded)} (вычтена Airbnb до выплаты)</>}
-                </p>
-              )}
-              {personalDays > 0 && (
-                <p className="text-[11px] text-slate-500 mt-1.5 leading-snug flex items-start gap-1">
-                  <Home size={11} className="mt-0.5 flex-shrink-0" />
-                  <span>
-                    Личное использование: {personalDays} {personalDays === 1 ? 'день' : 'дней'} (справочно ~{fmtEur(personalValue)}) —
-                    {' '}не доход, в сумму выше не входит, налогом не облагается.
-                  </span>
-                </p>
-              )}
-            </div>
+            )}
 
-            {/* Expenses */}
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                Расходы ({(rentalRatio * 100).toFixed(0)}% пропорционально)
-              </p>
-              {Object.entries(expByCategory).map(([cat, amt]) => {
-                const meta = catMeta(cat)
-                const deductible = amt * rentalRatio
-                return (
-                  <div key={cat} className="flex justify-between py-1.5 border-b border-border/50 text-sm">
-                    <span className="text-muted-foreground flex items-center gap-1">
-                      <span className={meta.color}>{meta.icon}</span> {meta.label}
-                    </span>
-                    <span>{fmtEur(deductible)}</span>
-                  </div>
-                )
-              })}
-              {apt.construction_value && (
-                <div className="flex justify-between py-1.5 border-b border-border/50 text-sm">
-                  <span className="text-muted-foreground">Амортизация 3% (casilla 0112)</span>
-                  <span>{fmtEur(deductibleDepreciation)}</span>
-                </div>
+            <div className="p-5 flex flex-col gap-4">
+              {rows.length === 0 && (
+                <p className="text-sm text-muted-foreground">Нет совладельцев — добавьте через кнопку «Владельцы» в разделе «Квартиры».</p>
               )}
-              <div className="flex justify-between py-2 mt-1 font-semibold">
-                <span>Итого расходы</span>
-                <span className="text-red-500">{fmtEur((deductibleExpenses + deductibleDepreciation))}</span>
-              </div>
+              {rows.map(row => (
+                <OwnerTaxCard key={row.apartment_owner_id} row={row} filing={filingFor(row.apartment_owner_id)}
+                  onSave={(status, nrc, justificante) => saveFiling.mutate({ row, status, nrc, justificante_number: justificante })}
+                  saving={saveFiling.isPending} />
+              ))}
             </div>
           </div>
+        )
+      })}
 
-          <div className="px-5 py-3 border-t border-border bg-muted/30 flex justify-between items-center">
-            <span className="font-semibold">{netIncome >= 0 ? 'Чистый доход' : 'Чистый убыток'}</span>
-            <span className={`text-lg font-bold ${netIncome >= 0 ? 'text-primary' : 'text-destructive'}`}>
-              {netIncome < 0 ? '−' : '+'}{fmtEur(Math.abs(netIncome))}
-            </span>
-          </div>
-        </div>
-      ))}
-
-      {aptData.length === 0 && (
+      {filteredApts.length === 0 && (
         <div className="bg-card border border-border rounded-2xl p-10 text-center text-muted-foreground">
-          Нет данных за {year} год
+          Нет квартир
         </div>
       )}
 
       <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-2xl p-4 text-sm text-blue-800 dark:text-blue-300">
-        <p className="font-semibold mb-1">ℹ️ Инструкция для декларации Modelo 100</p>
-        <p>Заполните данные вручную по расчётам выше: раздел «Rendimientos del capital inmobiliario», casillas 0102 (ingresos íntegros), 0106–0115 (gastos deducibles), 0116 (amortización). Рекомендуется проверить с налоговым консультантом.</p>
+        <p className="font-semibold mb-1">ℹ️ Modelo 210 (IRNR) для нерезидентов Испании</p>
+        <p>Каждый совладелец-нерезидент подаёт свою декларацию по своей доле (форма 210, período «0A — Anual», срок — первые 20 дней января следующего года). Для резидентов Испании нужна Modelo 100 (IRPF) — здесь эти цифры не считаются автоматически, обратитесь к налоговому консультанту.</p>
       </div>
 
       {/* Private bookings — which ones count toward taxable income */}
@@ -7592,15 +7810,15 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
                 <button onClick={togglePrivateAll} className="text-xs text-primary font-semibold hover:underline">
                   {allPrivateIncluded ? 'Снять все' : 'Выбрать все'}
                 </button>
-                <span className="text-sm font-semibold">Выбрано: {fmtEur(includedPrivateTotal)}</span>
+                <span className="text-sm font-semibold">Включено: {includedPrivateCount} из {privateBookingsThisYear.length}</span>
               </div>
               <div className="flex-1 overflow-y-auto px-5 py-4">
                 <div className="flex flex-col divide-y divide-border border border-border rounded-xl overflow-hidden">
                   {privateBookingsThisYear.map(b => {
-                    const checked = !excludedPrivateIds.has(b.id)
+                    const checked = !b.exclude_from_tax
                     return (
                       <label key={b.id} className="flex items-center gap-3 px-3 py-2.5 text-sm cursor-pointer hover:bg-muted/40">
-                        <input type="checkbox" checked={checked} onChange={() => togglePrivateOne(b.id)}
+                        <input type="checkbox" checked={checked} onChange={() => togglePrivateOne(b)}
                           className="w-4 h-4 flex-shrink-0 accent-primary" />
                         <div className="min-w-0 flex-1">
                           <p className="font-medium text-foreground truncate">{b.guest_name || 'Без имени'}</p>
@@ -7608,7 +7826,7 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
                             {b.apartments.title} · {format(parseISO(b.start_date), 'd MMM', { locale: ru })}–{format(parseISO(b.end_date), 'd MMM', { locale: ru })}
                           </p>
                         </div>
-                        <span className={`font-semibold flex-shrink-0 ${checked ? '' : 'text-muted-foreground line-through'}`}>{fmtEur(calcPrivateRevenue(b))}</span>
+                        <span className={`font-semibold flex-shrink-0 ${checked ? '' : 'text-muted-foreground line-through'}`}>{b.total_amount != null ? fmtEur(b.total_amount) : '—'}</span>
                       </label>
                     )
                   })}
