@@ -7906,6 +7906,10 @@ function AdminSection() {
   // Gmail-аккаунт (обычно — только что созданный, с временным паролем), нужно войти именно
   // в него и подтвердить доступ — тогда refresh-токен привяжется к этому owner_id.
   const [connectingOwnerId, setConnectingOwnerId] = useState('')
+  // Требует явного подтверждения "это точно для {имя}" перед открытием окна согласия Google —
+  // страхует от случая, когда админ по невнимательности жмёт кнопку не у той строки и потом
+  // логинится в Google под чужим временным паролем, привязывая почту не тому пользователю.
+  const [confirmConnectOwnerId, setConfirmConnectOwnerId] = useState<string | null>(null)
   const handleConnectGmail = async (ownerId: string) => {
     setConnectingOwnerId(ownerId)
     const { data: sessionData } = await supabase.auth.getSession()
@@ -7914,6 +7918,7 @@ function AdminSection() {
     const startUrl = `${supabaseUrl}/functions/v1/gmail-oauth-start?owner_id=${encodeURIComponent(ownerId)}&access_token=${encodeURIComponent(accessToken)}`
     window.open(startUrl, '_blank', 'noopener')
     setConnectingOwnerId('')
+    setConfirmConnectOwnerId(null)
   }
 
   const { data: agentLogs = [] } = useQuery({
@@ -7976,6 +7981,12 @@ function AdminSection() {
 
   const [newAlias, setNewAlias] = useState('')
   const [newAliasUser, setNewAliasUser] = useState('')
+  // Устаревший способ (общий ящик + алиас) спрятан по умолчанию — чтобы не мозолил глаза
+  // и не провоцировал случайный клик по крестику рядом с активными алиасами (напр. +rafael,
+  // от которого сейчас реально зависит разбор ваших собственных писем).
+  const [showLegacyAliases, setShowLegacyAliases] = useState(false)
+  // Требует второго клика на "Да, удалить" — один случайный клик по × больше ничего не сломает.
+  const [confirmDeleteAliasId, setConfirmDeleteAliasId] = useState<string | null>(null)
 
   const handleAddAlias = async () => {
     if (!newAlias.trim() || !newAliasUser) return
@@ -7987,6 +7998,7 @@ function AdminSection() {
   const handleDeleteAlias = async (id: string) => {
     await supabase.from('user_email_aliases').delete().eq('id', id)
     qc.invalidateQueries({ queryKey: ['admin-aliases'] })
+    setConfirmDeleteAliasId(null)
   }
 
   const handleRestoreBooking = async (id: string) => {
@@ -8059,10 +8071,15 @@ function AdminSection() {
             <div className="px-4 py-3 border-b border-border flex items-center gap-2">
               <UserCircle size={14} className="text-muted-foreground" />
               <span className="font-semibold text-sm">Пользователи ({profiles.length})</span>
+              <button onClick={() => setShowLegacyAliases(v => !v)}
+                className="ml-auto text-xs text-muted-foreground hover:text-foreground underline decoration-dotted">
+                {showLegacyAliases ? 'Скрыть старые алиасы' : 'Показать старые алиасы (устаревший способ)'}
+              </button>
             </div>
             <div className="divide-y divide-border">
               {profiles.map(p => {
                 const userAlias = aliases.find(a => a.user_id === p.id)
+                const acc = emailAccounts.find(a => a.owner_id === p.id)
                 return (
                   <div key={p.id} className="px-4 py-3 flex items-center gap-3">
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${
@@ -8074,41 +8091,67 @@ function AdminSection() {
                       <p className="text-sm font-semibold">{p.name || '(без имени)'}</p>
                       <p className="text-xs text-muted-foreground">{p.email}</p>
                     </div>
+
+                    {/* Устаревший общий-ящик-алиас — спрятан по умолчанию, чтобы не путался под
+                        рукой рядом с новой Gmail-кнопкой и не провоцировал случайное удаление. */}
+                    {showLegacyAliases && (
+                      <div className="text-right flex-shrink-0">
+                        {userAlias ? (
+                          confirmDeleteAliasId === userAlias.id ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs text-destructive">Удалить +{userAlias.alias}?</span>
+                              <button onClick={() => handleDeleteAlias(userAlias.id)}
+                                className="text-xs px-2 py-0.5 rounded-full bg-destructive text-destructive-foreground font-semibold">
+                                Да
+                              </button>
+                              <button onClick={() => setConfirmDeleteAliasId(null)}
+                                className="text-xs px-2 py-0.5 rounded-full border border-border">
+                                Нет
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 px-2 py-0.5 rounded-full font-mono">
+                                +{userAlias.alias}
+                              </span>
+                              <button onClick={() => setConfirmDeleteAliasId(userAlias.id)}
+                                className="p-1 rounded text-muted-foreground hover:text-destructive">
+                                <X size={12} />
+                              </button>
+                            </div>
+                          )
+                        ) : (
+                          <span className="text-xs text-muted-foreground">нет алиаса</span>
+                        )}
+                      </div>
+                    )}
+
                     <div className="text-right flex-shrink-0">
-                      {userAlias ? (
+                      {acc ? (
+                        <span title={acc.last_synced_at ? `Последняя синхронизация: ${format(parseISO(acc.last_synced_at), 'd MMM HH:mm', { locale: ru })}` : 'Ещё не синхронизировался'}
+                          className={`text-xs px-2 py-0.5 rounded-full font-mono inline-flex items-center gap-1 ${
+                            acc.is_active ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-muted text-muted-foreground'
+                          }`}>
+                          <Mail size={11} /> {acc.email_address}
+                        </span>
+                      ) : confirmConnectOwnerId === p.id ? (
                         <div className="flex items-center gap-1.5">
-                          <span className="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 px-2 py-0.5 rounded-full font-mono">
-                            +{userAlias.alias}
-                          </span>
-                          <button onClick={() => handleDeleteAlias(userAlias.id)}
-                            className="p-1 rounded text-muted-foreground hover:text-destructive">
-                            <X size={12} />
+                          <span className="text-xs">Точно для {p.name || p.email}?</span>
+                          <button onClick={() => handleConnectGmail(p.id)} disabled={connectingOwnerId === p.id}
+                            className="text-xs px-2 py-0.5 rounded-full bg-primary text-primary-foreground font-semibold disabled:opacity-50">
+                            Да, открыть Google
+                          </button>
+                          <button onClick={() => setConfirmConnectOwnerId(null)}
+                            className="text-xs px-2 py-0.5 rounded-full border border-border">
+                            Отмена
                           </button>
                         </div>
                       ) : (
-                        <span className="text-xs text-muted-foreground">нет алиаса</span>
+                        <button onClick={() => setConfirmConnectOwnerId(p.id)}
+                          className="text-xs px-2 py-1 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 inline-flex items-center gap-1">
+                          <Mail size={11} /> Подключить Gmail
+                        </button>
                       )}
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      {(() => {
-                        const acc = emailAccounts.find(a => a.owner_id === p.id)
-                        if (acc) {
-                          return (
-                            <span title={acc.last_synced_at ? `Последняя синхронизация: ${format(parseISO(acc.last_synced_at), 'd MMM HH:mm', { locale: ru })}` : 'Ещё не синхронизировался'}
-                              className={`text-xs px-2 py-0.5 rounded-full font-mono inline-flex items-center gap-1 ${
-                                acc.is_active ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-muted text-muted-foreground'
-                              }`}>
-                              <Mail size={11} /> {acc.email_address}
-                            </span>
-                          )
-                        }
-                        return (
-                          <button onClick={() => handleConnectGmail(p.id)} disabled={connectingOwnerId === p.id}
-                            className="text-xs px-2 py-1 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 inline-flex items-center gap-1 disabled:opacity-50">
-                            <Mail size={11} /> Подключить Gmail
-                          </button>
-                        )
-                      })()}
                     </div>
                   </div>
                 )
@@ -8116,27 +8159,29 @@ function AdminSection() {
             </div>
           </div>
 
-          {/* Add alias */}
-          <div className="bg-card border border-border rounded-2xl p-4">
-            <p className="text-sm font-semibold mb-3">Назначить email-алиас</p>
-            <div className="flex gap-2 flex-wrap">
-              <select value={newAliasUser} onChange={e => setNewAliasUser(e.target.value)}
-                className="flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
-                <option value="">— Выберите пользователя —</option>
-                {profiles.map(p => <option key={p.id} value={p.id}>{p.name || p.email}</option>)}
-              </select>
-              <input type="text" value={newAlias} onChange={e => setNewAlias(e.target.value)}
-                placeholder="rafael" className="w-40 rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-              <button onClick={handleAddAlias} disabled={!newAlias || !newAliasUser}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-50">
-                Назначить
-              </button>
+          {/* Add alias — устаревший способ, спрятан вместе с остальным legacy-блоком */}
+          {showLegacyAliases && (
+            <div className="bg-card border border-border rounded-2xl p-4">
+              <p className="text-sm font-semibold mb-3">Назначить email-алиас</p>
+              <div className="flex gap-2 flex-wrap">
+                <select value={newAliasUser} onChange={e => setNewAliasUser(e.target.value)}
+                  className="flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+                  <option value="">— Выберите пользователя —</option>
+                  {profiles.map(p => <option key={p.id} value={p.id}>{p.name || p.email}</option>)}
+                </select>
+                <input type="text" value={newAlias} onChange={e => setNewAlias(e.target.value)}
+                  placeholder="rafael" className="w-40 rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                <button onClick={handleAddAlias} disabled={!newAlias || !newAliasUser}
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-50">
+                  Назначить
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                Email: bloknot.app+<span className="font-mono">{newAlias || 'алиас'}</span>@gmail.com — устаревший способ (общий ящик), используйте только если знаете зачем.
+                Для нового пользователя вместо этого нажмите «Подключить Gmail» у него в списке выше — это выдаёт ему собственный изолированный ящик.
+              </p>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              Email: bloknot.app+<span className="font-mono">{newAlias || 'алиас'}</span>@gmail.com — устаревший способ (общий ящик), используйте только если знаете зачем.
-              Для нового пользователя вместо этого нажмите «Подключить Gmail» у него в списке выше — это выдаёт ему собственный изолированный ящик.
-            </p>
-          </div>
+          )}
 
           {/* Подключение личного Gmail: как это работает — пошагово */}
           <div className="bg-card border border-border rounded-2xl p-4">
