@@ -32,7 +32,7 @@ export default function AdminDashboard() {
   const { data: bookings } = useQuery({
     queryKey: ['admin-bookings'],
     queryFn: async () => {
-      const { data } = await supabase.from('bookings').select('*, apartments(title)').order('created_at', { ascending: false }).limit(50)
+      const { data } = await supabase.from('bookings').select('*, apartments(title)').is('deleted_at', null).order('created_at', { ascending: false }).limit(50)
       return data
     },
     enabled: tab === 'bookings',

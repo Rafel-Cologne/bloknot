@@ -829,7 +829,8 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
         .eq('apartment_id', selectedApt)
         .lte('start_date', rangeTo)
         .gte('end_date', rangeFrom)
-        .neq('status', 'cancelled')
+        .not('status', 'in', '(cancelled,declined)')
+        .is('deleted_at', null)
       if (error) throw error
       return data
     },
@@ -3818,12 +3819,21 @@ function BookingsSection({
     return m
   }, [apartments])
 
+  // "Удалить" убирает бронь из рабочих списков (мягкое удаление — проставляем deleted_at),
+  // а не стирает её из базы физически: запись остаётся в архиве и видна администратору
+  // во вкладке "Восстановление" (Настройки → админ-панель). Насовсем удалить может только он.
   const deleteBooking = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('bookings').delete().eq('id', id)
+      const { error } = await supabase.from('bookings')
+        .update({ deleted_at: new Date().toISOString() } as never).eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => { setDeleteError(null); setDeletingId(null); onRefresh(); qc.invalidateQueries({ queryKey: ['owner-bookings-full'] }) },
+    onSuccess: () => {
+      setDeleteError(null); setDeletingId(null); onRefresh()
+      qc.invalidateQueries({ queryKey: ['owner-bookings-full'] })
+      qc.invalidateQueries({ queryKey: ['cal-bookings'] })
+      qc.invalidateQueries({ queryKey: ['admin-deleted-bookings'] })
+    },
     onError: (err: Error) => setDeleteError(err.message),
   })
 
@@ -3835,7 +3845,11 @@ function BookingsSection({
       const { error } = await supabase.from('bookings').update({ status } as never).eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => { setRespondError(null); onRefresh(); qc.invalidateQueries({ queryKey: ['owner-bookings-full'] }) },
+    onSuccess: () => {
+      setRespondError(null); onRefresh()
+      qc.invalidateQueries({ queryKey: ['owner-bookings-full'] })
+      qc.invalidateQueries({ queryKey: ['cal-bookings'] })
+    },
     onError: (err: { code?: string; message: string }) => {
       // 23P01 = exclusion_violation — БД сама не даёт подтвердить бронь, если на эти даты
       // уже есть другая ПОДТВЕРЖДЁННАЯ бронь той же квартиры (см. миграцию 008).
@@ -4112,13 +4126,13 @@ function BookingsSection({
                     {deletingId === b.id ? (
                       <div className="flex flex-col gap-1">
                         <button onClick={() => deleteBooking.mutate(b.id)} disabled={deleteBooking.isPending}
-                          className="p-2 rounded-xl bg-destructive text-white text-[11px] font-bold hover:opacity-90 disabled:opacity-60" title="Подтвердить удаление">✓</button>
+                          className="p-2 rounded-xl bg-destructive text-white text-[11px] font-bold hover:opacity-90 disabled:opacity-60" title="Подтвердить — бронь уйдёт в архив">✓</button>
                         <button onClick={() => setDeletingId(null)}
                           className="p-2 rounded-xl bg-muted text-muted-foreground text-[11px] font-bold hover:bg-secondary" title="Отмена">✗</button>
                       </div>
                     ) : (
                       <button onClick={() => { setDeleteError(null); setDeletingId(b.id) }}
-                        className="p-2 rounded-xl bg-muted text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" title="Удалить">
+                        className="p-2 rounded-xl bg-muted text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" title="Удалить (в архив, восстановить может администратор)">
                         <Trash2 size={14} />
                       </button>
                     )}
@@ -7631,12 +7645,22 @@ function AdminSection() {
     await supabase.rpc('restore_booking', { _booking_id: id })
     qc.invalidateQueries({ queryKey: ['admin-deleted-bookings'] })
     qc.invalidateQueries({ queryKey: ['owner-bookings-full'] })
+    qc.invalidateQueries({ queryKey: ['cal-bookings'] })
   }
 
   const handleRestoreExpense = async (id: string) => {
     await supabase.rpc('restore_expense', { _expense_id: id })
     qc.invalidateQueries({ queryKey: ['admin-deleted-expenses'] })
     qc.invalidateQueries({ queryKey: ['expenses-confirmed'] })
+  }
+
+  // Насовсем стереть из базы — доступно только администратору (RLS: "bookings: admin full").
+  // Обычный владелец такой возможности не имеет — его "Удалить" только архивирует бронь.
+  const [confirmPurgeId, setConfirmPurgeId] = useState<string | null>(null)
+  const handlePurgeBooking = async (id: string) => {
+    await supabase.from('bookings').delete().eq('id', id)
+    setConfirmPurgeId(null)
+    qc.invalidateQueries({ queryKey: ['admin-deleted-bookings'] })
   }
 
   const TAB_ITEMS = [
@@ -7809,6 +7833,20 @@ function AdminSection() {
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 flex-shrink-0">
                       <RotateCcw size={12} /> Восстановить
                     </button>
+                    {confirmPurgeId === b.id ? (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button onClick={() => handlePurgeBooking(b.id)}
+                          className="px-2.5 py-1.5 rounded-xl bg-destructive text-white text-xs font-bold hover:opacity-90">Точно?</button>
+                        <button onClick={() => setConfirmPurgeId(null)}
+                          className="px-2.5 py-1.5 rounded-xl bg-muted text-muted-foreground text-xs font-bold hover:bg-secondary">✗</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setConfirmPurgeId(b.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-destructive/10 text-destructive text-xs font-semibold hover:bg-destructive/20 flex-shrink-0"
+                        title="Удалить навсегда — без возможности восстановления">
+                        <Trash2 size={12} /> Навсегда
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -8294,6 +8332,7 @@ export default function OwnerDashboard() {
         .from('bookings')
         .select('*, apartments!inner(title, address, owner_id), cleaning_tasks(*)')
         .eq('apartments.owner_id', user!.id)
+        .is('deleted_at', null)
         .order('start_date', { ascending: false })
       if (error) throw error
       return data as BookingRow[]
