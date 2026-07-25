@@ -1,4 +1,4 @@
-﻿import { useState, useMemo, useEffect, useRef } from 'react'
+﻿import { useState, useMemo, useEffect, useRef, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
@@ -4022,7 +4022,7 @@ function BookingsSection({
       ) : (
         <>
           <div className="flex flex-col gap-2">
-            {paginated.map(b => {
+            {paginated.map((b, idx) => {
               const nights = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
               const startDate = parseISO(b.start_date)
               const endDate = parseISO(b.end_date)
@@ -4031,8 +4031,28 @@ function BookingsSection({
               // Гость выезжает сегодня — подсвечиваем карточку, чтобы хозяин сразу видел,
               // где сегодня освобождается квартира (и, соответственно, нужна уборка).
               const checkoutToday = b.status === 'accepted' && b.end_date === today
+              // На вкладке "Актуальные" список отсортирован по дате заезда, но брони,
+              // которые уже идут сейчас, и те, что только предстоят, визуально сливались
+              // в одну сплошную колонку — добавляем небольшой разрыв с подписью между ними.
+              const isOngoing = b.start_date <= today
+              const showOngoingHeader = statusFilter === 'active' && isOngoing && idx === 0
+              const showUpcomingDivider = statusFilter === 'active' && !isOngoing
+                && (idx === 0 || paginated[idx - 1].start_date <= today)
               return (
-                <div key={b.id} onClick={() => setViewingBooking(b)} role="button" tabIndex={0}
+                <Fragment key={b.id}>
+                {showOngoingHeader && (
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[11px] font-bold text-primary uppercase tracking-widest">Идут сейчас</span>
+                    <div className="flex-1 h-px bg-border" />
+                  </div>
+                )}
+                {showUpcomingDivider && (
+                  <div className="flex items-center gap-2 mt-3 mb-1">
+                    <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">Предстоящие</span>
+                    <div className="flex-1 h-px bg-border" />
+                  </div>
+                )}
+                <div onClick={() => setViewingBooking(b)} role="button" tabIndex={0}
                   className={`bg-card rounded-2xl flex flex-col sm:flex-row sm:items-center gap-3 px-4 py-3 shadow-[var(--shadow-card)] hover:shadow-md transition-shadow cursor-pointer ${
                     checkoutToday ? 'border-2 border-amber-400' : 'border border-border hover:border-primary/40'
                   }`}>
@@ -4148,6 +4168,7 @@ function BookingsSection({
                     )}
                   </div>
                 </div>
+                </Fragment>
               )
             })}
           </div>
@@ -4805,7 +4826,7 @@ type CashEntry = {
 function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { bookings: BookingRow[]; onRefresh: () => void; ownerId: string; fullApartments: Apartment[] }) {
   const today = new Date().toISOString().slice(0, 10)
   const qc = useQueryClient()
-  const [tab, setTab] = useState<'bookings' | 'payment' | 'calendar' | 'archive'>('bookings')
+  const [tab, setTab] = useState<'today' | 'bookings' | 'payment' | 'calendar' | 'archive'>('bookings')
   const [selectedBooking, setSelectedBooking] = useState<BookingRow | null>(null)
   const [payingTaskId, setPayingTaskId] = useState<string | null>(null)
   const [payInput, setPayInput] = useState('')
@@ -4940,6 +4961,10 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
   const currentStays = all.filter(b => b.start_date <= today && b.end_date > today)
   const upcoming     = all.filter(b => b.start_date > today).sort((a, b) => a.start_date.localeCompare(b.start_date))
   const archive      = all.filter(b => b.end_date <= today).sort((a, b) => b.end_date.localeCompare(a.end_date))
+  // Гости выезжают СЕГОДНЯ — отдельное окно "Ожидание уборки", чтобы сразу было видно,
+  // где сегодня освобождается квартира (иначе такая бронь просто тонет в общем архиве).
+  const checkoutToday = all.filter(b => b.end_date === today && b.cleaning_tasks[0]?.status !== 'done')
+    .sort((a, b) => a.apartments.title.localeCompare(b.apartments.title))
 
   const totalOwed   = all.reduce((s, b) => s + b.cleaning_tasks.reduce((ss, t) => ss + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0), 0)
   const totalPaid   = all.reduce((s, b) => s + b.cleaning_tasks.reduce((ss, t) => ss + getPaidAmt(t), 0), 0)
@@ -5042,13 +5067,16 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
     const isPartial = task?.payment_status === 'partial'
     const isCur     = b.start_date <= today && b.end_date > today
     const isUp      = b.start_date > today
+    const checkoutToday = b.end_date === today && task?.status !== 'done'
     const nights    = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
     const color     = aptColorOf(b.apartment_id)
 
     return (
       <button key={b.id} onClick={() => { setSelectedBooking(b); setRentInput('') }}
-        className={`bg-card border rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md hover:border-primary/30 ${isCur ? 'ring-1 ring-primary/20' : 'border-border'}`}
-        style={isCur ? { borderColor: color } : undefined}>
+        className={`bg-card rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md ${
+          checkoutToday ? 'border-2 border-amber-400' : `border hover:border-primary/30 ${isCur ? 'ring-1 ring-primary/20' : 'border-border'}`
+        }`}
+        style={isCur && !checkoutToday ? { borderColor: color } : undefined}>
         <div className="flex items-center gap-4 px-5 py-4">
           {/* Date */}
           <div className="flex-shrink-0 text-center rounded-xl px-2 py-2 w-[80px] text-white" style={{ backgroundColor: color }}>
@@ -5067,12 +5095,13 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
               <p className="text-base font-bold text-foreground">{b.apartments.title}</p>
               {isCur && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">● Сейчас</span>}
               {isUp  && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold">Предстоящий</span>}
+              {checkoutToday && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">🧳 Выезд сегодня</span>}
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${SOURCE_COLOR[b.source] ?? 'bg-muted text-muted-foreground'}`}>
                 {SOURCE_LABELS[b.source] ?? b.source}
               </span>
               {task?.status === 'done'
                 ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 font-semibold">✓ Убрано</span>
-                : !isUp && !isCur
+                : !isUp && !isCur && !checkoutToday
                   ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">🧹 Нужна уборка</span>
                   : null}
             </div>
@@ -5637,6 +5666,19 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
     </div>
   )
 
+  const renderToday = () => (
+    <div>
+      {checkoutToday.length === 0 ? (
+        <div className="bg-card border border-border rounded-2xl p-10 text-center">
+          <p className="text-3xl mb-2">✨</p>
+          <p className="text-sm text-muted-foreground">Сегодня выездов нет — уборка не ждёт</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">{checkoutToday.map(b => renderCard(b))}</div>
+      )}
+    </div>
+  )
+
   const renderArchive = () => (
     <div>
       {archive.length === 0 ? (
@@ -5651,6 +5693,7 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
 
   // ── nav items ─────────────────────────────────────────────────────────────────
   const NAV: { id: typeof tab; label: string; icon: React.ReactNode; count?: number }[] = [
+    { id: 'today',    label: 'Ожидание уборки', icon: <Brush size={16} />,        count: checkoutToday.length },
     { id: 'bookings', label: 'Заезды',    icon: <CalendarDays size={16} />, count: currentStays.length + upcoming.length },
     { id: 'payment',  label: 'Оплата',    icon: <Banknote size={16} />,    count: totalOwed > 0 ? undefined : undefined },
     { id: 'calendar', label: 'Календарь', icon: <CalendarDays size={16} /> },
@@ -5679,7 +5722,11 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
               {item.icon}
               {item.label}
               {item.count !== undefined && item.count > 0 && (
-                <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold ${tab === item.id ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-muted-foreground/15 text-muted-foreground'}`}>
+                <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                  item.id === 'today'
+                    ? 'bg-amber-500 text-white'
+                    : tab === item.id ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-muted-foreground/15 text-muted-foreground'
+                }`}>
                   {item.count}
                 </span>
               )}
@@ -5725,6 +5772,9 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
               {item.id === 'payment' && totalOwed > 0 && (
                 <span className="text-[9px] px-1 rounded-full bg-red-500 text-white font-bold">€</span>
               )}
+              {item.id === 'today' && checkoutToday.length > 0 && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500 text-white font-bold">{checkoutToday.length}</span>
+              )}
             </button>
           ))}
         </div>
@@ -5733,15 +5783,17 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
           {/* Page title */}
           <div className="mb-4 md:mb-6">
             <h1 className="text-xl md:text-2xl font-display font-bold text-foreground">
-              {tab === 'bookings' ? 'Заезды' : tab === 'payment' ? 'Оплата' : tab === 'calendar' ? 'Календарь' : 'Архив заездов'}
+              {tab === 'today' ? 'Ожидание уборки' : tab === 'bookings' ? 'Заезды' : tab === 'payment' ? 'Оплата' : tab === 'calendar' ? 'Календарь' : 'Архив заездов'}
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {tab === 'bookings' ? `${currentStays.length} сейчас · ${upcoming.length} предстоящих` :
+              {tab === 'today' ? (checkoutToday.length > 0 ? `${checkoutToday.length} ${checkoutToday.length === 1 ? 'объект' : 'объекта(ов)'} сегодня` : 'Сегодня выездов нет') :
+               tab === 'bookings' ? `${currentStays.length} сейчас · ${upcoming.length} предстоящих` :
                tab === 'payment'  ? `Заработано ${fmtEur(totalEarned)} · получено ${fmtEur(totalPaid)}` :
                tab === 'calendar' ? 'Все заезды по всем квартирам' :
                `${archive.length} завершённых заездов`}
             </p>
           </div>
+          {tab === 'today'    && renderToday()}
           {tab === 'bookings' && renderBookings()}
           {tab === 'payment'  && renderPayment()}
           {tab === 'calendar' && renderCalendar()}
