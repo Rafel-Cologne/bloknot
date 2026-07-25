@@ -24,8 +24,12 @@ export default function Dashboard() {
 
   if (!user) return null
 
-  // OwnerDashboard and CleanerDashboard manage their own full-screen layout with sidebar
-  if (roles.includes('owner')) return <OwnerDashboard />
+  // OwnerDashboard and CleanerDashboard manage their own full-screen layout with sidebar.
+  // Admin always lands here too (even with no 'owner' role / no apartments of their own) —
+  // this is the only place with the Админ/Хозяин/Клинер view switcher and the full admin
+  // panel (AdminSection). The plain AdminDashboard below is legacy and effectively unreachable
+  // now, kept only in case 'admin' role is ever granted without routing through here.
+  if (roles.includes('owner') || roles.includes('admin')) return <OwnerDashboard />
   if (roles.includes('cleaner')) return <CleanerDashboard />
 
   // Other dashboards are simple scroll pages — wrap in a scrollable container
