@@ -27,6 +27,7 @@ import { ru } from 'date-fns/locale'
 import { supabase } from '@/integrations/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { cn } from '@/lib/utils'
+import { detectCountry } from '@/lib/phone'
 import type { BlockedDateReason } from '@/integrations/supabase/types'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -182,7 +183,12 @@ function ImageGallery({ images, title }: { images: ApartmentImage[]; title: stri
 
 // ─── Availability Calendar ─────────────────────────────────────────────────────
 
-function AvailabilityCalendar({ blockedDates, bookedRanges }: { blockedDates: BlockedDate[]; bookedRanges: BookedRange[] }) {
+function AvailabilityCalendar({
+  blockedDates, bookedRanges, selectedStart, selectedEnd, onDayClick,
+}: {
+  blockedDates: BlockedDate[]; bookedRanges: BookedRange[]
+  selectedStart?: string; selectedEnd?: string; onDayClick?: (iso: string) => void
+}) {
   const [month, setMonth] = useState(new Date())
 
   const blockedMap = useMemo(() => {
@@ -251,26 +257,47 @@ function AvailabilityCalendar({ blockedDates, bookedRanges }: { blockedDates: Bl
           const reason = blockedMap.get(iso)
           const isToday = isSameDay(day, new Date())
           const inMonth = isSameMonth(day, month)
+          const isPast = iso < format(new Date(), 'yyyy-MM-dd')
+          const isBlocked = reason === 'blocked'
+          const isSelectedBound = iso === selectedStart || iso === selectedEnd
+          const isInRange = !!selectedStart && !!selectedEnd && iso > selectedStart && iso < selectedEnd
+          const clickable = inMonth && !isPast && !isBlocked && !!onDayClick
 
           let cellClass =
             'relative flex items-center justify-center h-8 w-full rounded-lg text-xs transition-colors'
 
           if (!inMonth) {
             cellClass += ' text-muted-foreground/30'
-          } else if (reason === 'blocked') {
+          } else if (isSelectedBound) {
+            cellClass += ' bg-primary text-primary-foreground font-semibold'
+          } else if (isInRange) {
+            cellClass += ' bg-primary/20 text-primary font-medium'
+          } else if (isBlocked) {
             cellClass += ' bg-destructive/20 text-destructive font-medium'
           } else if (reason === 'pending') {
             cellClass += ' bg-amber-100 text-amber-800 font-medium'
           } else if (isToday) {
-            cellClass += ' bg-primary text-primary-foreground font-semibold'
+            cellClass += ' bg-primary/10 text-primary font-semibold'
+          } else if (isPast) {
+            cellClass += ' text-muted-foreground/40'
           } else {
             cellClass += ' text-foreground hover:bg-muted'
           }
 
+          if (clickable) cellClass += ' cursor-pointer'
+          else if (inMonth && isBlocked) cellClass += ' cursor-not-allowed'
+
           return (
-            <div key={iso} className={cellClass} title={reason ?? undefined}>
+            <button
+              key={iso}
+              type="button"
+              disabled={!clickable}
+              onClick={() => clickable && onDayClick?.(iso)}
+              className={cellClass}
+              title={isBlocked ? 'Занято' : reason === 'pending' ? 'Ожидает подтверждения' : undefined}
+            >
               {format(day, 'd')}
-            </div>
+            </button>
           )
         })}
       </div>
@@ -302,16 +329,22 @@ interface BookingFormProps {
   cleaningFee: number
   maxGuests: number
   prefillName?: string
-  bookedRanges: BookedRange[]
+  hardBlockedDays: Set<string>
+  startDate: string
+  endDate: string
+  onChangeStart: (v: string) => void
+  onChangeEnd: (v: string) => void
 }
 
-function BookingForm({ apartmentId, pricePerNight, cleaningFee, maxGuests, prefillName, bookedRanges }: BookingFormProps) {
+function BookingForm({
+  apartmentId, pricePerNight, cleaningFee, maxGuests, prefillName, hardBlockedDays,
+  startDate, endDate, onChangeStart, onChangeEnd,
+}: BookingFormProps) {
   const { t } = useTranslation()
   const { user } = useAuth()
   const [success, setSuccess] = useState(false)
-  const [form, setForm] = useState<BookingFormData>({
-    start_date: '',
-    end_date: '',
+  const [showPhoneCountry, setShowPhoneCountry] = useState(false)
+  const [form, setForm] = useState<Omit<BookingFormData, 'start_date' | 'end_date'>>({
     guests_count: 1,
     guest_name: prefillName ?? '',
     guest_phone: '',
@@ -319,20 +352,20 @@ function BookingForm({ apartmentId, pricePerNight, cleaningFee, maxGuests, prefi
   })
 
   const nights = useMemo(() => {
-    if (!form.start_date || !form.end_date) return 0
-    const diff =
-      (new Date(form.end_date).getTime() - new Date(form.start_date).getTime()) / 86400000
+    if (!startDate || !endDate) return 0
+    const diff = (new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000
     return Math.max(0, Math.round(diff))
-  }, [form.start_date, form.end_date])
+  }, [startDate, endDate])
 
   const total = nights * pricePerNight + cleaningFee
 
-  // Пересекается ли выбранный диапазон с уже занятыми/ожидающими датами — чтобы не дать
-  // гостю отправить заявку на даты, которые в этот момент уже забронированы кем-то другим.
+  // Пересекается ли выбранный диапазон с уже ЗАНЯТЫМИ (подтверждённая бронь или ручная
+  // блокировка хозяином) датами — брони со статусом "ожидает" сюда намеренно не входят:
+  // несколько гостей могут одновременно отправить запрос на одни и те же даты, выбирает хозяин.
   const hasOverlap = useMemo(() => {
-    if (!form.start_date || !form.end_date || form.end_date <= form.start_date) return false
-    return bookedRanges.some((br) => form.start_date < br.end_date && form.end_date > br.start_date)
-  }, [form.start_date, form.end_date, bookedRanges])
+    if (!startDate || !endDate || endDate <= startDate) return false
+    return expandRangeDays(startDate, endDate).some((d) => hardBlockedDays.has(d))
+  }, [startDate, endDate, hardBlockedDays])
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -342,12 +375,15 @@ function BookingForm({ apartmentId, pricePerNight, cleaningFee, maxGuests, prefi
         guest_id: user!.id,
         guest_name: form.guest_name,
         guest_phone: form.guest_phone,
-        guest_message: form.guest_message || null,
-        start_date: form.start_date,
-        end_date: form.end_date,
+        guest_message: form.guest_message,
+        start_date: startDate,
+        end_date: endDate,
         guests_count: form.guests_count,
         status: 'pending',
         total_amount: total > 0 ? total : null,
+        // Отдельно сохраняем уборку, чтобы хозяин в карточке брони видел разбивку
+        // (аренда отдельно от уборки), а не только итоговую сумму.
+        cleaning_fee_amount: cleaningFee > 0 ? cleaningFee : null,
       })
       if (error) throw error
     },
@@ -359,7 +395,7 @@ function BookingForm({ apartmentId, pricePerNight, cleaningFee, maxGuests, prefi
     submit.mutate()
   }
 
-  const set = <K extends keyof BookingFormData>(key: K, value: BookingFormData[K]) =>
+  const set = <K extends keyof typeof form>(key: K, value: typeof form[K]) =>
     setForm((f) => ({ ...f, [key]: value }))
 
   if (success) {
@@ -398,9 +434,9 @@ function BookingForm({ apartmentId, pricePerNight, cleaningFee, maxGuests, prefi
           <input
             type="date"
             required
-            value={form.start_date}
+            value={startDate}
             min={format(new Date(), 'yyyy-MM-dd')}
-            onChange={(e) => set('start_date', e.target.value)}
+            onChange={(e) => { onChangeStart(e.target.value); if (endDate && endDate <= e.target.value) onChangeEnd('') }}
             className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
@@ -411,13 +447,16 @@ function BookingForm({ apartmentId, pricePerNight, cleaningFee, maxGuests, prefi
           <input
             type="date"
             required
-            value={form.end_date}
-            min={form.start_date || format(new Date(), 'yyyy-MM-dd')}
-            onChange={(e) => set('end_date', e.target.value)}
+            value={endDate}
+            min={startDate || format(new Date(), 'yyyy-MM-dd')}
+            onChange={(e) => onChangeEnd(e.target.value)}
             className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
       </div>
+      <p className="text-xs text-muted-foreground -mt-2">
+        {t('booking.pickHint', { defaultValue: 'Даты можно также выбрать на календаре ниже' })}
+      </p>
 
       {/* Guests */}
       <div className="flex flex-col gap-1">
@@ -454,24 +493,46 @@ function BookingForm({ apartmentId, pricePerNight, cleaningFee, maxGuests, prefi
         <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
           {t('booking.guestPhone', { defaultValue: 'Телефон' })}
         </label>
-        <input
-          type="tel"
-          required
-          value={form.guest_phone}
-          onChange={(e) => set('guest_phone', e.target.value)}
-          placeholder="+7 (999) 000-00-00"
-          className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        />
+        <div className="flex items-center rounded-xl border border-border bg-background overflow-hidden focus-within:ring-2 focus-within:ring-ring">
+          <button
+            type="button"
+            onClick={() => setShowPhoneCountry((v) => !v)}
+            className="flex-shrink-0 px-2.5 py-2 text-base leading-none border-r border-border hover:bg-muted transition-colors"
+            title={detectCountry(form.guest_phone)?.name}
+          >
+            {detectCountry(form.guest_phone)?.flag ?? '🌐'}
+          </button>
+          <span className="pl-2 text-sm text-muted-foreground select-none">+</span>
+          <input
+            type="tel"
+            required
+            value={form.guest_phone.replace(/^\+/, '')}
+            onChange={(e) => set('guest_phone', '+' + e.target.value.replace(/^\+*/, ''))}
+            placeholder="7 999 000-00-00"
+            className="flex-1 bg-transparent outline-none px-1 py-2 text-sm text-foreground min-w-0"
+          />
+        </div>
+        {showPhoneCountry && detectCountry(form.guest_phone) && (
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {detectCountry(form.guest_phone)!.flag} {detectCountry(form.guest_phone)!.name}
+          </p>
+        )}
+        <p className="text-[11px] text-muted-foreground">
+          {t('booking.phoneHint', { defaultValue: 'Код страны определяется автоматически' })}
+        </p>
       </div>
 
       <div className="flex flex-col gap-1">
         <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          {t('booking.guestMessage', { defaultValue: 'Сообщение (необязательно)' })}
+          {t('booking.guestMessage', { defaultValue: 'Сообщение хозяину' })}
         </label>
         <textarea
           rows={3}
+          required
+          minLength={3}
           value={form.guest_message}
           onChange={(e) => set('guest_message', e.target.value)}
+          placeholder={t('booking.guestMessagePlaceholder', { defaultValue: 'Пара слов о поездке — так заявка не выглядит анонимной' }) as string}
           className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:ring-2 focus:ring-ring"
         />
       </div>
@@ -566,6 +627,36 @@ export default function ApartmentDetail() {
     },
     enabled: !!id,
   })
+
+  // Даты заезда/выезда — общее состояние для календаря (клик по дню) и формы бронирования
+  // (ручной ввод даты), чтобы оба способа выбора периода были синхронизированы.
+  const [selStart, setSelStart] = useState('')
+  const [selEnd, setSelEnd] = useState('')
+
+  // По-настоящему занятые дни — подтверждённая бронь или ручная блокировка хозяином.
+  // Заявки со статусом "ожидает" сюда не входят: несколько гостей могут отправить запрос
+  // на одни и те же даты одновременно, выбирает хозяин при подтверждении.
+  const hardBlockedDays = useMemo(() => {
+    const set = new Set<string>()
+    for (const br of bookedRanges) {
+      if (br.status !== 'accepted') continue
+      for (const d of expandRangeDays(br.start_date, br.end_date)) set.add(d)
+    }
+    for (const bd of apartment?.blocked_dates ?? []) {
+      if (bd.reason === 'blocked') set.add(bd.date)
+    }
+    return set
+  }, [bookedRanges, apartment?.blocked_dates])
+
+  const handleDayClick = (iso: string) => {
+    if (hardBlockedDays.has(iso)) return
+    if (!selStart || selEnd) { setSelStart(iso); setSelEnd(''); return }
+    if (iso <= selStart) { setSelStart(iso); setSelEnd(''); return }
+    // Нельзя выбрать конец периода, если между заездом и этим днём есть занятая дата
+    const blockedBetween = expandRangeDays(selStart, iso).some((d) => hardBlockedDays.has(d))
+    if (blockedBetween) { setSelStart(iso); setSelEnd(''); return }
+    setSelEnd(iso)
+  }
 
   if (isLoading) {
     return (
@@ -686,7 +777,13 @@ export default function ApartmentDetail() {
               <Calendar size={18} />
               {t('apartment.availability', { defaultValue: 'Доступность' })}
             </h2>
-            <AvailabilityCalendar blockedDates={apartment.blocked_dates} bookedRanges={bookedRanges} />
+            <AvailabilityCalendar
+              blockedDates={apartment.blocked_dates}
+              bookedRanges={bookedRanges}
+              selectedStart={selStart}
+              selectedEnd={selEnd}
+              onDayClick={user ? handleDayClick : undefined}
+            />
           </div>
         </div>
 
@@ -699,7 +796,11 @@ export default function ApartmentDetail() {
               cleaningFee={apartment.cleaning_fee}
               maxGuests={apartment.max_guests}
               prefillName={profile?.name}
-              bookedRanges={bookedRanges}
+              hardBlockedDays={hardBlockedDays}
+              startDate={selStart}
+              endDate={selEnd}
+              onChangeStart={setSelStart}
+              onChangeEnd={setSelEnd}
             />
           ) : (
             <div className="bg-card border border-border rounded-2xl p-6 shadow-[var(--shadow-card)] text-center flex flex-col gap-4">

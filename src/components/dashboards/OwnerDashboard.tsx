@@ -82,6 +82,7 @@ import { supabase } from '@/integrations/supabase/client'
 import { useTheme, type AppTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/hooks/useAuth'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { detectCountry } from '@/lib/phone'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -108,6 +109,7 @@ type CleaningTask = {
 
 type BookingRow = {
   id: string; apartment_id: string; guest_name: string; guest_phone: string
+  guest_message: string | null
   start_date: string; end_date: string; guests_count: number; status: string
   source: string; owner_notes: string | null; total_amount: number | null
   // Разбивка суммы Airbnb: сколько внутри total_amount — уборка (проходящая сумма,
@@ -213,44 +215,8 @@ const saveLastAptId = (id: string) => {
 const fmtEur = (n: number) =>
   n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
 
-// ─── Phone country detection ──────────────────────────────────────────────────
-// Sorted longest prefix first for greedy matching
-const DIAL_CODES: [string, string, string][] = [
-  ['+351','🇵🇹','Португалия'],['+352','🇱🇺','Люксембург'],['+353','🇮🇪','Ирландия'],
-  ['+354','🇮🇸','Исландия'],['+355','🇦🇱','Албания'],['+356','🇲🇹','Мальта'],
-  ['+357','🇨🇾','Кипр'],['+358','🇫🇮','Финляндия'],['+359','🇧🇬','Болгария'],
-  ['+370','🇱🇹','Литва'],['+371','🇱🇻','Латвия'],['+372','🇪🇪','Эстония'],
-  ['+373','🇲🇩','Молдова'],['+374','🇦🇲','Армения'],['+375','🇧🇾','Беларусь'],
-  ['+380','🇺🇦','Украина'],['+381','🇷🇸','Сербия'],['+385','🇭🇷','Хорватия'],
-  ['+386','🇸🇮','Словения'],['+387','🇧🇦','Босния'],['+389','🇲🇰','Македония'],
-  ['+420','🇨🇿','Чехия'],['+421','🇸🇰','Словакия'],['+423','🇱🇮','Лихтенштейн'],
-  ['+966','🇸🇦','Саудовская Аравия'],['+971','🇦🇪','ОАЭ'],['+972','🇮🇱','Израиль'],
-  ['+994','🇦🇿','Азербайджан'],['+995','🇬🇪','Грузия'],['+996','🇰🇬','Кыргызстан'],
-  ['+998','🇺🇿','Узбекистан'],['+992','🇹🇯','Таджикистан'],['+993','🇹🇲','Туркменистан'],
-  ['+20','🇪🇬','Египет'],['+27','🇿🇦','ЮАР'],['+30','🇬🇷','Греция'],
-  ['+31','🇳🇱','Нидерланды'],['+32','🇧🇪','Бельгия'],['+33','🇫🇷','Франция'],
-  ['+34','🇪🇸','Испания'],['+36','🇭🇺','Венгрия'],['+39','🇮🇹','Италия'],
-  ['+40','🇷🇴','Румыния'],['+41','🇨🇭','Швейцария'],['+43','🇦🇹','Австрия'],
-  ['+44','🇬🇧','Великобритания'],['+45','🇩🇰','Дания'],['+46','🇸🇪','Швеция'],
-  ['+47','🇳🇴','Норвегия'],['+48','🇵🇱','Польша'],['+49','🇩🇪','Германия'],
-  ['+52','🇲🇽','Мексика'],['+54','🇦🇷','Аргентина'],['+55','🇧🇷','Бразилия'],
-  ['+61','🇦🇺','Австралия'],['+62','🇮🇩','Индонезия'],['+63','🇵🇭','Филиппины'],
-  ['+65','🇸🇬','Сингапур'],['+66','🇹🇭','Таиланд'],['+81','🇯🇵','Япония'],
-  ['+82','🇰🇷','Южная Корея'],['+84','🇻🇳','Вьетнам'],['+86','🇨🇳','Китай'],
-  ['+90','🇹🇷','Турция'],['+91','🇮🇳','Индия'],['+92','🇵🇰','Пакистан'],
-  ['+98','🇮🇷','Иран'],
-  ['+1','🇺🇸','США / Канада'],['+7','🇷🇺','Россия / Казахстан'],
-]
-function detectCountry(phone: string): { flag: string; name: string } | null {
-  if (!phone) return null
-  const normalized = phone.startsWith('+') ? phone : '+' + phone
-  for (const [code, flag, name] of DIAL_CODES) {
-    if (normalized.startsWith(code) && (normalized.length === code.length || /\d/.test(normalized[code.length]))) {
-      return { flag, name }
-    }
-  }
-  return null
-}
+// Определение страны по коду телефона теперь в общем модуле src/lib/phone.ts —
+// используется и здесь, и на публичной форме бронирования.
 
 // ─── Add Booking Modal ────────────────────────────────────────────────────────
 
@@ -3633,6 +3599,13 @@ function BookingDetailModal({
             </div>
           </div>
 
+          {booking.guest_message && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Сообщение гостя</p>
+              <p className="text-sm whitespace-pre-wrap bg-muted/50 rounded-xl px-3 py-2">{booking.guest_message}</p>
+            </div>
+          )}
+
           {booking.owner_notes && (
             <div>
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Заметки хозяина</p>
@@ -3650,23 +3623,25 @@ function BookingDetailModal({
           </div>
         )}
 
-        <div className="px-5 py-4 border-t border-border flex gap-2 justify-end sticky bottom-0 bg-card flex-wrap">
-          <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted">Закрыть</button>
-          {booking.status === 'pending' && onDecline && (
-            <button onClick={onDecline} disabled={responding}
-              className="px-4 py-2 rounded-xl text-sm font-semibold bg-destructive text-white hover:opacity-90 disabled:opacity-60 flex items-center gap-1.5">
-              <XCircle size={13} /> Отклонить
-            </button>
+        <div className="px-5 py-4 border-t border-border flex flex-col gap-2 sticky bottom-0 bg-card">
+          {booking.status === 'pending' && (onAccept || onDecline) && (
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={onDecline} disabled={responding}
+                className="px-4 py-2.5 rounded-xl text-sm font-semibold bg-destructive text-white hover:opacity-90 disabled:opacity-60 flex items-center justify-center gap-1.5">
+                <XCircle size={14} /> Отклонить
+              </button>
+              <button onClick={onAccept} disabled={responding}
+                className="px-4 py-2.5 rounded-xl text-sm font-semibold bg-emerald-500 text-white hover:opacity-90 disabled:opacity-60 flex items-center justify-center gap-1.5">
+                <Check size={14} /> Подтвердить
+              </button>
+            </div>
           )}
-          {booking.status === 'pending' && onAccept && (
-            <button onClick={onAccept} disabled={responding}
-              className="px-4 py-2 rounded-xl text-sm font-semibold bg-emerald-500 text-white hover:opacity-90 disabled:opacity-60 flex items-center gap-1.5">
-              <Check size={13} /> Подтвердить
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted flex items-center justify-center">Закрыть</button>
+            <button onClick={onEdit} className="px-4 py-2 rounded-xl text-sm font-semibold bg-primary text-primary-foreground hover:opacity-90 flex items-center justify-center gap-1.5">
+              <Pencil size={13} /> Редактировать
             </button>
-          )}
-          <button onClick={onEdit} className="px-4 py-2 rounded-xl text-sm font-semibold bg-primary text-primary-foreground hover:opacity-90 flex items-center gap-1.5">
-            <Pencil size={13} /> Редактировать
-          </button>
+          </div>
         </div>
       </motion.div>
     </motion.div>
@@ -3861,7 +3836,13 @@ function BookingsSection({
       if (error) throw error
     },
     onSuccess: () => { setRespondError(null); onRefresh(); qc.invalidateQueries({ queryKey: ['owner-bookings-full'] }) },
-    onError: (err: Error) => setRespondError(err.message),
+    onError: (err: { code?: string; message: string }) => {
+      // 23P01 = exclusion_violation — БД сама не даёт подтвердить бронь, если на эти даты
+      // уже есть другая ПОДТВЕРЖДЁННАЯ бронь той же квартиры (см. миграцию 008).
+      setRespondError(err.code === '23P01'
+        ? 'Эти даты уже заняты другой подтверждённой бронью — сначала отклоните или измените одну из них'
+        : err.message)
+    },
   })
 
   // Tab counts
