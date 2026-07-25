@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { AuthProvider } from '@/hooks/useAuth'
+import { AuthProvider, useAuth } from '@/hooks/useAuth'
 import { ThemeProvider } from '@/contexts/ThemeContext'
 import { Header } from '@/components/Header'
 import { Footer } from '@/components/Footer'
@@ -17,7 +17,13 @@ const queryClient = new QueryClient({
 // Extracted so useLocation works inside BrowserRouter
 function AppLayout() {
   const location = useLocation()
-  const isAppShell = location.pathname === '/dashboard'
+  const { roles } = useAuth()
+  // OwnerDashboard/CleanerDashboard строят собственный полноэкранный shell с сайдбаром и не
+  // нуждаются в глобальном Header/Footer (см. Dashboard.tsx). Но GuestDashboard (и легаси
+  // AdminDashboard) — простые скролл-страницы без своей навигации: без глобального Header
+  // у гостя не было ни ссылки "Главная" (чтобы увидеть список квартир для брони), ни "Выйти".
+  const hasOwnShell = roles.includes('owner') || roles.includes('admin') || roles.includes('cleaner')
+  const isAppShell = location.pathname === '/dashboard' && hasOwnShell
 
   return (
     <div
