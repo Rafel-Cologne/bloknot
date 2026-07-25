@@ -3526,8 +3526,11 @@ function EditBookingModal({ booking, onClose, onSaved }: {
 // ─── Booking Detail Modal ───────────────────────────────────────────────────────
 
 function BookingDetailModal({
-  booking, onClose, onEdit,
-}: { booking: BookingRow; onClose: () => void; onEdit: () => void }) {
+  booking, onClose, onEdit, onAccept, onDecline, responding,
+}: {
+  booking: BookingRow; onClose: () => void; onEdit: () => void
+  onAccept?: () => void; onDecline?: () => void; responding?: boolean
+}) {
   const nights = Math.round((parseISO(booking.end_date).getTime() - parseISO(booking.start_date).getTime()) / 86400000)
   const hasFeeBreakdown = booking.cleaning_fee_amount != null || booking.host_service_fee_amount != null
   // total_amount — то, что хозяин реально получает (Airbnb уже вычла свою комиссию из суммы гостя).
@@ -3638,8 +3641,29 @@ function BookingDetailModal({
           )}
         </div>
 
-        <div className="px-5 py-4 border-t border-border flex gap-2 justify-end sticky bottom-0 bg-card">
+        {booking.status === 'pending' && (onAccept || onDecline) && (
+          <div className="px-5 pb-2 -mt-2">
+            <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-3 py-2 text-xs">
+              <AlertCircle size={14} className="flex-shrink-0" />
+              Эта бронь ждёт вашего решения — подтвердите или отклоните её.
+            </div>
+          </div>
+        )}
+
+        <div className="px-5 py-4 border-t border-border flex gap-2 justify-end sticky bottom-0 bg-card flex-wrap">
           <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted">Закрыть</button>
+          {booking.status === 'pending' && onDecline && (
+            <button onClick={onDecline} disabled={responding}
+              className="px-4 py-2 rounded-xl text-sm font-semibold bg-destructive text-white hover:opacity-90 disabled:opacity-60 flex items-center gap-1.5">
+              <XCircle size={13} /> Отклонить
+            </button>
+          )}
+          {booking.status === 'pending' && onAccept && (
+            <button onClick={onAccept} disabled={responding}
+              className="px-4 py-2 rounded-xl text-sm font-semibold bg-emerald-500 text-white hover:opacity-90 disabled:opacity-60 flex items-center gap-1.5">
+              <Check size={13} /> Подтвердить
+            </button>
+          )}
           <button onClick={onEdit} className="px-4 py-2 rounded-xl text-sm font-semibold bg-primary text-primary-foreground hover:opacity-90 flex items-center gap-1.5">
             <Pencil size={13} /> Редактировать
           </button>
@@ -3773,7 +3797,15 @@ function BookingsSection({
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
   // Filters
-  const [statusFilter, setStatusFilter] = useState<'active' | 'archive'>('active')
+  const [statusFilter, setStatusFilter] = useState<'pending' | 'active' | 'archive'>('active')
+  // При первой загрузке, если есть брони, ожидающие подтверждения, сразу открываем эту
+  // вкладку — иначе бейдж "1" в сайдбаре не объясняет, что именно нужно посмотреть.
+  const pendingDefaultApplied = useRef(false)
+  useEffect(() => {
+    if (pendingDefaultApplied.current || !bookings.length) return
+    pendingDefaultApplied.current = true
+    if (bookings.some(b => b.status === 'pending')) setStatusFilter('pending')
+  }, [bookings])
   const [search, setSearch] = useState('')
   const [aptFilter, setAptFilter] = useState('all')
   const [sourceFilter, setSourceFilter] = useState('all')
@@ -3820,18 +3852,36 @@ function BookingsSection({
     onError: (err: Error) => setDeleteError(err.message),
   })
 
+  // Подтвердить / отклонить бронь, ожидающую решения хозяина (status === 'pending',
+  // такие брони приходят с публичной формы бронирования на сайте).
+  const [respondError, setRespondError] = useState<string | null>(null)
+  const respondBooking = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: 'accepted' | 'declined' }) => {
+      const { error } = await supabase.from('bookings').update({ status } as never).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => { setRespondError(null); onRefresh(); qc.invalidateQueries({ queryKey: ['owner-bookings-full'] }) },
+    onError: (err: Error) => setRespondError(err.message),
+  })
+
   // Tab counts
   const counts = useMemo(() => ({
+    pending: bookings.filter(b => b.status === 'pending').length,
     active: bookings.filter(b => b.status === 'accepted' && b.end_date >= today).length,
     archive: bookings.filter(b => b.end_date < today && b.status === 'accepted').length,
   }), [bookings, today])
 
   // Filtered list
   const filtered = useMemo(() => {
+    // Pending: awaiting owner decision, nearest first
     // Active: upcoming/current, ascending (nearest first)
     // Archive: past, descending (most recent first)
     let list: typeof bookings
-    if (statusFilter === 'archive') {
+    if (statusFilter === 'pending') {
+      list = [...bookings]
+        .filter(b => b.status === 'pending')
+        .sort((a, b) => a.start_date.localeCompare(b.start_date))
+    } else if (statusFilter === 'archive') {
       list = [...bookings]
         .filter(b => b.end_date < today && b.status === 'accepted')
         .sort((a, b) => b.start_date.localeCompare(a.start_date))
@@ -3880,6 +3930,7 @@ function BookingsSection({
   }, [page, totalPages])
 
   const tabs = [
+    { id: 'pending' as const, label: 'Ожидают подтверждения', count: counts.pending },
     { id: 'active' as const, label: 'Актуальные', count: counts.active },
     { id: 'archive' as const, label: 'Архив', count: counts.archive },
   ]
@@ -3906,14 +3957,29 @@ function BookingsSection({
 
       {/* Status tabs */}
       <div className="flex items-center gap-1 flex-wrap">
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setStatusFilter(t.id)}
-            className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5 ${statusFilter === t.id ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-secondary'}`}>
-            {t.label}
-            <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-bold ${statusFilter === t.id ? 'bg-white/20 text-white' : 'bg-background text-foreground'}`}>{t.count}</span>
-          </button>
-        ))}
+        {tabs.map(t => {
+          const isPendingHighlight = t.id === 'pending' && t.count > 0
+          return (
+            <button key={t.id} onClick={() => setStatusFilter(t.id)}
+              className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                statusFilter === t.id
+                  ? isPendingHighlight ? 'bg-amber-500 text-white' : 'bg-primary text-primary-foreground'
+                  : isPendingHighlight ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' : 'bg-muted text-muted-foreground hover:bg-secondary'
+              }`}>
+              {t.label}
+              <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-bold ${statusFilter === t.id ? 'bg-white/20 text-white' : isPendingHighlight ? 'bg-amber-500 text-white' : 'bg-background text-foreground'}`}>{t.count}</span>
+            </button>
+          )
+        })}
       </div>
+
+      {respondError && (
+        <div className="flex items-center gap-2 bg-destructive/10 border border-destructive/30 text-destructive rounded-xl px-4 py-3 text-sm">
+          <XCircle size={16} className="flex-shrink-0" />
+          <span>Ошибка: {respondError}</span>
+          <button onClick={() => setRespondError(null)} className="ml-auto"><X size={14} /></button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-col gap-2">
@@ -3953,7 +4019,9 @@ function BookingsSection({
         <div className="bg-card border border-border rounded-2xl p-10 text-center text-muted-foreground">
           {!bookings.length
             ? <><p className="mb-3">Бронирований пока нет</p><button onClick={onAddBooking} className="btn-primary rounded-xl px-4 py-2 text-sm inline-flex items-center gap-1.5"><Plus size={14} />Добавить первую бронь</button></>
-            : <p>Нет бронирований по выбранным фильтрам</p>
+            : statusFilter === 'pending'
+              ? <p>Нет броней, ожидающих подтверждения</p>
+              : <p>Нет бронирований по выбранным фильтрам</p>
           }
         </div>
       ) : (
@@ -3989,6 +4057,18 @@ function BookingsSection({
 
                     {/* Actions — on mobile pushed to right of date+photo row */}
                     <div className="flex sm:hidden ml-auto gap-1" onClick={e => e.stopPropagation()}>
+                      {b.status === 'pending' && (
+                        <>
+                          <button onClick={() => respondBooking.mutate({ id: b.id, status: 'accepted' })} disabled={respondBooking.isPending}
+                            className="p-2 rounded-xl bg-emerald-500 text-white hover:opacity-90 disabled:opacity-60 transition-colors" title="Подтвердить">
+                            <Check size={14} />
+                          </button>
+                          <button onClick={() => respondBooking.mutate({ id: b.id, status: 'declined' })} disabled={respondBooking.isPending}
+                            className="p-2 rounded-xl bg-destructive text-white hover:opacity-90 disabled:opacity-60 transition-colors" title="Отклонить">
+                            <XCircle size={14} />
+                          </button>
+                        </>
+                      )}
                       <button onClick={() => setEditingBooking(b)}
                         className="p-2 rounded-xl bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors">
                         <Pencil size={14} />
@@ -4032,6 +4112,18 @@ function BookingsSection({
 
                   {/* Actions — desktop only */}
                   <div className="hidden sm:flex flex-shrink-0 flex-col gap-1.5" onClick={e => e.stopPropagation()}>
+                    {b.status === 'pending' && (
+                      <>
+                        <button onClick={() => respondBooking.mutate({ id: b.id, status: 'accepted' })} disabled={respondBooking.isPending}
+                          className="p-2 rounded-xl bg-emerald-500 text-white hover:opacity-90 disabled:opacity-60 transition-colors" title="Подтвердить">
+                          <Check size={14} />
+                        </button>
+                        <button onClick={() => respondBooking.mutate({ id: b.id, status: 'declined' })} disabled={respondBooking.isPending}
+                          className="p-2 rounded-xl bg-destructive text-white hover:opacity-90 disabled:opacity-60 transition-colors" title="Отклонить">
+                          <XCircle size={14} />
+                        </button>
+                      </>
+                    )}
                     <button onClick={() => setEditingBooking(b)}
                       className="p-2 rounded-xl bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors" title="Редактировать">
                       <Pencil size={14} />
@@ -4088,7 +4180,10 @@ function BookingsSection({
         {viewingBooking && !editingBooking && (
           <BookingDetailModal booking={viewingBooking}
             onClose={() => setViewingBooking(null)}
-            onEdit={() => { setEditingBooking(viewingBooking); setViewingBooking(null) }} />
+            onEdit={() => { setEditingBooking(viewingBooking); setViewingBooking(null) }}
+            responding={respondBooking.isPending}
+            onAccept={() => respondBooking.mutate({ id: viewingBooking.id, status: 'accepted' }, { onSuccess: () => setViewingBooking(null) })}
+            onDecline={() => respondBooking.mutate({ id: viewingBooking.id, status: 'declined' }, { onSuccess: () => setViewingBooking(null) })} />
         )}
       </AnimatePresence>
 
