@@ -66,6 +66,7 @@ import {
   Landmark,
   Scale,
   PiggyBank,
+  Mail,
 } from 'lucide-react'
 import {
   format,
@@ -78,7 +79,7 @@ import {
   parseISO,
 } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { supabase } from '@/integrations/supabase/client'
+import { supabase, supabaseUrl } from '@/integrations/supabase/client'
 import { useTheme, type AppTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/hooks/useAuth'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -7865,6 +7866,12 @@ type AgentLog = {
 
 type UserAlias = { id: string; user_id: string; alias: string; created_at: string }
 type UserProfile = { id: string; name: string; email: string | null; is_active: boolean; created_at: string }
+// Статус личного Gmail-ящика пользователя (faktura.imya@gmail.com) — без refresh_token,
+// он не покидает backend (view email_accounts_status специально его не отдаёт).
+type EmailAccountStatus = {
+  id: string; owner_id: string; email_address: string; is_active: boolean
+  connected_at: string; last_synced_at: string | null
+}
 
 function AdminSection() {
   const [tab, setTab] = useState<'users' | 'agent' | 'cleaning' | 'restore'>('users')
@@ -7885,6 +7892,29 @@ function AdminSection() {
       return (data ?? []) as UserAlias[]
     },
   })
+
+  const { data: emailAccounts = [] } = useQuery({
+    queryKey: ['admin-email-accounts'],
+    queryFn: async () => {
+      const { data } = await supabase.from('email_accounts_status').select('*').order('connected_at', { ascending: false })
+      return (data ?? []) as EmailAccountStatus[]
+    },
+  })
+
+  // Запускает OAuth-подключение личного Gmail-ящика (faktura.imya@gmail.com) выбранного
+  // пользователя: открывает экран согласия Google в новой вкладке. Пока там открыт этот
+  // Gmail-аккаунт (обычно — только что созданный, с временным паролем), нужно войти именно
+  // в него и подтвердить доступ — тогда refresh-токен привяжется к этому owner_id.
+  const [connectingOwnerId, setConnectingOwnerId] = useState('')
+  const handleConnectGmail = async (ownerId: string) => {
+    setConnectingOwnerId(ownerId)
+    const { data: sessionData } = await supabase.auth.getSession()
+    const accessToken = sessionData.session?.access_token
+    if (!accessToken) { setConnectingOwnerId(''); return }
+    const startUrl = `${supabaseUrl}/functions/v1/gmail-oauth-start?owner_id=${encodeURIComponent(ownerId)}&access_token=${encodeURIComponent(accessToken)}`
+    window.open(startUrl, '_blank', 'noopener')
+    setConnectingOwnerId('')
+  }
 
   const { data: agentLogs = [] } = useQuery({
     queryKey: ['admin-agent-logs'],
@@ -8059,6 +8089,27 @@ function AdminSection() {
                         <span className="text-xs text-muted-foreground">нет алиаса</span>
                       )}
                     </div>
+                    <div className="text-right flex-shrink-0">
+                      {(() => {
+                        const acc = emailAccounts.find(a => a.owner_id === p.id)
+                        if (acc) {
+                          return (
+                            <span title={acc.last_synced_at ? `Последняя синхронизация: ${format(parseISO(acc.last_synced_at), 'd MMM HH:mm', { locale: ru })}` : 'Ещё не синхронизировался'}
+                              className={`text-xs px-2 py-0.5 rounded-full font-mono inline-flex items-center gap-1 ${
+                                acc.is_active ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-muted text-muted-foreground'
+                              }`}>
+                              <Mail size={11} /> {acc.email_address}
+                            </span>
+                          )
+                        }
+                        return (
+                          <button onClick={() => handleConnectGmail(p.id)} disabled={connectingOwnerId === p.id}
+                            className="text-xs px-2 py-1 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 inline-flex items-center gap-1 disabled:opacity-50">
+                            <Mail size={11} /> Подключить Gmail
+                          </button>
+                        )
+                      })()}
+                    </div>
                   </div>
                 )
               })}
@@ -8082,8 +8133,20 @@ function AdminSection() {
               </button>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Email: bloknot.app+<span className="font-mono">{newAlias || 'алиас'}</span>@gmail.com
+              Email: bloknot.app+<span className="font-mono">{newAlias || 'алиас'}</span>@gmail.com — устаревший способ (общий ящик), используйте только если знаете зачем.
+              Для нового пользователя вместо этого нажмите «Подключить Gmail» у него в списке выше — это выдаёт ему собственный изолированный ящик.
             </p>
+          </div>
+
+          {/* Подключение личного Gmail: как это работает — пошагово */}
+          <div className="bg-card border border-border rounded-2xl p-4">
+            <p className="text-sm font-semibold mb-2 flex items-center gap-1.5"><Mail size={14} /> Подключение личного Gmail-ящика</p>
+            <ol className="text-xs text-muted-foreground list-decimal list-inside space-y-1">
+              <li>Пользователь создаёт новый Gmail-аккаунт (например faktura.имя@gmail.com) с временным паролем.</li>
+              <li>Вы нажимаете «Подключить Gmail» у этого пользователя выше — откроется экран согласия Google.</li>
+              <li>Входите именно в этот новый Gmail-аккаунт (по временному паролю) и подтверждаете доступ агенту.</li>
+              <li>Готово — ящик привязан. Дальше пользователь сам меняет временный пароль на свой — доступ агента (по токену) при этом не пропадёт.</li>
+            </ol>
           </div>
         </div>
       )}
