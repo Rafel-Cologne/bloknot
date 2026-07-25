@@ -83,6 +83,7 @@ import { useTheme, type AppTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/hooks/useAuth'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { detectCountry } from '@/lib/phone'
+import CleanerDashboard from './CleanerDashboard'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -5693,7 +5694,7 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
 
   // ── nav items ─────────────────────────────────────────────────────────────────
   const NAV: { id: typeof tab; label: string; icon: React.ReactNode; count?: number }[] = [
-    { id: 'today',    label: 'Ожидание уборки', icon: <Brush size={16} />,        count: checkoutToday.length },
+    { id: 'today',    label: 'Уборка',     icon: <Brush size={16} />,        count: checkoutToday.length },
     { id: 'bookings', label: 'Заезды',    icon: <CalendarDays size={16} />, count: currentStays.length + upcoming.length },
     { id: 'payment',  label: 'Оплата',    icon: <Banknote size={16} />,    count: totalOwed > 0 ? undefined : undefined },
     { id: 'calendar', label: 'Календарь', icon: <CalendarDays size={16} /> },
@@ -5718,11 +5719,11 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
         <nav className="flex flex-col gap-0.5">
           {NAV.map(item => (
             <button key={item.id} onClick={() => setTab(item.id)}
-              className={`sidebar-nav-item flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 relative ${tab === item.id ? 'active' : ''}`}>
+              className={`sidebar-nav-item flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 relative whitespace-nowrap ${tab === item.id ? 'active' : ''}`}>
               {item.icon}
               {item.label}
               {item.count !== undefined && item.count > 0 && (
-                <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold flex-shrink-0 ${
                   item.id === 'today'
                     ? 'bg-amber-500 text-white'
                     : tab === item.id ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-muted-foreground/15 text-muted-foreground'
@@ -5731,7 +5732,7 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
                 </span>
               )}
               {item.id === 'payment' && totalOwed > 0 && (
-                <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-600">
+                <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-600 flex-shrink-0">
                   {fmtEur(totalOwed)}
                 </span>
               )}
@@ -8453,6 +8454,11 @@ const NAV_ITEMS: Array<{ id: Section; label: string; icon: React.ReactNode; admi
 export default function OwnerDashboard() {
   const { user, signOut, roles } = useAuth()
   const isAdmin = roles.includes('admin')
+  // Админ может переключаться между тем, как видит кабинет он сам (admin — полный доступ),
+  // обычный хозяин (owner — без вкладки "Админ") и уборщица (cleaner — реальный CleanerDashboard
+  // с объектами всех клинеров/хозяев, в режиме только для чтения).
+  const [adminViewMode, setAdminViewMode] = useState<'admin' | 'owner' | 'cleaner'>('admin')
+  const effectiveIsAdmin = isAdmin && adminViewMode === 'admin'
   const { theme, setTheme } = useTheme()
   const isSaasTheme = theme === 'saas-dark' || theme === 'saas-light'
   const navigate = useNavigate()
@@ -8578,6 +8584,12 @@ export default function OwnerDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAgentEvents])
 
+  // Если админ переключился в режим "Хозяин", а перед этим смотрел вкладку "Админ" —
+  // уводим его на дашборд, чтобы не залипал на недоступной вкладке.
+  useEffect(() => {
+    if (!effectiveIsAdmin && section === 'admin') setSection('dashboard')
+  }, [effectiveIsAdmin, section])
+
   const handleSignOutRoot = async () => { await signOut(); navigate('/') }
 
   // Menu items for the saas-theme mobile hamburger slide-out (same real sections as the
@@ -8592,8 +8604,20 @@ export default function OwnerDashboard() {
     { id: 'tax_report', label: 'Налог IRPF', icon: <FileSpreadsheet size={17} />, active: topView === 'owner' && section === 'tax_report', action: () => { setTopView('owner'); setSection('tax_report'); setSaasMenuOpen(false) } },
     { id: 'apartments', label: 'Апартаменты', icon: <Building2 size={17} />, active: topView === 'owner' && section === 'apartments', action: () => { setTopView('owner'); setSection('apartments'); setSaasMenuOpen(false) } },
     { id: 'settings', label: 'Настройки', icon: <Settings size={17} />, active: topView === 'owner' && section === 'settings', action: () => { setTopView('owner'); setSection('settings'); setSaasMenuOpen(false) } },
-    ...(isAdmin ? [{ id: 'admin', label: 'Админ', icon: <ShieldCheck size={17} />, active: topView === 'owner' && section === 'admin', action: () => { setTopView('owner'); setSection('admin'); setSaasMenuOpen(false) } }] : []),
+    ...(effectiveIsAdmin ? [{ id: 'admin', label: 'Админ', icon: <ShieldCheck size={17} />, active: topView === 'owner' && section === 'admin', action: () => { setTopView('owner'); setSection('admin'); setSaasMenuOpen(false) } }] : []),
   ]
+
+  // Админ в режиме "Клинер" видит настоящий кабинет уборщицы (CleanerDashboard,
+  // а не CleanerView, который показывает только объекты текущего хозяина) — так он
+  // видит объекты всех клинеров/хозяев ровно так же, как их видит уборщица, но без
+  // возможности вносить изменения (см. previewAsAdmin внутри CleanerDashboard).
+  if (isAdmin && adminViewMode === 'cleaner') {
+    return (
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <CleanerDashboard previewAsAdmin onExitPreview={() => setAdminViewMode('admin')} />
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden">
@@ -8607,7 +8631,7 @@ export default function OwnerDashboard() {
         </button>
 
         {/* Nav */}
-        {NAV_ITEMS.filter(item => !item.adminOnly || isAdmin).map(item => (
+        {NAV_ITEMS.filter(item => !item.adminOnly || effectiveIsAdmin).map(item => (
           <button
             key={item.id}
             onClick={() => setSection(item.id)}
@@ -8696,6 +8720,17 @@ export default function OwnerDashboard() {
           </div>
           {/* Right actions */}
           <div className="ml-auto flex items-center gap-2">
+            {isAdmin && (
+              <div className="hidden lg:flex items-center rounded-lg bg-muted p-0.5 mr-1">
+                {(['admin', 'owner', 'cleaner'] as const).map(m => (
+                  <button key={m} onClick={() => setAdminViewMode(m)}
+                    title="Режим просмотра для администратора"
+                    className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${adminViewMode === m ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                    {m === 'admin' ? 'Админ' : m === 'owner' ? 'Хозяин' : 'Клинер'}
+                  </button>
+                ))}
+              </div>
+            )}
             <button onClick={() => setShowAgentEvents(true)}
               className={`relative p-2 rounded-lg hover:bg-muted transition-colors ${agentEventsCount > 0 ? 'text-red-600' : 'text-muted-foreground'}`}>
               <motion.div animate={agentEventsCount > 0 ? { rotate: [0, -12, 12, -8, 8, 0] } : {}}
@@ -8779,8 +8814,8 @@ export default function OwnerDashboard() {
                 <TaxReportSection apartments={apartments} bookings={bookings}
                   onGoToBooking={(id) => { setJumpToBookingId(id); setSection('bookings') }} />
               )}
-              {section === 'admin' && isAdmin && <AdminSection />}
-              {section === 'admin' && !isAdmin && (
+              {section === 'admin' && effectiveIsAdmin && <AdminSection />}
+              {section === 'admin' && !effectiveIsAdmin && (
                 <div className="bg-card border border-border rounded-2xl p-10 text-center text-muted-foreground">
                   Доступ запрещён
                 </div>
@@ -8875,13 +8910,23 @@ export default function OwnerDashboard() {
                   style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
                   initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ duration: 0.2 }}>
                   <div className="w-10 h-1 rounded-full bg-border mx-auto mb-4" />
+                  {isAdmin && (
+                    <div className="flex items-center rounded-xl bg-muted p-0.5 mb-3">
+                      {(['admin', 'owner', 'cleaner'] as const).map(m => (
+                        <button key={m} onClick={() => { setAdminViewMode(m); setMoreOpen(false) }}
+                          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${adminViewMode === m ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'}`}>
+                          {m === 'admin' ? 'Админ' : m === 'owner' ? 'Хозяин' : 'Клинер'}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {([
                     { id: 'income' as Section, label: 'Доходы', icon: <BarChart2 size={17} /> },
                     { id: 'expenses' as Section, label: 'Расходы', icon: <Receipt size={17} /> },
                     { id: 'tax_report' as Section, label: 'Налог IRPF', icon: <FileSpreadsheet size={17} /> },
                     { id: 'apartments' as Section, label: 'Апартаменты', icon: <Building2 size={17} /> },
                     { id: 'settings' as Section, label: 'Настройки', icon: <Settings size={17} /> },
-                    ...(isAdmin ? [{ id: 'admin' as Section, label: 'Админ', icon: <ShieldCheck size={17} /> }] : []),
+                    ...(effectiveIsAdmin ? [{ id: 'admin' as Section, label: 'Админ', icon: <ShieldCheck size={17} /> }] : []),
                   ]).map(item => (
                     <button key={item.id} onClick={() => { setTopView('owner'); setSection(item.id); setMoreOpen(false) }}
                       className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium hover:bg-muted transition-colors">
@@ -8953,6 +8998,20 @@ export default function OwnerDashboard() {
                   style={{ background: 'hsl(var(--sidebar))', borderRight: '1px solid hsl(var(--sidebar-border))', paddingTop: 'calc(0.75rem + env(safe-area-inset-top))', paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
                   initial={{ x: '-100%' }} animate={{ x: 0 }} exit={{ x: '-100%' }} transition={{ duration: 0.2 }}>
                   <p className="text-[11px] font-bold uppercase tracking-wide px-2 mb-2" style={{ color: 'hsl(var(--sidebar-fg))' }}>Меню</p>
+                  {isAdmin && (
+                    <div className="flex items-center rounded-xl p-0.5 mb-2" style={{ background: 'hsl(var(--sidebar-hover))' }}>
+                      {(['admin', 'owner', 'cleaner'] as const).map(m => (
+                        <button key={m} onClick={() => { setAdminViewMode(m); setSaasMenuOpen(false) }}
+                          className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                          style={{
+                            background: adminViewMode === m ? 'hsl(var(--sidebar-active-bg))' : 'transparent',
+                            color: adminViewMode === m ? 'hsl(var(--sidebar-active-fg))' : 'hsl(var(--sidebar-fg))',
+                          }}>
+                          {m === 'admin' ? 'Админ' : m === 'owner' ? 'Хозяин' : 'Клинер'}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {saasMenuItems.map(item => (
                     <button key={item.id} onClick={item.action}
                       className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold relative transition-colors"

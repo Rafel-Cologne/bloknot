@@ -120,8 +120,8 @@ function StarPicker({ value, onChange, readOnly, size }: { value: number; onChan
 
 // ─── Task detail modal ──────────────────────────────────────────────────────────
 
-function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
-  task: TaskRow; cashBalance: number; onClose: () => void; onRefresh: () => void
+function TaskDetailModal({ task, cashBalance, onClose, onRefresh, readOnly }: {
+  task: TaskRow; cashBalance: number; onClose: () => void; onRefresh: () => void; readOnly?: boolean
 }) {
   const { user } = useAuth()
   const qc = useQueryClient()
@@ -243,6 +243,12 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
           </button>
         </div>
 
+        {readOnly && (
+          <p className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+            👁 Режим предпросмотра администратора — изменения недоступны
+          </p>
+        )}
+
         {/* Client data */}
         <div className="flex flex-col gap-2.5 bg-secondary/50 rounded-2xl p-4">
           {b.guest_name && (
@@ -298,7 +304,7 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
         </div>
 
         {/* Cash from guest for rent (private bookings) */}
-        {b.source === 'other' && (
+        {b.source === 'other' && !readOnly && (
           <div className="bg-secondary/50 rounded-2xl p-4 flex flex-col gap-2">
             <span className="text-xs font-medium text-foreground">💰 Гость отдал наличными за аренду</span>
             <div className="flex items-center gap-2">
@@ -346,8 +352,8 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
         {/* Actions */}
         <div className="flex flex-col gap-2">
           {!isDone && isPast && (
-            <button onClick={() => markDone.mutate()} disabled={markDone.isPending || rating === 0}
-              title={rating === 0 ? 'Сначала оцените чистоту' : undefined}
+            <button onClick={() => markDone.mutate()} disabled={markDone.isPending || rating === 0 || readOnly}
+              title={readOnly ? 'Недоступно в режиме предпросмотра' : rating === 0 ? 'Сначала оцените чистоту' : undefined}
               className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50">
               <CheckCircle2 size={15} />
               {markDone.isPending ? 'Сохраняем…' : 'Уборка выполнена'}
@@ -357,8 +363,8 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
             <p className="text-xs text-muted-foreground italic text-center py-1">Отметить уборку можно после выезда гостя</p>
           )}
           {isDone && !b.guest_rating && (
-            <button onClick={() => saveRatingOnly.mutate()} disabled={saveRatingOnly.isPending || rating === 0}
-              title={rating === 0 ? 'Сначала оцените чистоту' : undefined}
+            <button onClick={() => saveRatingOnly.mutate()} disabled={saveRatingOnly.isPending || rating === 0 || readOnly}
+              title={readOnly ? 'Недоступно в режиме предпросмотра' : rating === 0 ? 'Сначала оцените чистоту' : undefined}
               className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50">
               <Star size={15} />
               {saveRatingOnly.isPending ? 'Сохраняем…' : 'Сохранить оценку'}
@@ -367,13 +373,13 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
           {/* Наличные/касса — только для частных заездов (гость платит напрямую).
               Для Airbnb/Booking оплату уборщице переводит хозяин отдельно —
               здесь ей нужны только оценка, комментарий и кнопка "убрано". */}
-          {b.source === 'other' && !isPaid && (
+          {b.source === 'other' && !isPaid && !readOnly && (
             <button onClick={() => receivedFromClient.mutate()} disabled={receivedFromClient.isPending}
               className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-2xl bg-purple-100 text-purple-800 text-sm font-semibold hover:bg-purple-200 transition-colors disabled:opacity-60">
               <Banknote size={15} /> Получила от клиента {fmtEur(task.cleaning_fee)}
             </button>
           )}
-          {b.source === 'other' && isOwnerTransfer && !isPaid && canWithdraw && (
+          {b.source === 'other' && isOwnerTransfer && !isPaid && canWithdraw && !readOnly && (
             <button onClick={() => withdrawFromTill.mutate()} disabled={withdrawFromTill.isPending}
               className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-2xl bg-amber-100 text-amber-900 text-sm font-semibold hover:bg-amber-200 transition-colors disabled:opacity-60">
               <Wallet size={15} /> Списать {fmtEur(task.cleaning_fee)} из кассы
@@ -575,7 +581,7 @@ function CleanerCalendar({ tasks, aptColor }: { tasks: TaskRow[]; aptColor: (id:
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-export default function CleanerDashboard() {
+export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { previewAsAdmin?: boolean; onExitPreview?: () => void } = {}) {
   const { user, signOut } = useAuth()
   const qc = useQueryClient()
   const [tab, setTab] = useState<'today' | 'bookings' | 'payment' | 'calendar' | 'archive' | 'profile'>('bookings')
@@ -589,13 +595,14 @@ export default function CleanerDashboard() {
 
   // Full apartment rows for the calendar tab (same component/visualization as the owner's calendar)
   const { data: calApartments = [] } = useQuery({
-    queryKey: ['cleaner-apartments', user?.id],
+    queryKey: ['cleaner-apartments', user?.id, previewAsAdmin],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('apartments')
-        .select('*, apartment_images(*)')
-        .eq('cleaner_id', user!.id)
-        .order('title')
+      // Админ в режиме предпросмотра видит объекты всех клинеров/хозяев (как в п.5
+      // спецификации — "администратор видит полностью кабинет уборщицы"), обычная
+      // уборщица — только те, к которым назначена.
+      let q = supabase.from('apartments').select('*, apartment_images(*)')
+      if (!previewAsAdmin) q = q.eq('cleaner_id', user!.id)
+      const { data, error } = await q.order('title')
       if (error) throw error
       return data as Apartment[]
     },
@@ -603,15 +610,15 @@ export default function CleanerDashboard() {
   })
 
   const { data: tasks, isLoading } = useQuery({
-    queryKey: ['cleaner-tasks', user?.id],
+    queryKey: ['cleaner-tasks', user?.id, previewAsAdmin],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let q = supabase
         .from('cleaning_tasks')
         .select(
           '*, bookings(id, start_date, end_date, guest_name, guest_phone, guests_count, guest_rating, share_contact_with_cleaner, source, total_amount, apartments(id, title, address, owner_id))',
         )
-        .eq('cleaner_id', user!.id)
-        .order('created_at', { ascending: false })
+      if (!previewAsAdmin) q = q.eq('cleaner_id', user!.id)
+      const { data, error } = await q.order('created_at', { ascending: false })
       if (error) throw error
       return data as TaskRow[]
     },
@@ -757,7 +764,7 @@ export default function CleanerDashboard() {
   const calAptImage = (aptId: string) => calApartments.find(a => a.id === aptId)?.apartment_images?.[0]?.image_url ?? null
 
   const NAV = [
-    { id: 'today' as const, label: 'Ожидание уборки', icon: <Brush size={16} />, count: checkoutToday.length },
+    { id: 'today' as const, label: 'Уборка', icon: <Brush size={16} />, count: checkoutToday.length },
     { id: 'bookings' as const, label: 'Заезды', icon: <CalendarDays size={16} />, count: currentStays.length + upcoming.length + overdue.length },
     { id: 'payment' as const, label: 'Оплата', icon: <Banknote size={16} /> },
     { id: 'calendar' as const, label: 'Календарь', icon: <CalendarDays size={16} /> },
@@ -790,15 +797,18 @@ export default function CleanerDashboard() {
               Сервис по уборке
             </span>
           </div>
+          {previewAsAdmin && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500 text-white">👁 Просмотр</span>
+          )}
         </div>
         <nav className="flex flex-col gap-0.5">
           {NAV.map(item => (
             <button key={item.id} onClick={() => setTab(item.id)}
-              className={`sidebar-nav-item flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 relative ${tab === item.id ? 'active' : ''}`}>
+              className={`sidebar-nav-item flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 relative whitespace-nowrap ${tab === item.id ? 'active' : ''}`}>
               {item.icon}
               {item.label}
               {item.count !== undefined && item.count > 0 && (
-                <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold flex-shrink-0 ${
                   item.id === 'today'
                     ? 'bg-amber-500 text-white'
                     : tab === item.id ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-muted-foreground/15 text-muted-foreground'
@@ -807,7 +817,7 @@ export default function CleanerDashboard() {
                 </span>
               )}
               {item.id === 'payment' && totalOwed > 0 && (
-                <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-600">{fmtEur(totalOwed)}</span>
+                <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-600 flex-shrink-0">{fmtEur(totalOwed)}</span>
               )}
             </button>
           ))}
@@ -829,9 +839,9 @@ export default function CleanerDashboard() {
             <p className="text-lg font-bold text-emerald-700">{fmtEur(totalPaid)}</p>
           </div>
         ) : null}
-        <button onClick={() => signOut()}
+        <button onClick={() => previewAsAdmin ? onExitPreview?.() : signOut()}
           className="mt-auto mx-1 flex items-center gap-2 px-2 py-2 rounded-xl text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
-          <LogOut size={13} /> Выйти
+          <LogOut size={13} /> {previewAsAdmin ? 'Вернуться в админку' : 'Выйти'}
         </button>
       </aside>
 
@@ -839,6 +849,14 @@ export default function CleanerDashboard() {
       <div className="flex-1 overflow-y-auto flex flex-col">
         <div className={`px-3 py-4 md:px-8 md:py-8 pb-20 md:pb-8 flex-1 ${tab === 'calendar' ? 'max-w-4xl' : 'max-w-3xl'} w-full`}>
           <div className="mb-4 md:mb-6">
+            {previewAsAdmin && (
+              <div className="flex items-center gap-2 mb-2 bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold rounded-xl px-3 py-2">
+                👁 Просмотр от лица клинера — видны объекты всех уборщиц/хозяев, изменения недоступны
+                {onExitPreview && (
+                  <button onClick={onExitPreview} className="ml-auto underline hover:no-underline flex-shrink-0">Вернуться</button>
+                )}
+              </div>
+            )}
             <h1 className="text-xl md:text-2xl font-display font-bold text-foreground">
               {tab === 'today' ? 'Ожидание уборки' : tab === 'bookings' ? 'Заезды' : tab === 'payment' ? 'Оплата' : tab === 'calendar' ? 'Календарь' : tab === 'profile' ? 'Профиль' : 'Архив заездов'}
             </h1>
@@ -1055,14 +1073,16 @@ export default function CleanerDashboard() {
                 <div className="bg-card border border-purple-200 rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center">
                   <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1"><Wallet size={12} /> Касса (наличные)</p>
                   <p className="text-xl sm:text-2xl font-bold text-purple-700 whitespace-nowrap">{fmtEur(cashBalance)}</p>
-                  <button onClick={() => setShowCashForm(p => !p)}
-                    className="text-[11px] text-primary font-semibold hover:underline mt-1">
-                    Изменить кассу
-                  </button>
+                  {!previewAsAdmin && (
+                    <button onClick={() => setShowCashForm(p => !p)}
+                      className="text-[11px] text-primary font-semibold hover:underline mt-1">
+                      Изменить кассу
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {showCashForm && (
+              {showCashForm && !previewAsAdmin && (
                 <div className="bg-card border border-border rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col gap-3">
                   <p className="text-sm font-semibold text-foreground">Изменить сумму в кассе</p>
                   <div className="flex gap-2">
@@ -1200,9 +1220,9 @@ export default function CleanerDashboard() {
                   <p className="text-[11px] text-muted-foreground mt-0.5">Касса (наличные)</p>
                 </div>
               </div>
-              <button onClick={() => signOut()}
+              <button onClick={() => previewAsAdmin ? onExitPreview?.() : signOut()}
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl bg-secondary text-sm font-semibold text-foreground hover:bg-muted transition-colors">
-                <LogOut size={16} /> Выйти
+                <LogOut size={16} /> {previewAsAdmin ? 'Вернуться в админку' : 'Выйти'}
               </button>
             </div>
           )}
@@ -1237,7 +1257,7 @@ export default function CleanerDashboard() {
       <AnimatePresence>
         {selectedTask && (
           <TaskDetailModal key={selectedTask.id} task={selectedTask} cashBalance={cashBalance}
-            onClose={() => setSelectedTask(null)} onRefresh={invalidate} />
+            onClose={() => setSelectedTask(null)} onRefresh={invalidate} readOnly={previewAsAdmin} />
         )}
       </AnimatePresence>
     </div>
