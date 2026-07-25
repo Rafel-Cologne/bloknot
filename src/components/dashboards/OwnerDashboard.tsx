@@ -3888,7 +3888,7 @@ function AgentRefreshControl() {
     qc.invalidateQueries({ queryKey: ['expenses-pending-count'] })
     qc.invalidateQueries({ queryKey: ['expenses-all-recurring'] })
     qc.invalidateQueries({ queryKey: ['expenses-used-categories'] })
-    qc.invalidateQueries({ queryKey: ['tax-expenses'] })
+    qc.invalidateQueries({ queryKey: ['tax-rpc'] })
     qc.invalidateQueries({ queryKey: ['recurring-expenses'] })
   }
 
@@ -6693,9 +6693,9 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
     qc.invalidateQueries({ queryKey: ['expenses-pending', user?.id] })
     qc.invalidateQueries({ queryKey: ['expenses-all-recurring', user?.id] })
     qc.invalidateQueries({ queryKey: ['expenses-used-categories', user?.id] })
-    // Вкладка "Налог" кэширует свои данные отдельно (staleTime 5 мин) — без явного
-    // сброса она могла бы показывать расходы без только что добавленной записи.
-    qc.invalidateQueries({ queryKey: ['tax-expenses', user?.id] })
+    // Вкладка "Налог" считается отдельным RPC-запросом (['tax-rpc',...]) — без явного
+    // сброса он не увидел бы только что добавленный/изменённый расход.
+    qc.invalidateQueries({ queryKey: ['tax-rpc'] })
     qc.invalidateQueries({ queryKey: ['recurring-expenses', user?.id] })
   }
 
@@ -7543,8 +7543,9 @@ function OwnerTaxCard({ row, filing, onSave, saving }: {
   )
 }
 
-function TaxReportSection({ apartments, bookings, onGoToBooking }: {
+function TaxReportSection({ apartments, bookings, onGoToBooking, onGoToApartments }: {
   apartments: Apartment[]; bookings: BookingRow[]; onGoToBooking: (bookingId: string) => void
+  onGoToApartments: () => void
 }) {
   const [year, setYear] = useState(new Date().getFullYear())
   const [aptFilter, setAptFilter] = useState('all')
@@ -7639,7 +7640,13 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
       const { error } = await supabase.from('bookings').update({ exclude_from_tax: exclude } as never).eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['owner-bookings-full'] }),
+    // owner-bookings-full — чтобы галочка в модалке сразу отразила новое состояние;
+    // tax-rpc — чтобы сами цифры Modelo 210 (считаются на сервере) пересчитались,
+    // иначе переключатель "визуально" щёлкает, а итоговые суммы остаются старыми.
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['owner-bookings-full'] })
+      qc.invalidateQueries({ queryKey: ['tax-rpc'] })
+    },
   })
   const togglePrivateOne = (b: BookingRow) => toggleExclude.mutate({ id: b.id, exclude: !b.exclude_from_tax })
   const togglePrivateAll = () => {
@@ -7762,8 +7769,9 @@ function TaxReportSection({ apartments, bookings, onGoToBooking }: {
             </div>
 
             {!apt.construction_value && (
-              <div className="px-5 py-2 text-[11px] text-amber-700 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-300 border-b border-amber-200 dark:border-amber-900">
-                Не указана стоимость строения — амортизация 3%/год не учтена. Заполните в карточке квартиры («Изменить» → «Данные для налогового отчёта»).
+              <div className="px-5 py-2 text-[11px] text-amber-700 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-300 border-b border-amber-200 dark:border-amber-900 flex items-center gap-2 flex-wrap">
+                <span>Не указана стоимость строения — амортизация 3%/год не учтена. Заполните в карточке квартиры («Изменить» → «Данные для налогового отчёта»).</span>
+                <button onClick={onGoToApartments} className="font-semibold underline hover:no-underline flex-shrink-0">Указать →</button>
               </div>
             )}
 
@@ -8731,6 +8739,9 @@ export default function OwnerDashboard() {
     // Also refresh calendar so edits appear immediately there too
     qc.invalidateQueries({ queryKey: ['cal-bookings'] })
     qc.invalidateQueries({ queryKey: ['cal-prices'] })
+    // Налоговый отчёт считается отдельным RPC-запросом по данным броней/расходов —
+    // без явного сброса он не подхватит изменения (сумма брони, стоимость строения и т.п.)
+    qc.invalidateQueries({ queryKey: ['tax-rpc'] })
   }
 
   const pendingCount = bookings.filter(b => b.status === 'pending').length
@@ -9030,7 +9041,8 @@ export default function OwnerDashboard() {
               {section === 'income' && <IncomeSection apartments={apartments} bookings={bookings} />}
               {section === 'tax_report' && (
                 <TaxReportSection apartments={apartments} bookings={bookings}
-                  onGoToBooking={(id) => { setJumpToBookingId(id); setSection('bookings') }} />
+                  onGoToBooking={(id) => { setJumpToBookingId(id); setSection('bookings') }}
+                  onGoToApartments={() => setSection('apartments')} />
               )}
               {section === 'admin' && effectiveIsAdmin && <AdminSection />}
               {section === 'admin' && !effectiveIsAdmin && (
