@@ -393,21 +393,27 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh }: {
 
 // ─── Card (list item) ───────────────────────────────────────────────────────────
 
-function TaskCard({ task, onSelect, aptColor }: { task: TaskRow; onSelect: () => void; aptColor: (id: string) => string }) {
+function TaskCard({ task, onSelect, aptColor, ownerLabel, highlightCheckoutToday }: {
+  task: TaskRow; onSelect: () => void; aptColor: (id: string) => string
+  ownerLabel?: string; highlightCheckoutToday?: boolean
+}) {
   const b = task.bookings
   const today = new Date().toISOString().slice(0, 10)
   const isCur = b.start_date <= today && b.end_date > today
   const isUp = b.start_date > today
   const isPaid = task.payment_status === 'paid'
   const isPartial = task.payment_status === 'partial'
+  const checkoutToday = b.end_date === today && task.status !== 'done'
   const nights = Math.max(1, Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000))
   const color = aptColor(b.apartments.id)
   const country = b.guest_phone ? detectCountry(b.guest_phone) : null
 
   return (
     <button onClick={onSelect}
-      className={`bg-card border rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md hover:border-primary/30 ${isCur ? 'ring-1 ring-primary/20' : 'border-border'}`}
-      style={isCur ? { borderColor: color } : undefined}>
+      className={`bg-card rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md ${
+        checkoutToday && highlightCheckoutToday ? 'border-2 border-amber-400' : `border hover:border-primary/30 ${isCur ? 'ring-1 ring-primary/20' : 'border-border'}`
+      }`}
+      style={isCur && !(checkoutToday && highlightCheckoutToday) ? { borderColor: color } : undefined}>
       <div className="flex items-center gap-4 px-5 py-4">
         <div className="flex-shrink-0 text-center rounded-xl px-2 py-2 w-[80px] text-white" style={{ backgroundColor: color }}>
           <div className="text-sm font-bold leading-tight whitespace-nowrap">
@@ -424,15 +430,19 @@ function TaskCard({ task, onSelect, aptColor }: { task: TaskRow; onSelect: () =>
             <p className="text-base font-bold text-foreground">{b.apartments.title}</p>
             {isCur && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">● Сейчас</span>}
             {isUp && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold">Предстоящий</span>}
+            {checkoutToday && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">🧳 Выезд сегодня</span>}
             <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${SOURCE_COLOR[b.source] ?? 'bg-muted text-muted-foreground'}`}>
               {SOURCE_LABELS[b.source] ?? b.source}
             </span>
             {task.status === 'done'
               ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 font-semibold">✓ Убрано</span>
-              : !isUp && !isCur
+              : !isUp && !isCur && !checkoutToday
                 ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">🧹 Нужна уборка</span>
                 : null}
           </div>
+          {ownerLabel && (
+            <p className="text-xs text-muted-foreground -mt-0.5">Хозяин: {ownerLabel}</p>
+          )}
           {b.guest_name && (
             <p className="text-sm font-semibold text-foreground/90 mt-0.5 truncate">{b.guest_name}</p>
           )}
@@ -568,7 +578,7 @@ function CleanerCalendar({ tasks, aptColor }: { tasks: TaskRow[]; aptColor: (id:
 export default function CleanerDashboard() {
   const { user, signOut } = useAuth()
   const qc = useQueryClient()
-  const [tab, setTab] = useState<'bookings' | 'payment' | 'calendar' | 'archive' | 'profile'>('bookings')
+  const [tab, setTab] = useState<'today' | 'bookings' | 'payment' | 'calendar' | 'archive' | 'profile'>('bookings')
   const [selectedTask, setSelectedTask] = useState<TaskRow | null>(null)
   const [aptFilter, setAptFilter] = useState<string>('all')
   const [showCashForm, setShowCashForm] = useState(false)
@@ -607,6 +617,30 @@ export default function CleanerDashboard() {
     },
     enabled: !!user,
   })
+
+  // Уборщица может быть назначена на квартиры разных хозяев (мы это уже поддерживаем —
+  // задачи выбираются по cleaner_id, без привязки к одному владельцу) — подтягиваем имена
+  // хозяев отдельным запросом, чтобы показать "чей объект" на карточках.
+  const ownerIds = useMemo(() => {
+    const set = new Set<string>()
+    ;(tasks ?? []).forEach(t => { if (t.bookings?.apartments?.owner_id) set.add(t.bookings.apartments.owner_id) })
+    return [...set]
+  }, [tasks])
+
+  const { data: ownerProfiles = [] } = useQuery({
+    queryKey: ['cleaner-owner-profiles', ownerIds],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('profiles').select('id, name, email').in('id', ownerIds)
+      if (error) throw error
+      return data as { id: string; name: string | null; email: string | null }[]
+    },
+    enabled: ownerIds.length > 0,
+  })
+  const ownerName = useMemo(() => {
+    const m = new Map<string, string>()
+    ownerProfiles.forEach(p => m.set(p.id, p.name || p.email || 'Хозяин'))
+    return (id: string) => m.get(id) ?? ''
+  }, [ownerProfiles])
 
   const { data: ledger } = useQuery({
     queryKey: ['cleaner-cash-ledger', user?.id],
@@ -677,6 +711,11 @@ export default function CleanerDashboard() {
   const archive = all.filter(t => t.status === 'done' || t.payment_status === 'paid')
     .sort((a, b) => b.bookings.end_date.localeCompare(a.bookings.end_date))
 
+  // Гости выезжают СЕГОДНЯ — отдельная вкладка "Ожидание уборки", чтобы уборщица сразу
+  // видела, где именно нужно убраться сегодня, не выискивая среди всех предстоящих/просроченных.
+  const checkoutToday = all.filter(t => t.bookings.end_date === today && t.status !== 'done')
+    .sort((a, b) => a.bookings.apartments.title.localeCompare(b.bookings.apartments.title))
+
   const getPaidAmt = (t: TaskRow) => t.payment_status === 'paid' ? t.cleaning_fee : 0
   const totalOwed = all.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
   const totalPaid = all.reduce((s, t) => s + getPaidAmt(t), 0)
@@ -718,6 +757,7 @@ export default function CleanerDashboard() {
   const calAptImage = (aptId: string) => calApartments.find(a => a.id === aptId)?.apartment_images?.[0]?.image_url ?? null
 
   const NAV = [
+    { id: 'today' as const, label: 'Ожидание уборки', icon: <Brush size={16} />, count: checkoutToday.length },
     { id: 'bookings' as const, label: 'Заезды', icon: <CalendarDays size={16} />, count: currentStays.length + upcoming.length + overdue.length },
     { id: 'payment' as const, label: 'Оплата', icon: <Banknote size={16} /> },
     { id: 'calendar' as const, label: 'Календарь', icon: <CalendarDays size={16} /> },
@@ -725,6 +765,7 @@ export default function CleanerDashboard() {
   ]
 
   const MOBILE_NAV = [
+    { id: 'today' as const, label: 'Уборка', icon: <Brush size={19} /> },
     { id: 'bookings' as const, label: 'Заезды', icon: <ClipboardList size={19} /> },
     { id: 'payment' as const, label: 'Оплата', icon: <Wallet size={19} /> },
     { id: 'calendar' as const, label: 'Календарь', icon: <CalendarDays size={19} /> },
@@ -757,7 +798,11 @@ export default function CleanerDashboard() {
               {item.icon}
               {item.label}
               {item.count !== undefined && item.count > 0 && (
-                <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold ${tab === item.id ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-muted-foreground/15 text-muted-foreground'}`}>
+                <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                  item.id === 'today'
+                    ? 'bg-amber-500 text-white'
+                    : tab === item.id ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-muted-foreground/15 text-muted-foreground'
+                }`}>
                   {item.count}
                 </span>
               )}
@@ -795,10 +840,11 @@ export default function CleanerDashboard() {
         <div className={`px-3 py-4 md:px-8 md:py-8 pb-20 md:pb-8 flex-1 ${tab === 'calendar' ? 'max-w-4xl' : 'max-w-3xl'} w-full`}>
           <div className="mb-4 md:mb-6">
             <h1 className="text-xl md:text-2xl font-display font-bold text-foreground">
-              {tab === 'bookings' ? 'Заезды' : tab === 'payment' ? 'Оплата' : tab === 'calendar' ? 'Календарь' : tab === 'profile' ? 'Профиль' : 'Архив заездов'}
+              {tab === 'today' ? 'Ожидание уборки' : tab === 'bookings' ? 'Заезды' : tab === 'payment' ? 'Оплата' : tab === 'calendar' ? 'Календарь' : tab === 'profile' ? 'Профиль' : 'Архив заездов'}
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {tab === 'bookings' ? `${currentStays.length} сейчас · ${upcoming.length + overdue.length} предстоящих` :
+              {tab === 'today' ? (checkoutToday.length > 0 ? `${checkoutToday.length} ${checkoutToday.length === 1 ? 'объект' : 'объекта(ов)'} сегодня` : 'Сегодня выездов нет') :
+               tab === 'bookings' ? `${currentStays.length} сейчас · ${upcoming.length + overdue.length} предстоящих` :
                tab === 'payment' ? `Заработано ${fmtEur(totalEarned)} · получено ${fmtEur(totalPaid)}` :
                tab === 'calendar' ? 'Все заезды по всем квартирам' :
                tab === 'profile' ? (user?.email ?? '') :
@@ -824,6 +870,20 @@ export default function CleanerDashboard() {
             <div className="flex flex-col gap-3">
               {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-20 rounded-2xl animate-pulse bg-muted" />)}
             </div>
+          ) : tab === 'today' ? (
+            checkoutToday.length === 0 ? (
+              <div className="bg-card border border-border rounded-2xl p-10 text-center">
+                <p className="text-3xl mb-2">✨</p>
+                <p className="text-sm text-muted-foreground">Сегодня выездов нет — уборка не ждёт</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {checkoutToday.map(t => (
+                  <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor}
+                    ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />
+                ))}
+              </div>
+            )
           ) : tab === 'bookings' ? (() => {
             const curF = currentStays.filter(byApartment)
             const overF = overdue.filter(byApartment)
@@ -866,19 +926,19 @@ export default function CleanerDashboard() {
               {curF.length > 0 && (
                 <div>
                   <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Сейчас заселены</h3>
-                  <div className="flex flex-col gap-2">{curF.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} />)}</div>
+                  <div className="flex flex-col gap-2">{curF.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
                 </div>
               )}
               {overF.length > 0 && (
                 <div>
                   <h3 className="text-xs font-semibold text-destructive uppercase tracking-widest mb-3">Нужна уборка сейчас — {overF.length}</h3>
-                  <div className="flex flex-col gap-2">{overF.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} />)}</div>
+                  <div className="flex flex-col gap-2">{overF.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
                 </div>
               )}
               {upF.length > 0 && (
                 <div>
                   <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Предстоящие — {upF.length}</h3>
-                  <div className="flex flex-col gap-2">{upF.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} />)}</div>
+                  <div className="flex flex-col gap-2">{upF.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
                 </div>
               )}
               {curF.length === 0 && overF.length === 0 && upF.length === 0 && (
@@ -1097,13 +1157,13 @@ export default function CleanerDashboard() {
               {unpaidList.length > 0 && (
                 <div>
                   <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Не оплачено — {unpaidList.length}</h3>
-                  <div className="flex flex-col gap-2">{unpaidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} />)}</div>
+                  <div className="flex flex-col gap-2">{unpaidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
                 </div>
               )}
               {paidList.length > 0 && (
                 <div>
                   <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Оплачено — {paidList.length}</h3>
-                  <div className="flex flex-col gap-2">{paidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} />)}</div>
+                  <div className="flex flex-col gap-2">{paidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
                 </div>
               )}
               {unpaidList.length === 0 && paidList.length === 0 && (
@@ -1115,7 +1175,7 @@ export default function CleanerDashboard() {
               {archive.length === 0 ? (
                 <div className="bg-card border border-border rounded-2xl p-12 text-center text-muted-foreground text-sm">Архив пуст</div>
               ) : (
-                <div className="flex flex-col gap-2">{archive.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} />)}</div>
+                <div className="flex flex-col gap-2">{archive.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
               )}
             </div>
           ) : (
@@ -1165,6 +1225,9 @@ export default function CleanerDashboard() {
               <span className="text-[10px] font-medium">{item.label}</span>
               {item.id === 'payment' && totalOwed > 0 && (
                 <span className="absolute top-0 right-4 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">€</span>
+              )}
+              {item.id === 'today' && checkoutToday.length > 0 && (
+                <span className="absolute top-0 right-4 min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold flex items-center justify-center">{checkoutToday.length}</span>
               )}
             </button>
           )

@@ -4028,9 +4028,14 @@ function BookingsSection({
               const endDate = parseISO(b.end_date)
               const photo = photoMap[b.apartment_id]
               const nightly = b.total_amount && nights > 0 ? Math.round(b.total_amount / nights) : null
+              // Гость выезжает сегодня — подсвечиваем карточку, чтобы хозяин сразу видел,
+              // где сегодня освобождается квартира (и, соответственно, нужна уборка).
+              const checkoutToday = b.status === 'accepted' && b.end_date === today
               return (
                 <div key={b.id} onClick={() => setViewingBooking(b)} role="button" tabIndex={0}
-                  className="bg-card border border-border rounded-2xl flex flex-col sm:flex-row sm:items-center gap-3 px-4 py-3 shadow-[var(--shadow-card)] hover:shadow-md hover:border-primary/40 transition-shadow cursor-pointer">
+                  className={`bg-card rounded-2xl flex flex-col sm:flex-row sm:items-center gap-3 px-4 py-3 shadow-[var(--shadow-card)] hover:shadow-md transition-shadow cursor-pointer ${
+                    checkoutToday ? 'border-2 border-amber-400' : 'border border-border hover:border-primary/40'
+                  }`}>
                   {/* Top row on mobile: date + photo + actions */}
                   <div className="flex items-center gap-3 sm:contents">
                     {/* Date block */}
@@ -4089,6 +4094,11 @@ function BookingsSection({
                     <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                       <span className="font-semibold text-sm truncate">{b.guest_name}</span>
                       <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${STATUS_COLOR[b.status] ?? 'bg-muted text-muted-foreground'}`}>{STATUS_LABELS[b.status] ?? b.status}</span>
+                      {checkoutToday && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0 bg-amber-100 text-amber-800 flex items-center gap-1">
+                          🧳 Выезд сегодня
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground mb-0.5 flex-wrap">
                       <Building2 size={11} /><span className="truncate">{b.apartments.title}</span>
@@ -7578,7 +7588,7 @@ type UserAlias = { id: string; user_id: string; alias: string; created_at: strin
 type UserProfile = { id: string; name: string; email: string | null; is_active: boolean; created_at: string }
 
 function AdminSection() {
-  const [tab, setTab] = useState<'users' | 'agent' | 'restore'>('users')
+  const [tab, setTab] = useState<'users' | 'agent' | 'cleaning' | 'restore'>('users')
   const qc = useQueryClient()
 
   const { data: profiles = [] } = useQuery({
@@ -7605,6 +7615,35 @@ function AdminSection() {
       return (data ?? []) as AgentLog[]
     },
   })
+
+  // Полный "кабинет уборщицы" для админа — все задачи по всем клинерам и хозяевам сразу,
+  // без ограничения cleaner_id (как видит сама уборщица) или owner_id (как видит хозяин).
+  type AdminTaskRow = {
+    id: string; status: string; payment_status: string; cleaning_fee: number; cleaner_id: string | null
+    bookings: {
+      start_date: string; end_date: string; guest_name: string; guests_count: number; source: string
+      apartments: { id: string; title: string; owner_id: string }
+    }
+  }
+  const { data: allCleaningTasks = [] } = useQuery({
+    queryKey: ['admin-cleaning-tasks'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('cleaning_tasks')
+        .select('id, status, payment_status, cleaning_fee, cleaner_id, bookings(start_date, end_date, guest_name, guests_count, source, apartments(id, title, owner_id))')
+        .order('created_at', { ascending: false })
+        .limit(300)
+      if (error) throw error
+      return (data ?? []) as unknown as AdminTaskRow[]
+    },
+  })
+  const profileName = (id: string | null) => {
+    if (!id) return '—'
+    const p = profiles.find(pr => pr.id === id)
+    return p?.name || p?.email || '—'
+  }
+  const adminToday = new Date().toISOString().slice(0, 10)
+  const adminCheckoutToday = allCleaningTasks.filter(t => t.bookings.end_date === adminToday && t.status !== 'done')
 
   const { data: deletedBookings = [] } = useQuery({
     queryKey: ['admin-deleted-bookings'],
@@ -7664,9 +7703,10 @@ function AdminSection() {
   }
 
   const TAB_ITEMS = [
-    { id: 'users' as const,   label: 'Пользователи', icon: <UserCircle size={15} /> },
-    { id: 'agent' as const,   label: 'Агент',         icon: <Bot size={15} /> },
-    { id: 'restore' as const, label: 'Восстановление',icon: <RotateCcw size={15} /> },
+    { id: 'users' as const,    label: 'Пользователи',  icon: <UserCircle size={15} /> },
+    { id: 'agent' as const,    label: 'Агент',          icon: <Bot size={15} /> },
+    { id: 'cleaning' as const, label: 'Уборка',         icon: <Brush size={15} />, count: adminCheckoutToday.length },
+    { id: 'restore' as const,  label: 'Восстановление', icon: <RotateCcw size={15} /> },
   ]
 
   const statusBadge = (s: string) => {
@@ -7695,6 +7735,9 @@ function AdminSection() {
               tab === t.id ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
             }`}>
             {t.icon} {t.label}
+            {('count' in t ? t.count ?? 0 : 0) > 0 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-amber-500 text-white">{'count' in t ? t.count : 0}</span>
+            )}
           </button>
         ))}
       </div>
@@ -7805,6 +7848,69 @@ function AdminSection() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* CLEANING TAB — полный кабинет уборщицы для админа: все задачи по всем клинерам
+          и хозяевам сразу (обычная уборщица видит только свои через cleaner_id, хозяин —
+          только свои объекты через owner_id) */}
+      {tab === 'cleaning' && (
+        <div className="flex flex-col gap-4">
+          {adminCheckoutToday.length > 0 && (
+            <div className="bg-card border border-amber-300 rounded-2xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-amber-200 bg-amber-50 flex items-center gap-2">
+                <Brush size={14} className="text-amber-700" />
+                <span className="font-semibold text-sm text-amber-800">Выезд сегодня — {adminCheckoutToday.length}</span>
+              </div>
+              <div className="divide-y divide-border">
+                {adminCheckoutToday.map(t => (
+                  <div key={t.id} className="px-4 py-3 flex items-center gap-3 flex-wrap">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold">{t.bookings.apartments.title}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {t.bookings.guest_name} · Хозяин: {profileName(t.bookings.apartments.owner_id)} · Уборщица: {profileName(t.cleaner_id)}
+                      </p>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-800 flex-shrink-0">🧳 Выезд сегодня</span>
+                    {t.status === 'done'
+                      ? <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-green-100 text-green-800 flex-shrink-0">✓ Убрано</span>
+                      : <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-red-100 text-red-600 flex-shrink-0">Ожидает уборки</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+              <Brush size={14} className="text-muted-foreground" />
+              <span className="font-semibold text-sm">Все уборки ({allCleaningTasks.length})</span>
+            </div>
+            {allCleaningTasks.length === 0 ? (
+              <div className="p-6 text-center text-muted-foreground text-sm">Задач по уборке пока нет</div>
+            ) : (
+              <div className="divide-y divide-border max-h-[600px] overflow-y-auto">
+                {allCleaningTasks.map(t => {
+                  const isToday = t.bookings.end_date === adminToday && t.status !== 'done'
+                  return (
+                    <div key={t.id} className={`px-4 py-3 flex items-center gap-3 flex-wrap ${isToday ? 'bg-amber-50' : ''}`}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold">{t.bookings.apartments.title}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {t.bookings.guest_name} · {t.bookings.start_date} — {t.bookings.end_date} · Хозяин: {profileName(t.bookings.apartments.owner_id)} · Уборщица: {profileName(t.cleaner_id)}
+                        </p>
+                      </div>
+                      {isToday && <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-800 flex-shrink-0">🧳 Сегодня</span>}
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ${
+                        t.status === 'done' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-600'
+                      }`}>{t.status === 'done' ? '✓ Убрано' : 'Не убрано'}</span>
+                      <span className="text-xs font-bold flex-shrink-0">{fmtEur(t.cleaning_fee)}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
