@@ -5286,11 +5286,14 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
     // Компактная карточка — для узких колонок (сетка по объектам во вкладке "Уборка"),
     // где широкий горизонтальный ряд из обычной карточки переносился на несколько строк
     // и делал карточки квадратными/разной высоты. См. аналогичный паттерн в CleanerDashboard.
+    // Все карточки в этой сетке — ожидающие уборки, поэтому рамка жёлтая по умолчанию;
+    // если выезд был больше 2 дней назад и до сих пор не отмечен убранным — рамка красная.
     if (compact) {
+      const daysOverdue = Math.round((new Date().setHours(0, 0, 0, 0) - parseISO(b.end_date).getTime()) / 86400000)
+      const compactBorderClass = daysOverdue > 2 ? 'border-2 border-red-400' : 'border-2 border-amber-400'
       return (
         <button key={b.id} onClick={() => { setSelectedBooking(b); setRentInput('') }}
-          className={`bg-card rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md p-4 flex flex-col gap-2 ${borderClass}`}
-          style={borderStyle}>
+          className={`bg-card rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md p-4 flex flex-col gap-2 ${compactBorderClass}`}>
           <div className="flex items-start gap-3">
             <div className="flex-shrink-0 text-center rounded-lg px-2 py-1.5 w-[56px] text-white" style={{ backgroundColor: color }}>
               <div className="text-xs font-bold leading-tight whitespace-nowrap">
