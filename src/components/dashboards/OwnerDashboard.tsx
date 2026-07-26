@@ -6106,6 +6106,7 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
           const isPartial = task?.payment_status === 'partial'
           const nights    = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
           const isCur     = b.start_date <= today && b.end_date > today
+          const country   = b.guest_phone ? detectCountry(b.guest_phone) : null
           return (
             <motion.div key="cleaner-modal-backdrop"
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -6142,7 +6143,10 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
                   {b.guest_phone && (
                     <div className="flex items-center justify-between gap-2 text-sm">
                       <span className="text-muted-foreground">Телефон</span>
-                      <a href={`tel:${b.guest_phone}`} className="font-semibold text-primary hover:underline">{b.guest_phone}</a>
+                      <span className="font-semibold text-foreground text-right">
+                        {country && <span className="mr-1" title={country.name}>{country.flag}</span>}
+                        <a href={`tel:${b.guest_phone}`} className="text-primary hover:underline">{b.guest_phone}</a>
+                      </span>
                     </div>
                   )}
                   <div className="flex items-center justify-between gap-2 text-sm">
@@ -6234,7 +6238,7 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
                       onClick={() => recordPayment.mutate({ taskId: task.id, amount: task.cleaning_fee, fee: task.cleaning_fee, method: 'owner_transfer' })}
                       disabled={recordPayment.isPending}
                       className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50">
-                      <Banknote size={15} /> {recordPayment.isPending ? 'Сохранение…' : `Я перевёл(а) ${fmtEur(task.cleaning_fee)} уборщице`}
+                      <Banknote size={15} /> {recordPayment.isPending ? 'Сохранение…' : 'Оплачено'}
                     </button>
                     {cashBalance >= task.cleaning_fee ? (
                       <button
