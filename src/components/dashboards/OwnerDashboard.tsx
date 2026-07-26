@@ -1349,7 +1349,7 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
   if (selectedApt === ALL_APARTMENTS_ID) {
     return (
       <div className="flex-1 xl:min-h-0 flex flex-col overflow-y-auto xl:overflow-hidden px-2 sm:px-0">
-        <div className="mb-2 flex-shrink-0 max-w-md mx-auto w-full">
+        <div className="mb-2 flex-shrink-0 max-w-4xl mx-auto w-full">
           <h2 className="text-xl sm:text-2xl font-display font-bold tracking-tight text-center mb-2">Все квартиры</h2>
           {apartments.length > 1 && (
             <div className="flex justify-center">
@@ -1762,7 +1762,7 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
 // simplified owner/cleaner panel's "Календарь" tab, but self-fetching since CalendarSection
 // only loads bookings for a single selected apartment otherwise.
 
-const ALL_CAL_ROW_H = 15
+const ALL_CAL_ROW_H = 26
 
 function AllApartmentsCalendar({ apartments }: { apartments: Apartment[] }) {
   const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1) })
@@ -1821,23 +1821,23 @@ function AllApartmentsCalendar({ apartments }: { apartments: Apartment[] }) {
     // Ограничение по ширине — иначе на широком экране колонки становятся намного шире, чем
     // высота ячеек, и сетка выглядит растянутой полосками. На мобильных max-w ни на что не
     // влияет (экран и так уже уже), так что адаптивность не страдает.
-    <div className="max-w-md mx-auto w-full">
+    <div className="max-w-4xl mx-auto w-full">
       <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between px-3 sm:px-4 py-2.5 sm:py-3 border-b border-border">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-border">
           <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
-            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronLeft size={15} /></button>
-          <p className="text-sm font-semibold capitalize">{format(month, 'LLLL yyyy', { locale: ru })}</p>
+            className="p-1.5 sm:p-2 rounded-lg hover:bg-muted text-muted-foreground"><ChevronLeft size={18} /></button>
+          <p className="text-base sm:text-lg font-semibold capitalize">{format(month, 'LLLL yyyy', { locale: ru })}</p>
           <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
-            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronRight size={15} /></button>
+            className="p-1.5 sm:p-2 rounded-lg hover:bg-muted text-muted-foreground"><ChevronRight size={18} /></button>
         </div>
         <div className="grid grid-cols-7 border-b border-border">
           {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(d => (
-            <div key={d} className="text-center text-[9px] sm:text-[10px] font-bold text-muted-foreground uppercase py-1 sm:py-1.5">{d}</div>
+            <div key={d} className="text-center text-[10px] sm:text-xs font-bold text-muted-foreground uppercase py-1.5 sm:py-2">{d}</div>
           ))}
         </div>
         <div className="divide-y divide-border">
           {weeks.map((week, wi) => {
-            const cellMinH = 24 + Math.max(1, apartments.length) * (ALL_CAL_ROW_H + 2)
+            const cellMinH = 30 + Math.max(1, apartments.length) * (ALL_CAL_ROW_H + 3)
             return (
               <div key={wi} className="grid grid-cols-7 divide-x divide-border">
                 {week.map((day, di) => {
@@ -1845,8 +1845,8 @@ function AllApartmentsCalendar({ apartments }: { apartments: Apartment[] }) {
                   const dateStr = `${month.getFullYear()}-${pad(month.getMonth() + 1)}-${pad(day)}`
                   const isToday = dateStr === todayStr
                   return (
-                    <div key={di} className="p-0.5 sm:p-1 flex flex-col gap-[2px] overflow-hidden" style={{ minHeight: cellMinH }}>
-                      <span className={`text-[9px] sm:text-[10px] font-semibold w-4 h-4 flex items-center justify-center rounded-full flex-shrink-0 ${isToday ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}>
+                    <div key={di} className="p-1 sm:p-1.5 flex flex-col gap-[3px] overflow-hidden" style={{ minHeight: cellMinH }}>
+                      <span className={`text-[10px] sm:text-xs font-semibold w-5 h-5 flex items-center justify-center rounded-full flex-shrink-0 ${isToday ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}>
                         {day}
                       </span>
                       {apartments.map(apt => {
@@ -1858,7 +1858,7 @@ function AllApartmentsCalendar({ apartments }: { apartments: Apartment[] }) {
                         return (
                           <span key={apt.id}
                             title={`${apt.title} · ${b.guests_count} чел${task ? ` · ${fmtEur(task.cleaning_fee)} · ${task.payment_status === 'paid' ? 'оплачено' : 'не оплачено'}` : ''}`}
-                            className={`flex items-center text-[7px] sm:text-[8px] leading-none text-white overflow-hidden ${isStart ? 'rounded-l-full pl-1 sm:pl-1.5' : '-ml-1'} ${isEnd ? 'rounded-r-full pr-1' : '-mr-1'}`}
+                            className={`flex items-center text-[9px] sm:text-[10px] leading-none text-white overflow-hidden ${isStart ? 'rounded-l-full pl-1.5 sm:pl-2' : '-ml-1'} ${isEnd ? 'rounded-r-full pr-1' : '-mr-1'}`}
                             style={{ height: ALL_CAL_ROW_H, backgroundColor: aptColorOf(apt.id), opacity: task?.payment_status === 'paid' ? 0.5 : 0.9 }}>
                             {isStart && <span className="truncate font-semibold">{apt.title}{b.guests_count ? ` · ${b.guests_count}` : ''}</span>}
                           </span>
@@ -1872,11 +1872,11 @@ function AllApartmentsCalendar({ apartments }: { apartments: Apartment[] }) {
           })}
         </div>
         {apartments.length > 0 && (
-          <div className="flex items-center gap-3 flex-wrap px-3 sm:px-4 py-2.5 border-t border-border">
+          <div className="flex items-center gap-4 flex-wrap px-4 sm:px-6 py-3 border-t border-border">
             {apartments.map(apt => (
-              <div key={apt.id} className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: aptColorOf(apt.id) }} />
-                <span className="text-[11px] text-muted-foreground font-medium">{apt.title}</span>
+              <div key={apt.id} className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: aptColorOf(apt.id) }} />
+                <span className="text-xs text-muted-foreground font-medium">{apt.title}</span>
               </div>
             ))}
           </div>
