@@ -755,6 +755,10 @@ function tintHex(hex: string, amount: number): string {
   const mix = (c: number) => Math.round(c + (255 - c) * amount)
   return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`
 }
+// Специальное значение селектора квартиры — обзор всех объектов сразу (компактная лента
+// заездов по дням, как в кабинете уборщицы), вместо редактируемого календаря одной квартиры.
+export const ALL_APARTMENTS_ID = '__all__'
+
 export function CalendarSection({ apartments, selectedApt, setSelectedApt, readOnly }: { apartments: Apartment[]; selectedApt: string; setSelectedApt: (id: string) => void; readOnly?: boolean }) {
   const qc = useQueryClient()
   const { theme } = useTheme()
@@ -837,7 +841,7 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
       if (error) throw error
       return data
     },
-    enabled: !!selectedApt,
+    enabled: !!selectedApt && selectedApt !== ALL_APARTMENTS_ID,
   })
 
   const { data: customPrices } = useQuery({
@@ -852,7 +856,7 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
       if (error) throw error
       return data
     },
-    enabled: !!selectedApt,
+    enabled: !!selectedApt && selectedApt !== ALL_APARTMENTS_ID,
   })
 
   const { data: blockedDates } = useQuery({
@@ -864,7 +868,7 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
       if (error) throw error
       return data
     },
-    enabled: !!selectedApt,
+    enabled: !!selectedApt && selectedApt !== ALL_APARTMENTS_ID,
   })
 
   const priceMap = useMemo(() => {
@@ -1337,6 +1341,30 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
     )
   }
 
+  // "Все квартиры" — компактный обзорный календарь (лента заездов по дням, одна строка на
+  // объект), а не редактируемая сетка одной квартиры: смена цены/блокировка дат/добавление
+  // брони кликом по дню имеют смысл только для одной конкретной квартиры за раз. Все хуки выше
+  // уже отработали безусловно, так что ранний return здесь не нарушает правила хуков.
+  if (selectedApt === ALL_APARTMENTS_ID) {
+    return (
+      <div className="flex-1 xl:min-h-0 flex flex-col overflow-y-auto xl:overflow-hidden">
+        <div className="mb-2 flex-shrink-0">
+          <h2 className="text-2xl font-display font-bold tracking-tight text-center mb-2">Все квартиры</h2>
+          {apartments.length > 1 && (
+            <div className="flex justify-center">
+              <select value={selectedApt} onChange={e => setSelectedApt(e.target.value)}
+                className="w-full sm:w-auto sm:min-w-[180px] rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-ring">
+                <option value={ALL_APARTMENTS_ID}>Все квартиры</option>
+                {apartments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+        <AllApartmentsCalendar apartments={apartments} />
+      </div>
+    )
+  }
+
   return (
     <div className="flex-1 xl:min-h-0 flex flex-col overflow-y-auto xl:overflow-hidden">
       {/* Header */}
@@ -1504,6 +1532,7 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
             {apartments.length > 1 ? (
               <select value={selectedApt} onChange={e => setSelectedApt(e.target.value)}
                 className="w-full sm:w-auto sm:min-w-[180px] rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-ring">
+                <option value={ALL_APARTMENTS_ID}>Все квартиры</option>
                 {apartments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
               </select>
             ) : <div />}
@@ -1724,6 +1753,129 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
           )
         })()}
       </AnimatePresence>
+    </div>
+  )
+}
+
+// ─── All-apartments overview calendar — one row per apartment, same style as the ────────
+// simplified owner/cleaner panel's "Календарь" tab, but self-fetching since CalendarSection
+// only loads bookings for a single selected apartment otherwise.
+
+const ALL_CAL_ROW_H = 15
+
+function AllApartmentsCalendar({ apartments }: { apartments: Apartment[] }) {
+  const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1) })
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const rangeFrom = `${month.getFullYear()}-${pad(month.getMonth() + 1)}-01`
+  const rangeTo = format(addDays(startOfMonth(month), getDaysInMonth(month) - 1), 'yyyy-MM-dd')
+  const aptIds = useMemo(() => apartments.map(a => a.id), [apartments])
+
+  const { data: bookings } = useQuery({
+    queryKey: ['cal-all-apartments-bookings', aptIds.join(','), rangeFrom, rangeTo],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('bookings')
+        .select('id, apartment_id, start_date, end_date, guests_count, status, cleaning_tasks(cleaning_fee, payment_status)')
+        .in('apartment_id', aptIds)
+        .lte('start_date', rangeTo)
+        .gte('end_date', rangeFrom)
+        .not('status', 'in', '(cancelled,declined)')
+        .is('deleted_at', null)
+      if (error) throw error
+      return data
+    },
+    enabled: aptIds.length > 0,
+  })
+
+  const aptColorOf = (id: string) => {
+    const i = apartments.findIndex(a => a.id === id)
+    return CLEANER_APT_COLORS[i >= 0 ? i % CLEANER_APT_COLORS.length : 0]
+  }
+
+  const byApt = useMemo(() => {
+    const map = new Map<string, NonNullable<typeof bookings>>()
+    bookings?.forEach(b => {
+      if (!map.has(b.apartment_id)) map.set(b.apartment_id, [])
+      map.get(b.apartment_id)!.push(b)
+    })
+    return map
+  }, [bookings])
+  const bookingOnDay = (aptId: string, dateStr: string) =>
+    (byApt.get(aptId) ?? []).find(b => b.start_date <= dateStr && dateStr <= b.end_date)
+
+  const weeks = useMemo(() => {
+    const year = month.getFullYear(), mo = month.getMonth()
+    const firstDow = (new Date(year, mo, 1).getDay() + 6) % 7
+    const daysInMonth = getDaysInMonth(month)
+    const cells: (number | null)[] = Array(firstDow).fill(null)
+    for (let d = 1; d <= daysInMonth; d++) cells.push(d)
+    while (cells.length % 7 !== 0) cells.push(null)
+    const wks: (number | null)[][] = []
+    for (let i = 0; i < cells.length; i += 7) wks.push(cells.slice(i, i + 7))
+    return wks
+  }, [month])
+
+  return (
+    <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
+          className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronLeft size={15} /></button>
+        <p className="text-sm font-semibold capitalize">{format(month, 'LLLL yyyy', { locale: ru })}</p>
+        <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+          className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronRight size={15} /></button>
+      </div>
+      <div className="grid grid-cols-7 border-b border-border">
+        {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(d => (
+          <div key={d} className="text-center text-[10px] font-bold text-muted-foreground uppercase py-1.5">{d}</div>
+        ))}
+      </div>
+      <div className="divide-y divide-border">
+        {weeks.map((week, wi) => {
+          const cellMinH = 26 + Math.max(1, apartments.length) * (ALL_CAL_ROW_H + 2)
+          return (
+            <div key={wi} className="grid grid-cols-7 divide-x divide-border">
+              {week.map((day, di) => {
+                if (day === null) return <div key={di} className="bg-gray-50/60" style={{ minHeight: cellMinH }} />
+                const dateStr = `${month.getFullYear()}-${pad(month.getMonth() + 1)}-${pad(day)}`
+                const isToday = dateStr === todayStr
+                return (
+                  <div key={di} className="p-1 flex flex-col gap-[2px] overflow-hidden" style={{ minHeight: cellMinH }}>
+                    <span className={`text-[10px] font-semibold w-4 h-4 flex items-center justify-center rounded-full flex-shrink-0 ${isToday ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}>
+                      {day}
+                    </span>
+                    {apartments.map(apt => {
+                      const b = bookingOnDay(apt.id, dateStr)
+                      if (!b) return <div key={apt.id} style={{ height: ALL_CAL_ROW_H }} />
+                      const isStart = b.start_date === dateStr
+                      const isEnd = b.end_date === dateStr
+                      const task = b.cleaning_tasks?.[0]
+                      return (
+                        <span key={apt.id}
+                          title={`${apt.title} · ${b.guests_count} чел${task ? ` · ${fmtEur(task.cleaning_fee)} · ${task.payment_status === 'paid' ? 'оплачено' : 'не оплачено'}` : ''}`}
+                          className={`flex items-center text-[8px] leading-none text-white overflow-hidden ${isStart ? 'rounded-l-full pl-1.5' : '-ml-1'} ${isEnd ? 'rounded-r-full pr-1' : '-mr-1'}`}
+                          style={{ height: ALL_CAL_ROW_H, backgroundColor: aptColorOf(apt.id), opacity: task?.payment_status === 'paid' ? 0.5 : 0.9 }}>
+                          {isStart && <span className="truncate font-semibold">{apt.title}{b.guests_count ? ` · ${b.guests_count}` : ''}</span>}
+                        </span>
+                      )
+                    })}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })}
+      </div>
+      {apartments.length > 0 && (
+        <div className="flex items-center gap-3 flex-wrap px-4 py-2.5 border-t border-border">
+          {apartments.map(apt => (
+            <div key={apt.id} className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: aptColorOf(apt.id) }} />
+              <span className="text-[11px] text-muted-foreground font-medium">{apt.title}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
