@@ -399,9 +399,9 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh, readOnly }: {
 
 // ─── Card (list item) ───────────────────────────────────────────────────────────
 
-function TaskCard({ task, onSelect, aptColor, ownerLabel, highlightCheckoutToday }: {
+function TaskCard({ task, onSelect, aptColor, ownerLabel, highlightCheckoutToday, compact }: {
   task: TaskRow; onSelect: () => void; aptColor: (id: string) => string
-  ownerLabel?: string; highlightCheckoutToday?: boolean
+  ownerLabel?: string; highlightCheckoutToday?: boolean; compact?: boolean
 }) {
   const b = task.bookings
   const today = new Date().toISOString().slice(0, 10)
@@ -414,12 +414,66 @@ function TaskCard({ task, onSelect, aptColor, ownerLabel, highlightCheckoutToday
   const color = aptColor(b.apartments.id)
   const country = b.guest_phone ? detectCountry(b.guest_phone) : null
 
+  const borderClass = checkoutToday && highlightCheckoutToday
+    ? 'border-2 border-amber-400'
+    : `border hover:border-primary/30 ${isCur ? 'ring-1 ring-primary/20' : 'border-border'}`
+  const borderStyle = isCur && !(checkoutToday && highlightCheckoutToday) ? { borderColor: color } : undefined
+
+  // Компактная карточка — для узких колонок (сетка по объектам во вкладке "Уборка"),
+  // где широкий горизонтальный ряд из обычной карточки переносился на несколько строк
+  // и делал карточки квадратными/разной высоты. Вертикальная раскладка с фиксированным
+  // числом строк держит карточки одинаковой высоты и по ширине колонки.
+  if (compact) {
+    return (
+      <button onClick={onSelect}
+        className={`bg-card rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md p-4 flex flex-col gap-2 ${borderClass}`}
+        style={borderStyle}>
+        <div className="flex items-start gap-3">
+          <div className="flex-shrink-0 text-center rounded-lg px-2 py-1.5 w-[56px] text-white" style={{ backgroundColor: color }}>
+            <div className="text-xs font-bold leading-tight whitespace-nowrap">
+              {b.start_date.slice(8)}–{b.end_date.slice(8)}
+            </div>
+            <div className="text-[8px] uppercase font-semibold text-white/85 whitespace-nowrap">
+              {format(parseISO(b.start_date), 'LLL', { locale: ru }).replace('.', '')}
+            </div>
+          </div>
+          <div className="flex-1 min-w-0">
+            {ownerLabel && <p className="text-[11px] text-muted-foreground leading-tight truncate">Хозяин: {ownerLabel}</p>}
+            <p className="text-sm font-semibold text-foreground truncate">{b.guest_name || '—'}</p>
+            <p className="text-xs text-muted-foreground truncate">{nights} н. · {b.guests_count} чел.</p>
+          </div>
+          <ChevronRight size={14} className="text-muted-foreground/40 flex-shrink-0 mt-1" />
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {checkoutToday && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold whitespace-nowrap">🧳 Сегодня</span>}
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap ${SOURCE_COLOR[b.source] ?? 'bg-muted text-muted-foreground'}`}>
+            {SOURCE_LABELS[b.source] ?? b.source}
+          </span>
+          {task.status === 'done'
+            ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 font-semibold whitespace-nowrap">✓ Убрано</span>
+            : !isUp && !isCur && !checkoutToday
+              ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold whitespace-nowrap">🧹 Нужна уборка</span>
+              : null}
+        </div>
+        <div className="flex items-center justify-between gap-2 pt-1.5 mt-0.5 border-t border-border/60">
+          <span className="text-xs text-muted-foreground whitespace-nowrap">
+            {format(parseISO(b.start_date), 'd MMM', { locale: ru })} — {format(parseISO(b.end_date), 'd MMM yy', { locale: ru })}
+          </span>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <span className="text-sm font-bold text-foreground whitespace-nowrap">{fmtEur(task.cleaning_fee)}</span>
+            {isPaid && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold whitespace-nowrap">✓</span>}
+            {isPartial && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-semibold whitespace-nowrap">½</span>}
+            {!isPaid && !isPartial && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 font-semibold whitespace-nowrap">✕</span>}
+          </div>
+        </div>
+      </button>
+    )
+  }
+
   return (
     <button onClick={onSelect}
-      className={`bg-card rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md ${
-        checkoutToday && highlightCheckoutToday ? 'border-2 border-amber-400' : `border hover:border-primary/30 ${isCur ? 'ring-1 ring-primary/20' : 'border-border'}`
-      }`}
-      style={isCur && !(checkoutToday && highlightCheckoutToday) ? { borderColor: color } : undefined}>
+      className={`bg-card rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md ${borderClass}`}
+      style={borderStyle}>
       <div className="flex items-center gap-4 px-5 py-4">
         <div className="flex-shrink-0 text-center rounded-xl px-2 py-2 w-[80px] text-white" style={{ backgroundColor: color }}>
           <div className="text-sm font-bold leading-tight whitespace-nowrap">
@@ -916,7 +970,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                         <div className="flex flex-col gap-2">
                           {aptTasks.map(t => (
                             <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor}
-                              ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />
+                              ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday compact />
                           ))}
                         </div>
                       )}
