@@ -1094,32 +1094,45 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                   </div>
                 </div>
               ) : upcoming.length > 0 ? (() => {
-                const t = upcoming[0]
-                const b = t.bookings
-                const img = calAptImage(b.apartments.id)
-                const daysUntil = Math.max(0, Math.round((parseISO(b.start_date).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000))
+                // Ближайший предстоящий заезд — отдельно по каждому объекту, а не только
+                // самый ближайший среди всех: иначе при 2+ квартирах здесь всегда
+                // показывалась только одна из них.
+                const nextByApt = apartments
+                  .map(apt => upcoming.find(t => t.bookings.apartments.id === apt.id))
+                  .filter((t): t is TaskRow => !!t)
                 return (
                   <div>
-                    <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Ближайший заезд</h3>
-                    <div className="bg-card border border-border rounded-2xl shadow-sm flex gap-4 p-4">
-                      <div className="w-24 rounded-xl overflow-hidden flex-shrink-0 bg-secondary self-stretch">
-                        {img
-                          ? <img src={img} alt={b.apartments.title} className="w-full h-full object-cover" />
-                          : <div className="w-full h-full flex items-center justify-center text-2xl opacity-20">🏠</div>}
-                      </div>
-                      <div className="flex-1 min-w-0 flex flex-col justify-center gap-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-bold text-foreground">{b.apartments.title}</p>
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold">
-                            {daysUntil === 0 ? 'Заезд сегодня' : `Через ${daysUntil} ${daysUntil === 1 ? 'день' : daysUntil < 5 ? 'дня' : 'дней'}`}
-                          </span>
-                        </div>
-                        <p className="text-xs text-muted-foreground">{b.guest_name}</p>
-                        <div className="flex gap-4 text-[10px] text-muted-foreground">
-                          <span>📅 Заезд: {format(parseISO(b.start_date), 'd MMM. yyyy', { locale: ru })}</span>
-                          <span>📅 Выезд: {format(parseISO(b.end_date), 'd MMM. yyyy', { locale: ru })}</span>
-                        </div>
-                      </div>
+                    <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">
+                      {nextByApt.length === 1 ? 'Ближайший заезд' : 'Ближайшие заезды'}
+                    </h3>
+                    <div className="flex flex-col gap-3">
+                      {nextByApt.map(t => {
+                        const b = t.bookings
+                        const img = calAptImage(b.apartments.id)
+                        const daysUntil = Math.max(0, Math.round((parseISO(b.start_date).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000))
+                        return (
+                          <div key={t.id} className="bg-card border border-border rounded-2xl shadow-sm flex gap-4 p-4">
+                            <div className="w-24 rounded-xl overflow-hidden flex-shrink-0 bg-secondary self-stretch">
+                              {img
+                                ? <img src={img} alt={b.apartments.title} className="w-full h-full object-cover" />
+                                : <div className="w-full h-full flex items-center justify-center text-2xl opacity-20">🏠</div>}
+                            </div>
+                            <div className="flex-1 min-w-0 flex flex-col justify-center gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-bold text-foreground">{b.apartments.title}</p>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold">
+                                  {daysUntil === 0 ? 'Заезд сегодня' : `Через ${daysUntil} ${daysUntil === 1 ? 'день' : daysUntil < 5 ? 'дня' : 'дней'}`}
+                                </span>
+                              </div>
+                              <p className="text-xs text-muted-foreground">{b.guest_name}</p>
+                              <div className="flex gap-4 text-[10px] text-muted-foreground">
+                                <span>📅 Заезд: {format(parseISO(b.start_date), 'd MMM. yyyy', { locale: ru })}</span>
+                                <span>📅 Выезд: {format(parseISO(b.end_date), 'd MMM. yyyy', { locale: ru })}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
                   </div>
                 )

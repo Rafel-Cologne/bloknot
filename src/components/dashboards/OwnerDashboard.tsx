@@ -5167,10 +5167,11 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
   const currentStays = all.filter(b => b.start_date <= today && b.end_date > today)
   const upcoming     = all.filter(b => b.start_date > today).sort((a, b) => a.start_date.localeCompare(b.start_date))
   const archive      = all.filter(b => b.end_date <= today).sort((a, b) => b.end_date.localeCompare(a.end_date))
-  // Гости выезжают СЕГОДНЯ — отдельное окно "Ожидание уборки", чтобы сразу было видно,
-  // где сегодня освобождается квартира (иначе такая бронь просто тонет в общем архиве).
-  const checkoutToday = all.filter(b => b.end_date === today && b.cleaning_tasks[0]?.status !== 'done')
-    .sort((a, b) => a.apartments.title.localeCompare(b.apartments.title))
+  // Вкладка "Уборка" — все выезды, которые ещё не убраны, вплоть до сегодняшнего дня включительно
+  // (не только ровно "сегодня" — иначе просроченный, но не отмеченный уборкой выезд молча
+  // пропадал бы из списка на следующий день). Сортировка — сначала самые давние/срочные.
+  const pendingCleaning = all.filter(b => b.end_date <= today && b.cleaning_tasks[0]?.status !== 'done')
+    .sort((a, b) => a.end_date.localeCompare(b.end_date))
 
   const totalOwed   = all.reduce((s, b) => s + b.cleaning_tasks.reduce((ss, t) => ss + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0), 0)
   const totalPaid   = all.reduce((s, b) => s + b.cleaning_tasks.reduce((ss, t) => ss + getPaidAmt(t), 0), 0)
@@ -5264,7 +5265,7 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
   }
 
   // ── render: booking card (clickable) ──────────────────────────────────────────
-  const renderCard = (b: BookingRow) => {
+  const renderCard = (b: BookingRow, compact?: boolean) => {
     const task      = b.cleaning_tasks[0]
     const fee       = task?.cleaning_fee ?? 0
     const paid      = task ? getPaidAmt(task) : 0
@@ -5277,12 +5278,64 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
     const nights    = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
     const color     = aptColorOf(b.apartment_id)
 
+    const borderClass = checkoutToday
+      ? 'border-2 border-amber-400'
+      : `border hover:border-primary/30 ${isCur ? 'ring-1 ring-primary/20' : 'border-border'}`
+    const borderStyle = isCur && !checkoutToday ? { borderColor: color } : undefined
+
+    // Компактная карточка — для узких колонок (сетка по объектам во вкладке "Уборка"),
+    // где широкий горизонтальный ряд из обычной карточки переносился на несколько строк
+    // и делал карточки квадратными/разной высоты. См. аналогичный паттерн в CleanerDashboard.
+    if (compact) {
+      return (
+        <button key={b.id} onClick={() => { setSelectedBooking(b); setRentInput('') }}
+          className={`bg-card rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md p-4 flex flex-col gap-2 ${borderClass}`}
+          style={borderStyle}>
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 text-center rounded-lg px-2 py-1.5 w-[56px] text-white" style={{ backgroundColor: color }}>
+              <div className="text-xs font-bold leading-tight whitespace-nowrap">
+                {b.start_date.slice(8)}–{b.end_date.slice(8)}
+              </div>
+              <div className="text-[8px] uppercase font-semibold text-white/85 whitespace-nowrap">
+                {format(parseISO(b.start_date), 'LLL', { locale: ru }).replace('.', '')}
+              </div>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-foreground truncate">{b.guest_name || '—'}</p>
+              <p className="text-xs text-muted-foreground truncate">{nights} н. · {b.guests_count} чел.</p>
+            </div>
+            <ChevronRight size={14} className="text-muted-foreground/40 flex-shrink-0 mt-1" />
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {checkoutToday && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold whitespace-nowrap">🧳 Сегодня</span>}
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap ${SOURCE_COLOR[b.source] ?? 'bg-muted text-muted-foreground'}`}>
+              {SOURCE_LABELS[b.source] ?? b.source}
+            </span>
+            {task?.status === 'done'
+              ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 font-semibold whitespace-nowrap">✓ Убрано</span>
+              : !isUp && !isCur && !checkoutToday
+                ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold whitespace-nowrap">🧹 Нужна уборка</span>
+                : null}
+          </div>
+          <div className="flex items-center justify-between gap-2 pt-1.5 mt-0.5 border-t border-border/60">
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
+              {format(parseISO(b.start_date), 'd MMM', { locale: ru })} — {format(parseISO(b.end_date), 'd MMM yy', { locale: ru })}
+            </span>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <span className="text-sm font-bold text-foreground whitespace-nowrap">{fmtEur(fee)}</span>
+              {isPaid && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold whitespace-nowrap">✓</span>}
+              {isPartial && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-semibold whitespace-nowrap">½</span>}
+              {!isPaid && !isPartial && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 font-semibold whitespace-nowrap">✕</span>}
+            </div>
+          </div>
+        </button>
+      )
+    }
+
     return (
       <button key={b.id} onClick={() => { setSelectedBooking(b); setRentInput('') }}
-        className={`bg-card rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md ${
-          checkoutToday ? 'border-2 border-amber-400' : `border hover:border-primary/30 ${isCur ? 'ring-1 ring-primary/20' : 'border-border'}`
-        }`}
-        style={isCur && !checkoutToday ? { borderColor: color } : undefined}>
+        className={`bg-card rounded-2xl shadow-sm transition-all text-left w-full hover:shadow-md ${borderClass}`}
+        style={borderStyle}>
         <div className="flex items-center gap-4 px-5 py-4">
           {/* Date */}
           <div className="flex-shrink-0 text-center rounded-xl px-2 py-2 w-[80px] text-white" style={{ backgroundColor: color }}>
@@ -5619,31 +5672,44 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
             </div>
           </div>
         ) : upcoming.length > 0 ? (() => {
-          const b = upcoming[0]
-          const img = calAptImage(b.apartment_id)
-          const daysUntil = Math.max(0, Math.round((parseISO(b.start_date).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000))
+          // Ближайший предстоящий заезд — отдельно по каждому объекту, а не только
+          // самый ближайший среди всех: иначе при 2+ квартирах здесь всегда
+          // показывалась только одна из них.
+          const nextByApt = apartments
+            .map(apt => upcoming.find(b => b.apartment_id === apt.id))
+            .filter((b): b is BookingRow => !!b)
           return (
             <div>
-              <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Ближайший заезд</h3>
-              <div className="bg-card border border-border rounded-2xl shadow-sm flex gap-4 p-4">
-                <div className="w-24 rounded-xl overflow-hidden flex-shrink-0 bg-secondary self-stretch">
-                  {img
-                    ? <img src={img} alt={b.apartments.title} className="w-full h-full object-cover" />
-                    : <div className="w-full h-full flex items-center justify-center text-2xl opacity-20">🏠</div>}
-                </div>
-                <div className="flex-1 min-w-0 flex flex-col justify-center gap-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-bold text-foreground">{b.apartments.title}</p>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold">
-                      {daysUntil === 0 ? 'Заезд сегодня' : `Через ${daysUntil} ${daysUntil === 1 ? 'день' : daysUntil < 5 ? 'дня' : 'дней'}`}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{b.guest_name}</p>
-                  <div className="flex gap-4 text-[10px] text-muted-foreground">
-                    <span>📅 Заезд: {format(parseISO(b.start_date), 'd MMM. yyyy', { locale: ru })}</span>
-                    <span>📅 Выезд: {format(parseISO(b.end_date), 'd MMM. yyyy', { locale: ru })}</span>
-                  </div>
-                </div>
+              <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">
+                {nextByApt.length === 1 ? 'Ближайший заезд' : 'Ближайшие заезды'}
+              </h3>
+              <div className="flex flex-col gap-3">
+                {nextByApt.map(b => {
+                  const img = calAptImage(b.apartment_id)
+                  const daysUntil = Math.max(0, Math.round((parseISO(b.start_date).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000))
+                  return (
+                    <div key={b.id} className="bg-card border border-border rounded-2xl shadow-sm flex gap-4 p-4">
+                      <div className="w-24 rounded-xl overflow-hidden flex-shrink-0 bg-secondary self-stretch">
+                        {img
+                          ? <img src={img} alt={b.apartments.title} className="w-full h-full object-cover" />
+                          : <div className="w-full h-full flex items-center justify-center text-2xl opacity-20">🏠</div>}
+                      </div>
+                      <div className="flex-1 min-w-0 flex flex-col justify-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-bold text-foreground">{b.apartments.title}</p>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold">
+                            {daysUntil === 0 ? 'Заезд сегодня' : `Через ${daysUntil} ${daysUntil === 1 ? 'день' : daysUntil < 5 ? 'дня' : 'дней'}`}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{b.guest_name}</p>
+                        <div className="flex gap-4 text-[10px] text-muted-foreground">
+                          <span>📅 Заезд: {format(parseISO(b.start_date), 'd MMM. yyyy', { locale: ru })}</span>
+                          <span>📅 Выезд: {format(parseISO(b.end_date), 'd MMM. yyyy', { locale: ru })}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )
@@ -5874,13 +5940,35 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
 
   const renderToday = () => (
     <div>
-      {checkoutToday.length === 0 ? (
+      {pendingCleaning.length === 0 ? (
         <div className="bg-card border border-border rounded-2xl p-10 text-center">
           <p className="text-3xl mb-2">✨</p>
-          <p className="text-sm text-muted-foreground">Сегодня выездов нет — уборка не ждёт</p>
+          <p className="text-sm text-muted-foreground">Уборка не требуется ни в одном объекте</p>
         </div>
       ) : (
-        <div className="flex flex-col gap-2">{checkoutToday.map(b => renderCard(b))}</div>
+        <div className={`grid grid-cols-1 gap-4 ${apartments.length > 1 ? 'md:grid-cols-2' : ''}`}>
+          {apartments.map(apt => {
+            const aptTasks = pendingCleaning.filter(b => b.apartment_id === apt.id)
+            return (
+              <div key={apt.id} className="flex flex-col gap-2">
+                <div className="flex items-center gap-2 px-1 pb-1">
+                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: aptColorOf(apt.id) }} />
+                  <h3 className="text-sm font-bold text-foreground">{apt.title}</h3>
+                  {aptTasks.length > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">{aptTasks.length}</span>
+                  )}
+                </div>
+                {aptTasks.length === 0 ? (
+                  <div className="bg-card border border-border rounded-2xl p-6 text-center">
+                    <p className="text-sm text-muted-foreground">Уборка не требуется</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">{aptTasks.map(b => renderCard(b, true))}</div>
+                )}
+              </div>
+            )
+          })}
+        </div>
       )}
     </div>
   )
@@ -5899,7 +5987,7 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
 
   // ── nav items ─────────────────────────────────────────────────────────────────
   const NAV: { id: typeof tab; label: string; icon: React.ReactNode; count?: number }[] = [
-    { id: 'today',    label: 'Уборка',     icon: <Brush size={16} />,        count: checkoutToday.length },
+    { id: 'today',    label: 'Уборка',     icon: <Brush size={16} />,        count: pendingCleaning.length },
     { id: 'bookings', label: 'Заезды',    icon: <CalendarDays size={16} />, count: currentStays.length + upcoming.length },
     { id: 'payment',  label: 'Оплата',    icon: <Banknote size={16} />,    count: totalOwed > 0 ? undefined : undefined },
     { id: 'calendar', label: 'Календарь', icon: <CalendarDays size={16} /> },
@@ -5978,8 +6066,8 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
               {item.id === 'payment' && totalOwed > 0 && (
                 <span className="text-[9px] px-1 rounded-full bg-red-500 text-white font-bold">€</span>
               )}
-              {item.id === 'today' && checkoutToday.length > 0 && (
-                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500 text-white font-bold">{checkoutToday.length}</span>
+              {item.id === 'today' && pendingCleaning.length > 0 && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500 text-white font-bold">{pendingCleaning.length}</span>
               )}
             </button>
           ))}
@@ -5992,7 +6080,7 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
               {tab === 'today' ? 'Ожидание уборки' : tab === 'bookings' ? 'Заезды' : tab === 'payment' ? 'Оплата' : tab === 'calendar' ? 'Календарь' : 'Архив заездов'}
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {tab === 'today' ? (checkoutToday.length > 0 ? `${checkoutToday.length} ${checkoutToday.length === 1 ? 'объект' : 'объекта(ов)'} сегодня` : 'Сегодня выездов нет') :
+              {tab === 'today' ? (pendingCleaning.length > 0 ? `${pendingCleaning.length} ${pendingCleaning.length === 1 ? 'заезд ждёт' : 'заездов ждут'} уборки` : 'Уборка не требуется') :
                tab === 'bookings' ? `${currentStays.length} сейчас · ${upcoming.length} предстоящих` :
                tab === 'payment'  ? `Заработано ${fmtEur(totalEarned)} · получено ${fmtEur(totalPaid)}` :
                tab === 'calendar' ? 'Все заезды по всем квартирам' :
