@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { Logo } from '@/components/Logo'
+import { APP_VERSION } from '@/lib/version'
 
 export function Footer() {
   const { t } = useTranslation()
@@ -15,7 +16,7 @@ export function Footer() {
           <p className="text-sm text-muted-foreground text-center">
             {t('features.direct')} · {t('features.transparent')} · {t('features.verified')}
           </p>
-          <p className="text-xs text-muted-foreground">© {new Date().getFullYear()} bloknot</p>
+          <p className="text-xs text-muted-foreground">© {new Date().getFullYear()} bloknot · v{APP_VERSION}</p>
         </div>
       </div>
     </footer>

@@ -9,6 +9,7 @@ import { format, parseISO, getDaysInMonth } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { supabase } from '@/integrations/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
+import { APP_VERSION } from '@/lib/version'
 import { type Apartment } from './OwnerDashboard'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -901,6 +902,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
           className="mt-auto mx-1 flex items-center gap-2 px-2 py-2 rounded-xl text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
           <LogOut size={13} /> {previewAsAdmin ? 'Вернуться в админку' : 'Выйти'}
         </button>
+        <p className="mx-1 mt-1 text-[10px] text-muted-foreground/50">v{APP_VERSION}</p>
       </aside>
 
       {/* ── Main content ── */}

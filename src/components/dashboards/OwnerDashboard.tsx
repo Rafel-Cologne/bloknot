@@ -84,6 +84,7 @@ import { useTheme, type AppTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/hooks/useAuth'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { detectCountry } from '@/lib/phone'
+import { APP_VERSION } from '@/lib/version'
 import CleanerDashboard from './CleanerDashboard'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1347,13 +1348,13 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
   // уже отработали безусловно, так что ранний return здесь не нарушает правила хуков.
   if (selectedApt === ALL_APARTMENTS_ID) {
     return (
-      <div className="flex-1 xl:min-h-0 flex flex-col overflow-y-auto xl:overflow-hidden">
-        <div className="mb-2 flex-shrink-0">
-          <h2 className="text-2xl font-display font-bold tracking-tight text-center mb-2">Все квартиры</h2>
+      <div className="flex-1 xl:min-h-0 flex flex-col overflow-y-auto xl:overflow-hidden px-2 sm:px-0">
+        <div className="mb-2 flex-shrink-0 max-w-md mx-auto w-full">
+          <h2 className="text-xl sm:text-2xl font-display font-bold tracking-tight text-center mb-2">Все квартиры</h2>
           {apartments.length > 1 && (
             <div className="flex justify-center">
               <select value={selectedApt} onChange={e => setSelectedApt(e.target.value)}
-                className="w-full sm:w-auto sm:min-w-[180px] rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-ring">
+                className="w-full max-w-[220px] rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-ring">
                 <option value={ALL_APARTMENTS_ID}>Все квартиры</option>
                 {apartments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
               </select>
@@ -1817,65 +1818,70 @@ function AllApartmentsCalendar({ apartments }: { apartments: Apartment[] }) {
   }, [month])
 
   return (
-    <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
-          className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronLeft size={15} /></button>
-        <p className="text-sm font-semibold capitalize">{format(month, 'LLLL yyyy', { locale: ru })}</p>
-        <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
-          className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronRight size={15} /></button>
-      </div>
-      <div className="grid grid-cols-7 border-b border-border">
-        {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(d => (
-          <div key={d} className="text-center text-[10px] font-bold text-muted-foreground uppercase py-1.5">{d}</div>
-        ))}
-      </div>
-      <div className="divide-y divide-border">
-        {weeks.map((week, wi) => {
-          const cellMinH = 26 + Math.max(1, apartments.length) * (ALL_CAL_ROW_H + 2)
-          return (
-            <div key={wi} className="grid grid-cols-7 divide-x divide-border">
-              {week.map((day, di) => {
-                if (day === null) return <div key={di} className="bg-gray-50/60" style={{ minHeight: cellMinH }} />
-                const dateStr = `${month.getFullYear()}-${pad(month.getMonth() + 1)}-${pad(day)}`
-                const isToday = dateStr === todayStr
-                return (
-                  <div key={di} className="p-1 flex flex-col gap-[2px] overflow-hidden" style={{ minHeight: cellMinH }}>
-                    <span className={`text-[10px] font-semibold w-4 h-4 flex items-center justify-center rounded-full flex-shrink-0 ${isToday ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}>
-                      {day}
-                    </span>
-                    {apartments.map(apt => {
-                      const b = bookingOnDay(apt.id, dateStr)
-                      if (!b) return <div key={apt.id} style={{ height: ALL_CAL_ROW_H }} />
-                      const isStart = b.start_date === dateStr
-                      const isEnd = b.end_date === dateStr
-                      const task = b.cleaning_tasks?.[0]
-                      return (
-                        <span key={apt.id}
-                          title={`${apt.title} · ${b.guests_count} чел${task ? ` · ${fmtEur(task.cleaning_fee)} · ${task.payment_status === 'paid' ? 'оплачено' : 'не оплачено'}` : ''}`}
-                          className={`flex items-center text-[8px] leading-none text-white overflow-hidden ${isStart ? 'rounded-l-full pl-1.5' : '-ml-1'} ${isEnd ? 'rounded-r-full pr-1' : '-mr-1'}`}
-                          style={{ height: ALL_CAL_ROW_H, backgroundColor: aptColorOf(apt.id), opacity: task?.payment_status === 'paid' ? 0.5 : 0.9 }}>
-                          {isStart && <span className="truncate font-semibold">{apt.title}{b.guests_count ? ` · ${b.guests_count}` : ''}</span>}
-                        </span>
-                      )
-                    })}
-                  </div>
-                )
-              })}
-            </div>
-          )
-        })}
-      </div>
-      {apartments.length > 0 && (
-        <div className="flex items-center gap-3 flex-wrap px-4 py-2.5 border-t border-border">
-          {apartments.map(apt => (
-            <div key={apt.id} className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: aptColorOf(apt.id) }} />
-              <span className="text-[11px] text-muted-foreground font-medium">{apt.title}</span>
-            </div>
+    // Ограничение по ширине — иначе на широком экране колонки становятся намного шире, чем
+    // высота ячеек, и сетка выглядит растянутой полосками. На мобильных max-w ни на что не
+    // влияет (экран и так уже уже), так что адаптивность не страдает.
+    <div className="max-w-md mx-auto w-full">
+      <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-3 sm:px-4 py-2.5 sm:py-3 border-b border-border">
+          <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
+            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronLeft size={15} /></button>
+          <p className="text-sm font-semibold capitalize">{format(month, 'LLLL yyyy', { locale: ru })}</p>
+          <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><ChevronRight size={15} /></button>
+        </div>
+        <div className="grid grid-cols-7 border-b border-border">
+          {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(d => (
+            <div key={d} className="text-center text-[9px] sm:text-[10px] font-bold text-muted-foreground uppercase py-1 sm:py-1.5">{d}</div>
           ))}
         </div>
-      )}
+        <div className="divide-y divide-border">
+          {weeks.map((week, wi) => {
+            const cellMinH = 24 + Math.max(1, apartments.length) * (ALL_CAL_ROW_H + 2)
+            return (
+              <div key={wi} className="grid grid-cols-7 divide-x divide-border">
+                {week.map((day, di) => {
+                  if (day === null) return <div key={di} className="bg-gray-50/60" style={{ minHeight: cellMinH }} />
+                  const dateStr = `${month.getFullYear()}-${pad(month.getMonth() + 1)}-${pad(day)}`
+                  const isToday = dateStr === todayStr
+                  return (
+                    <div key={di} className="p-0.5 sm:p-1 flex flex-col gap-[2px] overflow-hidden" style={{ minHeight: cellMinH }}>
+                      <span className={`text-[9px] sm:text-[10px] font-semibold w-4 h-4 flex items-center justify-center rounded-full flex-shrink-0 ${isToday ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}>
+                        {day}
+                      </span>
+                      {apartments.map(apt => {
+                        const b = bookingOnDay(apt.id, dateStr)
+                        if (!b) return <div key={apt.id} style={{ height: ALL_CAL_ROW_H }} />
+                        const isStart = b.start_date === dateStr
+                        const isEnd = b.end_date === dateStr
+                        const task = b.cleaning_tasks?.[0]
+                        return (
+                          <span key={apt.id}
+                            title={`${apt.title} · ${b.guests_count} чел${task ? ` · ${fmtEur(task.cleaning_fee)} · ${task.payment_status === 'paid' ? 'оплачено' : 'не оплачено'}` : ''}`}
+                            className={`flex items-center text-[7px] sm:text-[8px] leading-none text-white overflow-hidden ${isStart ? 'rounded-l-full pl-1 sm:pl-1.5' : '-ml-1'} ${isEnd ? 'rounded-r-full pr-1' : '-mr-1'}`}
+                            style={{ height: ALL_CAL_ROW_H, backgroundColor: aptColorOf(apt.id), opacity: task?.payment_status === 'paid' ? 0.5 : 0.9 }}>
+                            {isStart && <span className="truncate font-semibold">{apt.title}{b.guests_count ? ` · ${b.guests_count}` : ''}</span>}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })}
+        </div>
+        {apartments.length > 0 && (
+          <div className="flex items-center gap-3 flex-wrap px-3 sm:px-4 py-2.5 border-t border-border">
+            {apartments.map(apt => (
+              <div key={apt.id} className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: aptColorOf(apt.id) }} />
+                <span className="text-[11px] text-muted-foreground font-medium">{apt.title}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -6201,6 +6207,7 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
             <p className="text-lg font-bold text-emerald-700">{fmtEur(totalPaid)}</p>
           </div>
         )}
+        <p className={`${totalOwed === 0 && totalEarned === 0 ? 'mt-auto' : 'mt-2'} mx-1 text-[10px] text-muted-foreground/50`}>v{APP_VERSION}</p>
       </aside>
 
       {/* ── Main content ── */}
@@ -9254,6 +9261,7 @@ export default function OwnerDashboard() {
               <p className="text-[10px]" style={{ color: 'hsl(var(--sidebar-fg))' }}>Администратор</p>
             </div>
           </div>
+          <p className="text-[10px] px-2 mt-1" style={{ color: 'hsl(var(--sidebar-fg))', opacity: 0.5 }}>v{APP_VERSION}</p>
         </div>
       </aside>
 
@@ -9629,6 +9637,7 @@ export default function OwnerDashboard() {
                       className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold text-destructive">
                       <LogOut size={17} /> Выйти
                     </button>
+                    <p className="text-[10px] px-3 pt-2 text-center" style={{ color: 'hsl(var(--sidebar-fg))', opacity: 0.5 }}>v{APP_VERSION}</p>
                   </div>
                 </motion.div>
               </>
