@@ -718,10 +718,11 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   const archive = all.filter(t => t.status === 'done' || t.payment_status === 'paid')
     .sort((a, b) => b.bookings.end_date.localeCompare(a.bookings.end_date))
 
-  // Гости выезжают СЕГОДНЯ — отдельная вкладка "Ожидание уборки", чтобы уборщица сразу
-  // видела, где именно нужно убраться сегодня, не выискивая среди всех предстоящих/просроченных.
-  const checkoutToday = all.filter(t => t.bookings.end_date === today && t.status !== 'done')
-    .sort((a, b) => a.bookings.apartments.title.localeCompare(b.bookings.apartments.title))
+  // Вкладка "Уборка" — все выезды, которые ещё не убраны, вплоть до сегодняшнего дня включительно
+  // (не только ровно "сегодня" — иначе просроченный, но не отмеченный уборкой выезд молча
+  // пропадал бы из списка на следующий день). Сортировка — сначала самые давние/срочные.
+  const pendingCleaning = all.filter(t => t.bookings.end_date <= today && t.status !== 'done')
+    .sort((a, b) => a.bookings.end_date.localeCompare(b.bookings.end_date))
 
   const getPaidAmt = (t: TaskRow) => t.payment_status === 'paid' ? t.cleaning_fee : 0
   const totalOwed = all.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
@@ -764,7 +765,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   const calAptImage = (aptId: string) => calApartments.find(a => a.id === aptId)?.apartment_images?.[0]?.image_url ?? null
 
   const NAV = [
-    { id: 'today' as const, label: 'Уборка', icon: <Brush size={16} />, count: checkoutToday.length },
+    { id: 'today' as const, label: 'Уборка', icon: <Brush size={16} />, count: pendingCleaning.length },
     { id: 'bookings' as const, label: 'Заезды', icon: <CalendarDays size={16} />, count: currentStays.length + upcoming.length + overdue.length },
     { id: 'payment' as const, label: 'Оплата', icon: <Banknote size={16} /> },
     { id: 'calendar' as const, label: 'Календарь', icon: <CalendarDays size={16} /> },
@@ -861,7 +862,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
               {tab === 'today' ? 'Ожидание уборки' : tab === 'bookings' ? 'Заезды' : tab === 'payment' ? 'Оплата' : tab === 'calendar' ? 'Календарь' : tab === 'profile' ? 'Профиль' : 'Архив заездов'}
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {tab === 'today' ? (checkoutToday.length > 0 ? `${checkoutToday.length} ${checkoutToday.length === 1 ? 'объект' : 'объекта(ов)'} сегодня` : 'Сегодня выездов нет') :
+              {tab === 'today' ? (pendingCleaning.length > 0 ? `${pendingCleaning.length} ${pendingCleaning.length === 1 ? 'заезд ждёт' : 'заездов ждут'} уборки` : 'Уборка не требуется') :
                tab === 'bookings' ? `${currentStays.length} сейчас · ${upcoming.length + overdue.length} предстоящих` :
                tab === 'payment' ? `Заработано ${fmtEur(totalEarned)} · получено ${fmtEur(totalPaid)}` :
                tab === 'calendar' ? 'Все заезды по всем квартирам' :
@@ -889,17 +890,39 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
               {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-20 rounded-2xl animate-pulse bg-muted" />)}
             </div>
           ) : tab === 'today' ? (
-            checkoutToday.length === 0 ? (
+            pendingCleaning.length === 0 ? (
               <div className="bg-card border border-border rounded-2xl p-10 text-center">
                 <p className="text-3xl mb-2">✨</p>
-                <p className="text-sm text-muted-foreground">Сегодня выездов нет — уборка не ждёт</p>
+                <p className="text-sm text-muted-foreground">Уборка не требуется ни в одном объекте</p>
               </div>
             ) : (
-              <div className="flex flex-col gap-2">
-                {checkoutToday.map(t => (
-                  <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor}
-                    ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />
-                ))}
+              <div className={`grid grid-cols-1 gap-4 ${apartments.length > 1 ? 'md:grid-cols-2' : ''}`}>
+                {apartments.map(apt => {
+                  const aptTasks = pendingCleaning.filter(t => t.bookings.apartments.id === apt.id)
+                  return (
+                    <div key={apt.id} className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2 px-1 pb-1">
+                        <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: aptColor(apt.id) }} />
+                        <h3 className="text-sm font-bold text-foreground">{apt.title}</h3>
+                        {aptTasks.length > 0 && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">{aptTasks.length}</span>
+                        )}
+                      </div>
+                      {aptTasks.length === 0 ? (
+                        <div className="bg-card border border-border rounded-2xl p-6 text-center">
+                          <p className="text-sm text-muted-foreground">Уборка не требуется</p>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          {aptTasks.map(t => (
+                            <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor}
+                              ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )
           ) : tab === 'bookings' ? (() => {
@@ -1246,8 +1269,8 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
               {item.id === 'payment' && totalOwed > 0 && (
                 <span className="absolute top-0 right-4 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">€</span>
               )}
-              {item.id === 'today' && checkoutToday.length > 0 && (
-                <span className="absolute top-0 right-4 min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold flex items-center justify-center">{checkoutToday.length}</span>
+              {item.id === 'today' && pendingCleaning.length > 0 && (
+                <span className="absolute top-0 right-4 min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold flex items-center justify-center">{pendingCleaning.length}</span>
               )}
             </button>
           )
