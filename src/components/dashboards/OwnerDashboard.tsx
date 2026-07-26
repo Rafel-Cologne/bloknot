@@ -6144,8 +6144,8 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
                     <div className="flex items-center justify-between gap-2 text-sm">
                       <span className="text-muted-foreground">Телефон</span>
                       <span className="font-semibold text-foreground text-right">
-                        {country && <span className="mr-1" title={country.name}>{country.flag}</span>}
                         <a href={`tel:${b.guest_phone}`} className="text-primary hover:underline">{b.guest_phone}</a>
+                        {country ? <span className="block text-[11px] text-muted-foreground font-normal">{country.name}</span> : null}
                       </span>
                     </div>
                   )}
