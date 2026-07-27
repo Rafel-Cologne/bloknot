@@ -8127,6 +8127,25 @@ type AgentLog = {
   errors: Record<string, unknown>[] | null; status: string
 }
 
+// Одна строка того, что именно агент сделал с конкретным письмом для конкретного
+// пользователя за этот запуск — показывается при разворачивании строки пользователя,
+// чтобы быстро понять, что именно прошло успешно, а что нет.
+type AgentRunOwnerItem = {
+  kind: 'booking_new' | 'booking_update' | 'booking_cancel' | 'expense' | 'bank_statement' | 'skip' | 'error'
+  status: 'success' | 'skipped' | 'error'
+  label: string
+}
+
+type AgentRunOwner = {
+  id: string; run_id: string; owner_id: string | null; owner_email: string | null; owner_name: string | null
+  account_label: string | null
+  emails_checked: number; bookings_created: number; bookings_updated: number; bookings_cancelled: number
+  expenses_created: number; skipped: number
+  tokens_input: number; tokens_output: number
+  status: string
+  items: AgentRunOwnerItem[] | null
+}
+
 type UserAlias = { id: string; user_id: string; alias: string; created_at: string }
 type UserProfile = { id: string; name: string; email: string | null; is_active: boolean; created_at: string }
 // Статус личного Gmail-ящика пользователя (faktura.imya@gmail.com) — без refresh_token,
@@ -8192,6 +8211,26 @@ function AdminSection() {
       return (data ?? []) as AgentLog[]
     },
   })
+
+  // Разбивка каждого запуска агента по пользователям — кто именно обновил данные,
+  // сколько токенов Claude на него ушло, и что именно было загружено (успешно/пропущено/ошибка).
+  const runIds = agentLogs.map(l => l.id)
+  const { data: agentRunOwners = [] } = useQuery({
+    queryKey: ['admin-agent-run-owners', runIds.join(',')],
+    queryFn: async () => {
+      const { data } = await supabase.from('agent_run_owners').select('*').in('run_id', runIds)
+      return (data ?? []) as AgentRunOwner[]
+    },
+    enabled: runIds.length > 0,
+  })
+  const ownersByRun = new Map<string, AgentRunOwner[]>()
+  for (const o of agentRunOwners) {
+    const arr = ownersByRun.get(o.run_id) ?? []
+    arr.push(o)
+    ownersByRun.set(o.run_id, arr)
+  }
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null)
+  const [expandedOwnerRowId, setExpandedOwnerRowId] = useState<string | null>(null)
 
   // Полный "кабинет уборщицы" для админа — все задачи по всем клинерам и хозяевам сразу,
   // без ограничения cleaner_id (как видит сама уборщица) или owner_id (как видит хозяин).
@@ -8301,6 +8340,16 @@ function AdminSection() {
     }
     return map[s] ?? 'bg-muted text-muted-foreground'
   }
+
+  const itemStatusBadge = (s: AgentRunOwnerItem['status']) => {
+    const map: Record<AgentRunOwnerItem['status'], string> = {
+      success: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
+      skipped: 'bg-muted text-muted-foreground',
+      error:   'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400',
+    }
+    return map[s]
+  }
+  const itemStatusLabel = (s: AgentRunOwnerItem['status']) => s === 'success' ? 'Успешно' : s === 'error' ? 'Ошибка' : 'Пропущено'
 
   return (
     <div className="flex flex-col gap-5 max-w-4xl">
@@ -8470,7 +8519,10 @@ function AdminSection() {
             <div className="p-8 text-center text-muted-foreground text-sm">Агент ещё не запускался</div>
           ) : (
             <div className="divide-y divide-border">
-              {agentLogs.map(log => (
+              {agentLogs.map(log => {
+                const owners = ownersByRun.get(log.id) ?? []
+                const isExpanded = expandedRunId === log.id
+                return (
                 <div key={log.id} className="px-4 py-3">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusBadge(log.status)}`}>
@@ -8494,8 +8546,87 @@ function AdminSection() {
                       {log.errors.length} ошибок — {JSON.stringify(log.errors[0])}
                     </div>
                   )}
+
+                  {owners.length > 0 && (
+                    <button
+                      onClick={() => setExpandedRunId(isExpanded ? null : log.id)}
+                      className="mt-2 text-xs font-medium text-primary hover:underline flex items-center gap-1"
+                    >
+                      {isExpanded ? '▲' : '▼'} По пользователям ({owners.length})
+                    </button>
+                  )}
+
+                  {isExpanded && owners.length > 0 && (
+                    <div className="mt-2 rounded-xl border border-border overflow-hidden">
+                      {/* Заголовок таблицы — на мобиле скрываем часть колонок, всё равно видно в карточке ниже */}
+                      <div className="hidden sm:grid grid-cols-[1.6fr_0.6fr_0.6fr_0.6fr_0.6fr_0.9fr_0.7fr] gap-2 px-3 py-1.5 bg-muted/50 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                        <span>Пользователь</span>
+                        <span>Писем</span>
+                        <span>Брони</span>
+                        <span>Счета</span>
+                        <span>Пропущ.</span>
+                        <span>Токены</span>
+                        <span>Статус</span>
+                      </div>
+                      <div className="divide-y divide-border">
+                        {owners.map(o => {
+                          const ownerRowKey = `${log.id}:${o.id}`
+                          const isOwnerExpanded = expandedOwnerRowId === ownerRowKey
+                          const bookingsTotal = o.bookings_created + o.bookings_updated + o.bookings_cancelled
+                          const totalTokens = o.tokens_input + o.tokens_output
+                          return (
+                            <div key={o.id}>
+                              <button
+                                onClick={() => setExpandedOwnerRowId(isOwnerExpanded ? null : ownerRowKey)}
+                                className="w-full text-left px-3 py-2 hover:bg-muted/30 transition-colors grid grid-cols-2 sm:grid-cols-[1.6fr_0.6fr_0.6fr_0.6fr_0.6fr_0.9fr_0.7fr] gap-1 sm:gap-2 items-center"
+                              >
+                                <span className="text-xs font-medium truncate col-span-2 sm:col-span-1">
+                                  {o.owner_name || o.owner_email || '— неизвестный —'}
+                                  {o.account_label && <span className="text-muted-foreground font-normal"> · {o.account_label}</span>}
+                                </span>
+                                <span className="text-xs text-muted-foreground">{o.emails_checked}</span>
+                                <span className="text-xs text-muted-foreground">{bookingsTotal || '—'}</span>
+                                <span className="text-xs text-muted-foreground">{o.expenses_created || '—'}</span>
+                                <span className="text-xs text-muted-foreground">{o.skipped || '—'}</span>
+                                <span className="text-xs text-muted-foreground font-mono">
+                                  {totalTokens > 0 ? totalTokens.toLocaleString('ru-RU') : '—'}
+                                </span>
+                                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full w-fit ${statusBadge(o.status)}`}>
+                                  {o.status === 'success' ? 'ОК' : o.status === 'partial' ? 'Частично' : o.status}
+                                </span>
+                              </button>
+                              {isOwnerExpanded && (
+                                <div className="px-3 pb-2.5 pt-0.5 bg-muted/20">
+                                  {o.tokens_input > 0 || o.tokens_output > 0 ? (
+                                    <p className="text-[10px] text-muted-foreground mb-1.5">
+                                      Токены: {o.tokens_input.toLocaleString('ru-RU')} вход / {o.tokens_output.toLocaleString('ru-RU')} выход
+                                    </p>
+                                  ) : null}
+                                  {(o.items ?? []).length === 0 ? (
+                                    <p className="text-xs text-muted-foreground">Нет данных по отдельным письмам за этот запуск.</p>
+                                  ) : (
+                                    <div className="flex flex-col gap-1">
+                                      {(o.items ?? []).map((it, i) => (
+                                        <div key={i} className="flex items-start gap-2">
+                                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 mt-px ${itemStatusBadge(it.status)}`}>
+                                            {itemStatusLabel(it.status)}
+                                          </span>
+                                          <span className="text-xs text-foreground/80">{it.label}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
