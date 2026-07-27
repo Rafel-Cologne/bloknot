@@ -650,6 +650,14 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   const [cashAmount, setCashAmount] = useState('')
   const [cashNote, setCashNote] = useState('')
   const [seenTaskIds, setSeenTaskIds] = useState<Set<string>>(new Set())
+  // Свёрнутые секции (Не оплачено / Оплачено на вкладке "Оплата", секции по квартирам в
+  // "Архиве") — ключ произвольный, просто наличие в сете значит "свёрнуто".
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
+  const toggleSection = (key: string) => setCollapsedSections(prev => {
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key); else next.add(key)
+    return next
+  })
 
   // Full apartment rows for the calendar tab (same component/visualization as the owner's calendar)
   const { data: calApartments = [] } = useQuery({
@@ -843,7 +851,12 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
 
   const byApartment = (t: TaskRow) => aptFilter === 'all' || t.bookings.apartments.id === aptFilter
   const paidList = all.filter(t => t.payment_status === 'paid' && byApartment(t))
+    .sort((a, b) => a.bookings.end_date.localeCompare(b.bookings.end_date))
   const unpaidList = all.filter(t => t.payment_status !== 'paid' && byApartment(t))
+    .sort((a, b) => a.bookings.end_date.localeCompare(b.bookings.end_date))
+  const doneCount = all.filter(t => t.status === 'done').length
+  const pendingCleaningSum = pendingCleaning.reduce((s, t) => s + t.cleaning_fee, 0)
+  const pluralUborka = (n: number) => n === 1 ? 'уборка' : n < 5 ? 'уборки' : 'уборок'
 
   return (
     <div className="flex flex-1 h-full overflow-hidden">
@@ -1151,14 +1164,16 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
             <div className="flex flex-col gap-6">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                 <div className="bg-card border border-border rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center">
-                  <p className="text-xs text-muted-foreground mb-2">Всего заработано</p>
-                  <p className="text-xl sm:text-2xl font-bold text-foreground whitespace-nowrap">{fmtEur(totalEarned)}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{all.length} уборок</p>
+                  <p className="text-xs text-muted-foreground mb-2">Уборок выполнено</p>
+                  <p className="text-xl sm:text-2xl font-bold text-foreground whitespace-nowrap">{doneCount}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{fmtEur(totalEarned)} за все заезды</p>
                 </div>
-                <div className={`bg-card border rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center ${totalOwed > 0 ? 'border-red-200' : 'border-emerald-200'}`}>
+                <div className={`bg-card border rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center ${pendingCleaning.length > 0 ? 'border-red-200' : 'border-emerald-200'}`}>
                   <p className="text-xs text-muted-foreground mb-2">Ожидает оплаты</p>
-                  <p className={`text-xl sm:text-2xl font-bold whitespace-nowrap ${totalOwed > 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtEur(totalOwed)}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{totalOwed > 0 ? 'ожидает перевода / наличных' : 'долгов нет 🎉'}</p>
+                  <p className={`text-xl sm:text-2xl font-bold whitespace-nowrap ${pendingCleaning.length > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                    {pendingCleaning.length > 0 ? `${pendingCleaning.length} ${pluralUborka(pendingCleaning.length)}` : '0 уборок'}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">{pendingCleaning.length > 0 ? fmtEur(pendingCleaningSum) : 'долгов нет 🎉'}</p>
                 </div>
                 <div className="bg-card border border-emerald-200 rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center">
                   <p className="text-xs text-muted-foreground mb-2">Получено</p>
@@ -1271,14 +1286,26 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
 
               {unpaidList.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Не оплачено — {unpaidList.length}</h3>
-                  <div className="flex flex-col gap-2">{unpaidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
+                  <button onClick={() => toggleSection('unpaid')}
+                    className="w-full flex items-center gap-1.5 mb-3 text-left">
+                    <ChevronRight size={13} className={`text-muted-foreground transition-transform ${collapsedSections.has('unpaid') ? '' : 'rotate-90'}`} />
+                    <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label">Не оплачено — {unpaidList.length}</h3>
+                  </button>
+                  {!collapsedSections.has('unpaid') && (
+                    <div className="flex flex-col gap-2">{unpaidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
+                  )}
                 </div>
               )}
               {paidList.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Оплачено — {paidList.length}</h3>
-                  <div className="flex flex-col gap-2">{paidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
+                  <button onClick={() => toggleSection('paid')}
+                    className="w-full flex items-center gap-1.5 mb-3 text-left">
+                    <ChevronRight size={13} className={`text-muted-foreground transition-transform ${collapsedSections.has('paid') ? '' : 'rotate-90'}`} />
+                    <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label">Оплачено — {paidList.length}</h3>
+                  </button>
+                  {!collapsedSections.has('paid') && (
+                    <div className="flex flex-col gap-2">{paidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
+                  )}
                 </div>
               )}
               {unpaidList.length === 0 && paidList.length === 0 && (
@@ -1286,11 +1313,28 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
               )}
             </div>
           ) : tab === 'archive' ? (
-            <div>
+            <div className="flex flex-col gap-5">
               {archive.length === 0 ? (
                 <div className="bg-card border border-border rounded-2xl p-12 text-center text-muted-foreground text-sm">Архив пуст</div>
               ) : (
-                <div className="flex flex-col gap-2">{archive.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
+                apartments.map(apt => {
+                  const aptArchive = archive.filter(t => t.bookings.apartments.id === apt.id)
+                  if (aptArchive.length === 0) return null
+                  const key = `archive-${apt.id}`
+                  return (
+                    <div key={apt.id}>
+                      <button onClick={() => toggleSection(key)}
+                        className="w-full flex items-center gap-2 mb-3 text-left">
+                        <ChevronRight size={13} className={`text-muted-foreground transition-transform flex-shrink-0 ${collapsedSections.has(key) ? '' : 'rotate-90'}`} />
+                        <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: aptColor(apt.id) }} />
+                        <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label">{apt.title} — {aptArchive.length}</h3>
+                      </button>
+                      {!collapsedSections.has(key) && (
+                        <div className="flex flex-col gap-2">{aptArchive.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
+                      )}
+                    </div>
+                  )
+                })
               )}
             </div>
           ) : (
