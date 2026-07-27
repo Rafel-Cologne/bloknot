@@ -283,12 +283,13 @@ function AddBookingModal({
 
     if (be || !bd) { setError(be?.message ?? 'Ошибка'); setSaving(false); return }
 
+    // Раньше здесь при отсутствии cleaner_id у объекта подставлялся "первый попавшийся"
+    // клинер из user_roles — было безопасно, пока в системе имелся ровно один клинер, но
+    // стало бы угадыванием не того человека, как только появится вторая уборщица. Теперь
+    // просто берём то, что явно назначено объекту (настройки объекта → «Уборщица»); если
+    // не назначено — задача создаётся без клинера, и его нужно назначить в настройках.
     const apt = apartments.find(a => a.id === form.apartment_id)
-    let cleanerId: string | null = apt?.cleaner_id ?? null
-    if (!cleanerId) {
-      const { data: rd } = await supabase.from('user_roles').select('user_id').eq('role', 'cleaner').limit(1).maybeSingle()
-      cleanerId = rd?.user_id ?? null
-    }
+    const cleanerId: string | null = apt?.cleaner_id ?? null
 
     await supabase.from('cleaning_tasks').insert({
       booking_id: bd.id, cleaner_id: cleanerId, cleaning_fee: parseFloat(form.cleaning_fee.replace(',', '.')) || 60,
@@ -425,6 +426,7 @@ type AptForm = {
   title: string; address: string; full_address: string; description: string
   price_per_night: number; cleaning_fee: number; max_guests: number; is_public: boolean
   cadastral_reference: string; construction_value: string
+  cleaner_id: string // '' = не назначена
 }
 
 function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
@@ -435,9 +437,10 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
         price_per_night: initial.price_per_night, cleaning_fee: initial.cleaning_fee,
         max_guests: initial.max_guests, is_public: initial.is_public,
         cadastral_reference: initial.cadastral_reference ?? '',
-        construction_value: initial.construction_value != null ? String(initial.construction_value) : '' }
+        construction_value: initial.construction_value != null ? String(initial.construction_value) : '',
+        cleaner_id: initial.cleaner_id ?? '' }
     : { title: '', address: '', full_address: '', description: '', price_per_night: 0, cleaning_fee: 60, max_guests: 2, is_public: true,
-        cadastral_reference: '', construction_value: '' }
+        cadastral_reference: '', construction_value: '', cleaner_id: '' }
   )
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(
@@ -445,6 +448,27 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
   )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Уборщица, назначенная на объект — сейчас у большинства пользователей она вообще одна на
+  // всех (несколько владельцев пользуются одним и тем же клинером), поэтому если вариант ровно
+  // один — подставляем его автоматически для нового объекта, но поле остаётся редактируемым
+  // (пригодится, когда клинеров станет больше одной).
+  const { data: cleanerOptions = [] } = useQuery({
+    queryKey: ['cleaner-options-for-apartment'],
+    queryFn: async () => {
+      const { data: roles } = await supabase.from('user_roles').select('user_id').eq('role', 'cleaner')
+      const ids = [...new Set((roles ?? []).map(r => r.user_id))]
+      if (ids.length === 0) return []
+      const { data: profiles } = await supabase.from('profiles').select('id, name, email').in('id', ids)
+      return (profiles ?? []) as { id: string; name: string | null; email: string | null }[]
+    },
+  })
+  useEffect(() => {
+    if (!initial && !form.cleaner_id && cleanerOptions.length === 1) {
+      setForm(f => ({ ...f, cleaner_id: cleanerOptions[0].id }))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cleanerOptions])
 
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -462,6 +486,7 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
       cadastral_reference: form.cadastral_reference.trim() || null,
       construction_value: form.construction_value ? parseFloat(form.construction_value) : null,
       full_address: form.full_address.trim() || null,
+      cleaner_id: form.cleaner_id || null,
     }
 
     let aptId = initial?.id ?? ''
@@ -551,6 +576,25 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
               className="w-4 h-4 rounded accent-primary" />
             <span className="text-sm">Опубликовать объект</span>
           </label>
+
+          {/* Уборщица — задачи на уборку и её кабинет ориентируются на это поле, а не на
+              хозяина объекта, поэтому одна уборщица может обслуживать объекты разных
+              владельцев (друзей) одновременно. */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Уборщица</label>
+            <select value={form.cleaner_id} onChange={e => setForm(f => ({ ...f, cleaner_id: e.target.value }))} className={inputCls}>
+              <option value="">— не назначена —</option>
+              {cleanerOptions.map(c => (
+                <option key={c.id} value={c.id}>{c.name || c.email || 'Без имени'}</option>
+              ))}
+            </select>
+            {cleanerOptions.length === 0 && (
+              <p className="text-[11px] text-muted-foreground">В системе пока нет ни одной уборщицы с ролью «клинер».</p>
+            )}
+            {cleanerOptions.length === 1 && form.cleaner_id === cleanerOptions[0].id && (
+              <p className="text-[11px] text-muted-foreground">Подставлена автоматически — она единственная уборщица в системе.</p>
+            )}
+          </div>
 
           {/* Налоговые / кадастровые поля */}
           <div className="border-t border-border pt-3 flex flex-col gap-3">

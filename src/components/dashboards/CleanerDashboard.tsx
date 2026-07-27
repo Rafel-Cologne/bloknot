@@ -642,7 +642,10 @@ function CleanerCalendar({ tasks, aptColor }: { tasks: TaskRow[]; aptColor: (id:
 export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { previewAsAdmin?: boolean; onExitPreview?: () => void } = {}) {
   const { user, signOut } = useAuth()
   const qc = useQueryClient()
-  const [tab, setTab] = useState<'today' | 'bookings' | 'payment' | 'calendar' | 'archive' | 'profile'>('bookings')
+  const [tab, setTab] = useState<'today' | 'bookings' | 'clients' | 'payment' | 'calendar' | 'archive' | 'profile'>('bookings')
+  // Какие карточки клиентов сейчас развёрнуты — открытие карточки считается тем самым
+  // "зашла и посмотрела", поэтому одновременно снимает у её новых броней флаг "непросмотрено".
+  const [expandedClientId, setExpandedClientId] = useState<string | null>(null)
   const [selectedTask, setSelectedTask] = useState<TaskRow | null>(null)
   const [aptFilter, setAptFilter] = useState<string>('all')
   const [showCashForm, setShowCashForm] = useState(false)
@@ -814,6 +817,43 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   const aptColor = (id: string) => aptColorMap.get(id) ?? '#6366f1'
   const primaryOwnerId = all[0]?.bookings.apartments.owner_id ?? null
 
+  // ── Вкладка "Клиенты" — один клинер обслуживает объекты нескольких хозяев (друзей),
+  // поэтому вместо одного общего списка заездов удобнее видеть, у кого из хозяев прямо
+  // сейчас что-то требует внимания: нужна уборка или появилась новая (ещё не просмотренная)
+  // бронь. У имени хозяина загорается "!", пока это не разберут (открытие карточки клиента
+  // снимает "новое", как и открытие общего баннера "Новая бронь").
+  type ClientSummary = {
+    ownerId: string; name: string
+    pendingCleaning: TaskRow[]; newTasks: TaskRow[]; nearestUpcoming: TaskRow | null
+    hasAlert: boolean
+  }
+  const clients: ClientSummary[] = useMemo(() => {
+    return ownerIds.map(ownerId => {
+      const theirPendingCleaning = pendingCleaning.filter(t => t.bookings.apartments.owner_id === ownerId)
+      const theirNewTasks = newTasks.filter(t => t.bookings.apartments.owner_id === ownerId)
+      const theirUpcoming = upcoming.filter(t => t.bookings.apartments.owner_id === ownerId)
+      return {
+        ownerId, name: ownerName(ownerId) || 'Хозяин',
+        pendingCleaning: theirPendingCleaning, newTasks: theirNewTasks,
+        nearestUpcoming: theirUpcoming[0] ?? null,
+        hasAlert: theirPendingCleaning.length > 0 || theirNewTasks.length > 0,
+      }
+    }).sort((a, b) => {
+      if (a.hasAlert !== b.hasAlert) return a.hasAlert ? -1 : 1
+      return a.name.localeCompare(b.name, 'ru')
+    })
+  }, [ownerIds, pendingCleaning, newTasks, upcoming, ownerName])
+  const clientsWithAlert = clients.filter(c => c.hasAlert).length
+
+  const toggleClient = (ownerId: string) => {
+    const opening = expandedClientId !== ownerId
+    setExpandedClientId(opening ? ownerId : null)
+    if (opening) {
+      const client = clients.find(c => c.ownerId === ownerId)
+      if (client && client.newTasks.length > 0) markTasksSeen(client.newTasks.map(t => t.id))
+    }
+  }
+
   // Describe a ledger entry — which apartment/booking it relates to, or "manual"
   const describeCashEntry = (e: CashEntry) => {
     if (e.cleaning_task_id) {
@@ -833,6 +873,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   const NAV = [
     { id: 'today' as const, label: 'Уборка', icon: <Brush size={16} />, count: pendingCleaning.length },
     { id: 'bookings' as const, label: 'Заезды', icon: <CalendarDays size={16} />, count: currentStays.length + upcoming.length + overdue.length },
+    { id: 'clients' as const, label: 'Клиенты', icon: <Users size={16} />, count: clientsWithAlert },
     { id: 'payment' as const, label: 'Оплата', icon: <Banknote size={16} /> },
     { id: 'calendar' as const, label: 'Календарь', icon: <CalendarDays size={16} /> },
     { id: 'archive' as const, label: 'Архив', icon: <FileText size={16} />, count: archive.length },
@@ -841,6 +882,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   const MOBILE_NAV = [
     { id: 'today' as const, label: 'Уборка', icon: <Brush size={19} /> },
     { id: 'bookings' as const, label: 'Заезды', icon: <ClipboardList size={19} /> },
+    { id: 'clients' as const, label: 'Клиенты', icon: <Users size={19} /> },
     { id: 'payment' as const, label: 'Оплата', icon: <Wallet size={19} /> },
     { id: 'calendar' as const, label: 'Календарь', icon: <CalendarDays size={19} /> },
     { id: 'archive' as const, label: 'Архив', icon: <Archive size={19} /> },
@@ -883,7 +925,9 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                 <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold flex-shrink-0 ${
                   item.id === 'today'
                     ? 'bg-amber-500 text-white'
-                    : tab === item.id ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-muted-foreground/15 text-muted-foreground'
+                    : item.id === 'clients'
+                      ? 'bg-red-500 text-white'
+                      : tab === item.id ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-muted-foreground/15 text-muted-foreground'
                 }`}>
                   {item.count}
                 </span>
@@ -931,11 +975,12 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
               </div>
             )}
             <h1 className="text-xl md:text-2xl font-display font-bold text-foreground">
-              {tab === 'today' ? 'Ожидание уборки' : tab === 'bookings' ? 'Заезды' : tab === 'payment' ? 'Оплата' : tab === 'calendar' ? 'Календарь' : tab === 'profile' ? 'Профиль' : 'Архив заездов'}
+              {tab === 'today' ? 'Ожидание уборки' : tab === 'bookings' ? 'Заезды' : tab === 'clients' ? 'Клиенты' : tab === 'payment' ? 'Оплата' : tab === 'calendar' ? 'Календарь' : tab === 'profile' ? 'Профиль' : 'Архив заездов'}
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
               {tab === 'today' ? (pendingCleaning.length > 0 ? `${pendingCleaning.length} ${pendingCleaning.length === 1 ? 'заезд ждёт' : 'заездов ждут'} уборки` : 'Уборка не требуется') :
                tab === 'bookings' ? `${currentStays.length} сейчас · ${upcoming.length + overdue.length} предстоящих` :
+               tab === 'clients' ? (clientsWithAlert > 0 ? `Требуют внимания: ${clientsWithAlert}` : `${clients.length} ${clients.length === 1 ? 'клиент' : 'клиентов'} · всё спокойно`) :
                tab === 'payment' ? `Заработано ${fmtEur(totalEarned)} · получено ${fmtEur(totalPaid)}` :
                tab === 'calendar' ? 'Все заезды по всем квартирам' :
                tab === 'profile' ? (user?.email ?? '') :
@@ -1062,7 +1107,75 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
               )}
             </div>
             )
-          })() : tab === 'calendar' ? (
+          })() : tab === 'clients' ? (
+            clients.length === 0 ? (
+              <div className="bg-card border border-border rounded-2xl p-10 text-center">
+                <p className="text-3xl mb-2">👥</p>
+                <p className="text-sm text-muted-foreground">Пока нет клиентов</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {clients.map(c => {
+                  const isOpen = expandedClientId === c.ownerId
+                  return (
+                    <div key={c.ownerId} className={`bg-card rounded-2xl shadow-sm transition-all ${c.hasAlert ? 'border-2 border-red-300' : 'border border-border'}`}>
+                      <button onClick={() => toggleClient(c.ownerId)}
+                        className="w-full flex items-center gap-3 px-5 py-4 text-left">
+                        <div className="w-9 h-9 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center flex-shrink-0 text-sm">
+                          {c.name.slice(0, 1).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-sm font-bold text-foreground truncate">{c.name}</p>
+                            {c.hasAlert && (
+                              <span className="w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0 animate-pulse">!</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {c.pendingCleaning.length > 0 && `🧹 Нужна уборка: ${c.pendingCleaning.length}`}
+                            {c.pendingCleaning.length > 0 && c.newTasks.length > 0 && ' · '}
+                            {c.newTasks.length > 0 && `🆕 Новых броней: ${c.newTasks.length}`}
+                            {c.pendingCleaning.length === 0 && c.newTasks.length === 0 && (
+                              c.nearestUpcoming
+                                ? `Ближайший заезд — ${format(parseISO(c.nearestUpcoming.bookings.start_date), 'd MMM', { locale: ru })}, ${c.nearestUpcoming.bookings.apartments.title}`
+                                : 'Нет предстоящих заездов'
+                            )}
+                          </p>
+                        </div>
+                        <ChevronRight size={16} className={`text-muted-foreground/40 flex-shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                      </button>
+                      {isOpen && (
+                        <div className="px-4 pb-4 flex flex-col gap-2 border-t border-border pt-3">
+                          {c.pendingCleaning.length === 0 && c.newTasks.length === 0 && !c.nearestUpcoming && (
+                            <p className="text-sm text-muted-foreground px-1">Сейчас ничего не требует внимания.</p>
+                          )}
+                          {c.pendingCleaning.length > 0 && (
+                            <>
+                              <p className="text-[11px] font-bold text-destructive uppercase tracking-widest px-1">Нужна уборка</p>
+                              {c.pendingCleaning.map(t => (
+                                <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} compact />
+                              ))}
+                            </>
+                          )}
+                          {c.newTasks.length > 0 && (
+                            <>
+                              <p className="text-[11px] font-bold text-foreground uppercase tracking-widest px-1 mt-1">Новые брони</p>
+                              {c.newTasks.map(t => (
+                                <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} compact />
+                              ))}
+                            </>
+                          )}
+                          {c.pendingCleaning.length === 0 && c.newTasks.length === 0 && c.nearestUpcoming && (
+                            <TaskCard task={c.nearestUpcoming} onSelect={() => setSelectedTask(c.nearestUpcoming!)} aptColor={aptColor} compact />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          ) : tab === 'calendar' ? (
             <div className="flex flex-col gap-4">
               <CleanerCalendar tasks={all} aptColor={aptColor} />
 
@@ -1387,6 +1500,9 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
               )}
               {item.id === 'today' && pendingCleaning.length > 0 && (
                 <span className="absolute top-0 right-4 min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold flex items-center justify-center">{pendingCleaning.length}</span>
+              )}
+              {item.id === 'clients' && clientsWithAlert > 0 && (
+                <span className="absolute top-0 right-4 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">!</span>
               )}
             </button>
           )
