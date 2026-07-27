@@ -8229,8 +8229,14 @@ function AdminSection() {
     arr.push(o)
     ownersByRun.set(o.run_id, arr)
   }
-  const [expandedRunId, setExpandedRunId] = useState<string | null>(null)
+  // Разворот блока "по пользователям" для конкретного запуска — по умолчанию открыт для
+  // сегодняшних запусков (актуальное сразу видно) и закрыт для архивных, но админ может
+  // переключить вручную для любого запуска в любую сторону.
+  const [runOwnersOverride, setRunOwnersOverride] = useState<Record<string, boolean>>({})
   const [expandedOwnerRowId, setExpandedOwnerRowId] = useState<string | null>(null)
+  // Запуски не за сегодня уходят в архив, сгруппированный по дате, и свёрнуты — клик по
+  // дате разворачивает список запусков за этот день.
+  const [expandedArchiveDates, setExpandedArchiveDates] = useState<Set<string>>(new Set())
 
   // Полный "кабинет уборщицы" для админа — все задачи по всем клинерам и хозяевам сразу,
   // без ограничения cleaner_id (как видит сама уборщица) или owner_id (как видит хозяин).
@@ -8350,6 +8356,140 @@ function AdminSection() {
     return map[s]
   }
   const itemStatusLabel = (s: AgentRunOwnerItem['status']) => s === 'success' ? 'Успешно' : s === 'error' ? 'Ошибка' : 'Пропущено'
+
+  // Сегодняшние запуски показываем полностью развёрнутыми сразу, всё остальное — в архиве
+  // по датам, свёрнуто по умолчанию (клик по дате открывает список запусков за тот день).
+  const todayDateKey = format(new Date(), 'yyyy-MM-dd')
+  const todayAgentLogs = agentLogs.filter(l => format(parseISO(l.run_at), 'yyyy-MM-dd') === todayDateKey)
+  const archiveAgentLogs = agentLogs.filter(l => format(parseISO(l.run_at), 'yyyy-MM-dd') !== todayDateKey)
+  const archiveDateGroups: { dateKey: string; label: string; logs: AgentLog[] }[] = []
+  for (const l of archiveAgentLogs) {
+    const dateKey = format(parseISO(l.run_at), 'yyyy-MM-dd')
+    let group = archiveDateGroups.find(g => g.dateKey === dateKey)
+    if (!group) {
+      group = { dateKey, label: format(parseISO(l.run_at), 'd MMMM yyyy', { locale: ru }), logs: [] }
+      archiveDateGroups.push(group)
+    }
+    group.logs.push(l)
+  }
+  const toggleArchiveDate = (dateKey: string) => {
+    setExpandedArchiveDates(prev => {
+      const next = new Set(prev)
+      if (next.has(dateKey)) next.delete(dateKey); else next.add(dateKey)
+      return next
+    })
+  }
+
+  // Единая отрисовка одной строки запуска — используется и в блоке "сегодня" (владельцы
+  // развёрнуты по умолчанию), и внутри развёрнутой архивной даты (свёрнуты по умолчанию).
+  const renderAgentLogRow = (log: AgentLog, defaultOwnersOpen: boolean) => {
+    const owners = ownersByRun.get(log.id) ?? []
+    const ownersOpen = runOwnersOverride[log.id] ?? defaultOwnersOpen
+    return (
+      <div key={log.id} className="px-4 py-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusBadge(log.status)}`}>
+            {log.status === 'success' ? 'ОК' : log.status === 'partial' ? 'Частично' : 'Ошибка'}
+          </span>
+          <span className="text-sm font-medium">
+            {format(parseISO(log.run_at), 'd MMM yyyy HH:mm', { locale: ru })}
+          </span>
+          <span className="text-xs text-muted-foreground ml-auto">
+            📧 {log.emails_checked} писем
+          </span>
+        </div>
+        <div className="flex gap-4 mt-1.5 text-xs text-muted-foreground flex-wrap">
+          {log.bookings_created > 0 && <span>+{log.bookings_created} бронирований</span>}
+          {log.bookings_updated > 0 && <span>↻ {log.bookings_updated} обновлено</span>}
+          {log.expenses_created > 0 && <span>+{log.expenses_created} расходов</span>}
+          {log.skipped > 0 && <span>{log.skipped} пропущено</span>}
+        </div>
+        {log.errors && log.errors.length > 0 && (
+          <div className="mt-1.5 text-xs text-destructive">
+            {log.errors.length} ошибок — {JSON.stringify(log.errors[0])}
+          </div>
+        )}
+
+        {owners.length > 0 && (
+          <button
+            onClick={() => setRunOwnersOverride(prev => ({ ...prev, [log.id]: !ownersOpen }))}
+            className="mt-2 text-xs font-medium text-primary hover:underline flex items-center gap-1"
+          >
+            {ownersOpen ? '▲' : '▼'} По пользователям ({owners.length})
+          </button>
+        )}
+
+        {ownersOpen && owners.length > 0 && (
+          <div className="mt-2 rounded-xl border border-border overflow-hidden">
+            {/* Заголовок таблицы — на мобиле скрываем часть колонок, всё равно видно в карточке ниже */}
+            <div className="hidden sm:grid grid-cols-[1.6fr_0.6fr_0.6fr_0.6fr_0.6fr_0.9fr_0.7fr] gap-2 px-3 py-1.5 bg-muted/50 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+              <span>Пользователь</span>
+              <span>Писем</span>
+              <span>Брони</span>
+              <span>Счета</span>
+              <span>Пропущ.</span>
+              <span>Токены</span>
+              <span>Статус</span>
+            </div>
+            <div className="divide-y divide-border">
+              {owners.map(o => {
+                const ownerRowKey = `${log.id}:${o.id}`
+                const isOwnerExpanded = expandedOwnerRowId === ownerRowKey
+                const bookingsTotal = o.bookings_created + o.bookings_updated + o.bookings_cancelled
+                const totalTokens = o.tokens_input + o.tokens_output
+                return (
+                  <div key={o.id}>
+                    <button
+                      onClick={() => setExpandedOwnerRowId(isOwnerExpanded ? null : ownerRowKey)}
+                      className="w-full text-left px-3 py-2 hover:bg-muted/30 transition-colors grid grid-cols-2 sm:grid-cols-[1.6fr_0.6fr_0.6fr_0.6fr_0.6fr_0.9fr_0.7fr] gap-1 sm:gap-2 items-center"
+                    >
+                      <span className="text-xs font-medium truncate col-span-2 sm:col-span-1">
+                        {o.owner_name || o.owner_email || '— неизвестный —'}
+                        {o.account_label && <span className="text-muted-foreground font-normal"> · {o.account_label}</span>}
+                      </span>
+                      <span className="text-xs text-muted-foreground">{o.emails_checked}</span>
+                      <span className="text-xs text-muted-foreground">{bookingsTotal || '—'}</span>
+                      <span className="text-xs text-muted-foreground">{o.expenses_created || '—'}</span>
+                      <span className="text-xs text-muted-foreground">{o.skipped || '—'}</span>
+                      <span className="text-xs text-muted-foreground font-mono">
+                        {totalTokens > 0 ? totalTokens.toLocaleString('ru-RU') : '—'}
+                      </span>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full w-fit ${statusBadge(o.status)}`}>
+                        {o.status === 'success' ? 'ОК' : o.status === 'partial' ? 'Частично' : o.status}
+                      </span>
+                    </button>
+                    {isOwnerExpanded && (
+                      <div className="px-3 pb-2.5 pt-0.5 bg-muted/20">
+                        {o.tokens_input > 0 || o.tokens_output > 0 ? (
+                          <p className="text-[10px] text-muted-foreground mb-1.5">
+                            Токены: {o.tokens_input.toLocaleString('ru-RU')} вход / {o.tokens_output.toLocaleString('ru-RU')} выход
+                          </p>
+                        ) : null}
+                        {(o.items ?? []).length === 0 ? (
+                          <p className="text-xs text-muted-foreground">Нет данных по отдельным письмам за этот запуск.</p>
+                        ) : (
+                          <div className="flex flex-col gap-1">
+                            {(o.items ?? []).map((it, i) => (
+                              <div key={i} className="flex items-start gap-2">
+                                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 mt-px ${itemStatusBadge(it.status)}`}>
+                                  {itemStatusLabel(it.status)}
+                                </span>
+                                <span className="text-xs text-foreground/80">{it.label}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-5 max-w-4xl">
@@ -8518,116 +8658,51 @@ function AdminSection() {
           {agentLogs.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground text-sm">Агент ещё не запускался</div>
           ) : (
-            <div className="divide-y divide-border">
-              {agentLogs.map(log => {
-                const owners = ownersByRun.get(log.id) ?? []
-                const isExpanded = expandedRunId === log.id
-                return (
-                <div key={log.id} className="px-4 py-3">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusBadge(log.status)}`}>
-                      {log.status === 'success' ? 'ОК' : log.status === 'partial' ? 'Частично' : 'Ошибка'}
-                    </span>
-                    <span className="text-sm font-medium">
-                      {format(parseISO(log.run_at), 'd MMM yyyy HH:mm', { locale: ru })}
-                    </span>
-                    <span className="text-xs text-muted-foreground ml-auto">
-                      📧 {log.emails_checked} писем
-                    </span>
-                  </div>
-                  <div className="flex gap-4 mt-1.5 text-xs text-muted-foreground flex-wrap">
-                    {log.bookings_created > 0 && <span>+{log.bookings_created} бронирований</span>}
-                    {log.bookings_updated > 0 && <span>↻ {log.bookings_updated} обновлено</span>}
-                    {log.expenses_created > 0 && <span>+{log.expenses_created} расходов</span>}
-                    {log.skipped > 0 && <span>{log.skipped} пропущено</span>}
-                  </div>
-                  {log.errors && log.errors.length > 0 && (
-                    <div className="mt-1.5 text-xs text-destructive">
-                      {log.errors.length} ошибок — {JSON.stringify(log.errors[0])}
-                    </div>
-                  )}
-
-                  {owners.length > 0 && (
-                    <button
-                      onClick={() => setExpandedRunId(isExpanded ? null : log.id)}
-                      className="mt-2 text-xs font-medium text-primary hover:underline flex items-center gap-1"
-                    >
-                      {isExpanded ? '▲' : '▼'} По пользователям ({owners.length})
-                    </button>
-                  )}
-
-                  {isExpanded && owners.length > 0 && (
-                    <div className="mt-2 rounded-xl border border-border overflow-hidden">
-                      {/* Заголовок таблицы — на мобиле скрываем часть колонок, всё равно видно в карточке ниже */}
-                      <div className="hidden sm:grid grid-cols-[1.6fr_0.6fr_0.6fr_0.6fr_0.6fr_0.9fr_0.7fr] gap-2 px-3 py-1.5 bg-muted/50 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
-                        <span>Пользователь</span>
-                        <span>Писем</span>
-                        <span>Брони</span>
-                        <span>Счета</span>
-                        <span>Пропущ.</span>
-                        <span>Токены</span>
-                        <span>Статус</span>
-                      </div>
-                      <div className="divide-y divide-border">
-                        {owners.map(o => {
-                          const ownerRowKey = `${log.id}:${o.id}`
-                          const isOwnerExpanded = expandedOwnerRowId === ownerRowKey
-                          const bookingsTotal = o.bookings_created + o.bookings_updated + o.bookings_cancelled
-                          const totalTokens = o.tokens_input + o.tokens_output
-                          return (
-                            <div key={o.id}>
-                              <button
-                                onClick={() => setExpandedOwnerRowId(isOwnerExpanded ? null : ownerRowKey)}
-                                className="w-full text-left px-3 py-2 hover:bg-muted/30 transition-colors grid grid-cols-2 sm:grid-cols-[1.6fr_0.6fr_0.6fr_0.6fr_0.6fr_0.9fr_0.7fr] gap-1 sm:gap-2 items-center"
-                              >
-                                <span className="text-xs font-medium truncate col-span-2 sm:col-span-1">
-                                  {o.owner_name || o.owner_email || '— неизвестный —'}
-                                  {o.account_label && <span className="text-muted-foreground font-normal"> · {o.account_label}</span>}
-                                </span>
-                                <span className="text-xs text-muted-foreground">{o.emails_checked}</span>
-                                <span className="text-xs text-muted-foreground">{bookingsTotal || '—'}</span>
-                                <span className="text-xs text-muted-foreground">{o.expenses_created || '—'}</span>
-                                <span className="text-xs text-muted-foreground">{o.skipped || '—'}</span>
-                                <span className="text-xs text-muted-foreground font-mono">
-                                  {totalTokens > 0 ? totalTokens.toLocaleString('ru-RU') : '—'}
-                                </span>
-                                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full w-fit ${statusBadge(o.status)}`}>
-                                  {o.status === 'success' ? 'ОК' : o.status === 'partial' ? 'Частично' : o.status}
-                                </span>
-                              </button>
-                              {isOwnerExpanded && (
-                                <div className="px-3 pb-2.5 pt-0.5 bg-muted/20">
-                                  {o.tokens_input > 0 || o.tokens_output > 0 ? (
-                                    <p className="text-[10px] text-muted-foreground mb-1.5">
-                                      Токены: {o.tokens_input.toLocaleString('ru-RU')} вход / {o.tokens_output.toLocaleString('ru-RU')} выход
-                                    </p>
-                                  ) : null}
-                                  {(o.items ?? []).length === 0 ? (
-                                    <p className="text-xs text-muted-foreground">Нет данных по отдельным письмам за этот запуск.</p>
-                                  ) : (
-                                    <div className="flex flex-col gap-1">
-                                      {(o.items ?? []).map((it, i) => (
-                                        <div key={i} className="flex items-start gap-2">
-                                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 mt-px ${itemStatusBadge(it.status)}`}>
-                                            {itemStatusLabel(it.status)}
-                                          </span>
-                                          <span className="text-xs text-foreground/80">{it.label}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )}
+            <>
+              {todayAgentLogs.length > 0 ? (
+                <div className="divide-y divide-border">
+                  {todayAgentLogs.map(log => renderAgentLogRow(log, true))}
                 </div>
-                )
-              })}
-            </div>
+              ) : (
+                <div className="p-6 text-center text-muted-foreground text-sm">Сегодня агент ещё не запускался</div>
+              )}
+
+              {archiveDateGroups.length > 0 && (
+                <div className="border-t border-border">
+                  <div className="px-4 py-2 bg-muted/40 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                    Архив
+                  </div>
+                  <div className="divide-y divide-border">
+                    {archiveDateGroups.map(group => {
+                      const isOpen = expandedArchiveDates.has(group.dateKey)
+                      const problemCount = group.logs.filter(l => l.status !== 'success').length
+                      return (
+                        <div key={group.dateKey}>
+                          <button
+                            onClick={() => toggleArchiveDate(group.dateKey)}
+                            className="w-full text-left px-4 py-3 flex items-center gap-2 hover:bg-muted/30 transition-colors"
+                          >
+                            <span className="text-muted-foreground text-xs">{isOpen ? '▲' : '▼'}</span>
+                            <span className="text-sm font-medium capitalize">{group.label}</span>
+                            <span className="text-xs text-muted-foreground">{group.logs.length} запусков</span>
+                            {problemCount > 0 && (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                                {problemCount} с проблемами
+                              </span>
+                            )}
+                          </button>
+                          {isOpen && (
+                            <div className="divide-y divide-border bg-muted/10">
+                              {group.logs.map(log => renderAgentLogRow(log, false))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
