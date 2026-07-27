@@ -174,6 +174,12 @@ type AgentPendingEvent = {
     filename?: string | null
     statement_date_range?: string | null
     line_items?: BankStatementLineItem[]
+    // Квартира только одна у хозяина, и агент привязал счёт к ней «по умолчанию», но адрес,
+    // указанный в самом счёте, явно отличается от адреса этой квартиры — нужно, чтобы хозяин
+    // сам подтвердил, что счёт всё равно относится к этому объекту (например, второй адрес
+    // поставщика/юрлица), прежде чем данные попадут в Расходы.
+    address_mismatch?: boolean | null
+    invoice_address?: string | null
   }
 }
 
@@ -9675,6 +9681,9 @@ export default function OwnerDashboard() {
                   const isDismissing = dismissAgentEvent.isPending && dismissAgentEvent.variables === ev.id
                   const isCancel = ev.kind === 'booking_cancel'
                   const isPending = ev.status === 'pending'
+                  // У хозяина только одна квартира, счёт привязан к ней «по умолчанию», но адрес
+                  // в самом счёте явно отличается — просим явное подтверждение, а не тихо добавляем.
+                  const isMismatch = ev.kind === 'expense' && !!p.address_mismatch
 
                   const isStatement = ev.kind === 'bank_statement'
                   const titleFor = (prefix: string) => `${prefix}${p.apartment_title ? ` — ${p.apartment_title}` : ''}`
@@ -9692,7 +9701,7 @@ export default function OwnerDashboard() {
                   const statementSuggestedCount = statementDebitItems.filter(li => li.suggested_include).length
 
                   return (
-                    <div key={ev.id} className={`rounded-xl border p-3.5 ${isCancel ? 'border-red-200 bg-red-50/50' : 'border-border'} ${!isPending ? 'opacity-80' : ''}`}>
+                    <div key={ev.id} className={`rounded-xl border p-3.5 ${isCancel ? 'border-red-200 bg-red-50/50' : isMismatch ? 'border-amber-300 bg-amber-50/50' : 'border-border'} ${!isPending ? 'opacity-80' : ''}`}>
                       <p className="text-sm font-medium mb-1">{title}</p>
 
                       {isStatement ? (
@@ -9710,6 +9719,11 @@ export default function OwnerDashboard() {
                           </p>
                           {p.description && <p className="text-xs text-muted-foreground mt-0.5">{p.description}</p>}
                           <p className="text-lg font-semibold mt-1">{fmtEur(p.amount ?? 0)}</p>
+                          {isMismatch && (
+                            <p className="text-xs text-amber-700 mt-1">
+                              ⚠️ Адрес в счёте{p.invoice_address ? ` («${p.invoice_address}»)` : ''} не совпадает с адресом{p.apartment_title ? ` квартиры «${p.apartment_title}»` : ' квартиры'}. Проверьте перед добавлением.
+                            </p>
+                          )}
                         </>
                       ) : (
                         <>

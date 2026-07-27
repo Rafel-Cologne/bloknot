@@ -576,7 +576,16 @@ async function syncAccount(
       }
 
       let apartmentId: string | null = extraction.confidence === "low" ? null : extraction.apartment_id;
-      if (!apartmentId && ownerApartmentsWithAddress.length === 1) apartmentId = ownerApartmentsWithAddress[0].id;
+      // Если у хозяина только одна квартира — счёт всегда относится к ней, даже если Claude не
+      // смог однозначно сопоставить адрес (например, в счёте вообще нет адреса объекта, что для
+      // многих коммунальных счетов нормально). НО если Claude явно увидел в счёте ДРУГОЙ адрес
+      // (address_mismatch) — всё равно привязываем к единственной квартире, но помечаем событие,
+      // чтобы хозяин подтвердил это вручную, а не полагаться на автопривязку молча.
+      let needsAddressConfirmation = false;
+      if (!apartmentId && ownerApartmentsWithAddress.length === 1) {
+        apartmentId = ownerApartmentsWithAddress[0].id;
+        needsAddressConfirmation = !!extraction.address_mismatch;
+      }
       if (!apartmentId) {
         log.skipped++;
         log.debug.push({ account: ctx.label, messageId: msgId, reason: "could not match apartment", extraction });
@@ -605,7 +614,7 @@ async function syncAccount(
 
       const apartmentForExpense = ownerApartmentsWithAddress.find((a) => a.id === apartmentId);
 
-      await queueEvent(supabase, log, autoApply, {
+      await queueEvent(supabase, log, autoApply && !needsAddressConfirmation, {
         owner_id: ownerId,
         apartment_id: apartmentId,
         kind: "expense",
@@ -620,6 +629,8 @@ async function syncAccount(
           period_label: extraction.period_label,
           provider: extraction.provider,
           description: extraction.description,
+          address_mismatch: needsAddressConfirmation,
+          invoice_address: extraction.invoice_address ?? null,
         },
       });
     } catch (e) {
@@ -786,6 +797,8 @@ type Extraction = {
   description: string | null;
   apartment_id: string | null;
   confidence: "high" | "low";
+  invoice_address: string | null;
+  address_mismatch: boolean | null;
 };
 
 type BookingExtraction = {
@@ -856,7 +869,7 @@ async function extractInvoice(
   }
   content.push({
     type: "text",
-    text: `Вот письмо со счётом за коммунальные услуги (текст письма ниже, плюс PDF-вложение, если есть).\n\nТекст письма:\n${bodyText.slice(0, 5000)}\n\nСписок квартир владельца (выбери apartment_id, если адрес счёта совпадает с одной из них, иначе null):\n${aptList}\n\nВерни СТРОГО JSON без markdown, полей:\n{"provider": string, "category": "electricity"|"water"|"gas"|"internet"|"other", "amount": number, "invoice_date": "YYYY-MM-DD"|null, "period_start": "YYYY-MM-DD"|null, "period_end": "YYYY-MM-DD"|null, "period_label": string|null, "description": string|null, "apartment_id": string|null, "confidence": "high"|"low"}\nПоле category строго одно из этих английских кодов (не русскими словами!). Если это не счёт за коммунальные услуги — верни {"amount": null}.`,
+    text: `Вот письмо со счётом за коммунальные услуги (текст письма ниже, плюс PDF-вложение, если есть).\n\nТекст письма:\n${bodyText.slice(0, 5000)}\n\nСписок квартир владельца (выбери apartment_id, если адрес счёта совпадает с одной из них, иначе null):\n${aptList}\n\nВАЖНО про адрес: если в счёте есть адрес объекта/точки поставки услуги (адрес, куда поставляется электричество/вода/газ/интернет, а не юридический адрес поставщика или адрес для переписки) — обязательно верни его дословно в поле invoice_address. Затем сравни его с адресами квартир из списка выше: если invoice_address ЯВНО указывает на другой объект (другая улица/номер дома) — верни address_mismatch: true. Если адрес в счёте не найден, слишком общий (например только город) или совпадает с одной из квартир — верни address_mismatch: false. Не путай address_mismatch с обычным confidence: low ставь только когда вообще непонятно, что за счёт.\n\nВерни СТРОГО JSON без markdown, полей:\n{"provider": string, "category": "electricity"|"water"|"gas"|"internet"|"other", "amount": number, "invoice_date": "YYYY-MM-DD"|null, "period_start": "YYYY-MM-DD"|null, "period_end": "YYYY-MM-DD"|null, "period_label": string|null, "description": string|null, "apartment_id": string|null, "invoice_address": string|null, "address_mismatch": boolean, "confidence": "high"|"low"}\nПоле category строго одно из этих английских кодов (не русскими словами!). Если это не счёт за коммунальные услуги — верни {"amount": null}.`,
   });
 
   const { text, apiError } = await callClaude(content);
