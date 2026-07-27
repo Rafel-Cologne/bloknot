@@ -180,6 +180,9 @@ type AgentPendingEvent = {
     // поставщика/юрлица), прежде чем данные попадут в Расходы.
     address_mismatch?: boolean | null
     invoice_address?: string | null
+    // Квартира только одна у хозяина, письмо о брони привязано к ней «по умолчанию», но Claude
+    // вообще не смог сопоставить название/адрес объекта в письме — просим подтвердить вручную.
+    apartment_mismatch?: boolean | null
   }
 }
 
@@ -2811,7 +2814,7 @@ function DashboardOverview({
       {/* ── Developer footer ── */}
       <div className="flex-shrink-0 flex items-center justify-center py-1 relative z-10">
         <p className="text-[10px] text-muted-foreground/40 select-none">
-          Разработано · <span className="font-medium text-muted-foreground/60">Rafael Babaew</span>
+          Разработано · <span className="font-medium text-muted-foreground/60">Rafael Babaew</span> · v{APP_VERSION}
         </p>
       </div>
 
@@ -9681,9 +9684,10 @@ export default function OwnerDashboard() {
                   const isDismissing = dismissAgentEvent.isPending && dismissAgentEvent.variables === ev.id
                   const isCancel = ev.kind === 'booking_cancel'
                   const isPending = ev.status === 'pending'
-                  // У хозяина только одна квартира, счёт привязан к ней «по умолчанию», но адрес
-                  // в самом счёте явно отличается — просим явное подтверждение, а не тихо добавляем.
-                  const isMismatch = ev.kind === 'expense' && !!p.address_mismatch
+                  // У хозяина только одна квартира, счёт/бронь привязаны к ней «по умолчанию» —
+                  // для счёта потому что адрес в счёте явно другой, для брони потому что вообще
+                  // не удалось сопоставить объект — в обоих случаях просим явное подтверждение.
+                  const isMismatch = (ev.kind === 'expense' && !!p.address_mismatch) || ((ev.kind === 'booking_new' || ev.kind === 'booking_update') && !!p.apartment_mismatch)
 
                   const isStatement = ev.kind === 'bank_statement'
                   const titleFor = (prefix: string) => `${prefix}${p.apartment_title ? ` — ${p.apartment_title}` : ''}`
@@ -9738,6 +9742,11 @@ export default function OwnerDashboard() {
                             {isCancel ? '−' : ''}{fmtEur(p.total_amount ?? 0)}
                           </p>
                           {isCancel && <p className="text-xs text-red-700/80 mt-0.5">Эта сумма больше не поступит и нигде не учитывается</p>}
+                          {isMismatch && (
+                            <p className="text-xs text-amber-700 mt-1">
+                              ⚠️ Не удалось точно определить объект по письму, бронь привязана{p.apartment_title ? ` к «${p.apartment_title}»` : ''} как к единственной квартире. Проверьте перед добавлением.
+                            </p>
+                          )}
                         </>
                       )}
 

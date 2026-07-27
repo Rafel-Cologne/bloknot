@@ -416,13 +416,30 @@ async function syncAccount(
         if (apiError) log.debug.push({ account: ctx.label, messageId: msgId, apiError });
         if (raw) log.debug.push({ account: ctx.label, messageId: msgId, rawClaudeText: raw });
 
-        if (!extraction || !extraction.apartment_id) {
+        if (!extraction) {
           log.skipped++;
           log.debug.push({ account: ctx.label, messageId: msgId, reason: "no usable booking extraction", extraction });
           continue;
         }
 
-        const apt = ownerApartments.find((a) => a.id === extraction.apartment_id);
+        // Если у хозяина только одна квартира — письмо о брони почти наверняка про неё, даже
+        // если Claude не смог однозначно сопоставить название/адрес объекта в письме (разное
+        // написание адреса, письмо на непривычном языке и т.п.). Раньше в этом случае бронь
+        // просто молча пропускалась. Как и со счетами: привязываем к единственной квартире, но
+        // если Claude вообще не нашёл apartment_id — не автопримеряем, отдаём хозяину на проверку.
+        let bookingApartmentId: string | null = extraction.apartment_id;
+        let bookingNeedsConfirmation = false;
+        if (!bookingApartmentId && ownerApartments.length === 1) {
+          bookingApartmentId = ownerApartments[0].id;
+          bookingNeedsConfirmation = true;
+        }
+        if (!bookingApartmentId) {
+          log.skipped++;
+          log.debug.push({ account: ctx.label, messageId: msgId, reason: "no usable booking extraction", extraction });
+          continue;
+        }
+
+        const apt = ownerApartments.find((a) => a.id === bookingApartmentId);
         if (!apt) {
           log.skipped++;
           log.debug.push({ account: ctx.label, messageId: msgId, reason: "extracted apartment_id not found", extraction });
@@ -473,9 +490,10 @@ async function syncAccount(
           cleaning_fee_amount: extraction.cleaning_fee ?? null,
           host_service_fee_amount: extraction.host_service_fee ?? null,
           external_booking_id: extraction.external_booking_id ?? null,
+          apartment_mismatch: bookingNeedsConfirmation,
         };
 
-        await queueEvent(supabase, log, autoApply, {
+        await queueEvent(supabase, log, autoApply && !bookingNeedsConfirmation, {
           owner_id: ownerId,
           apartment_id: apt.id,
           kind: existingBooking ? "booking_update" : "booking_new",
