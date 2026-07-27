@@ -9270,7 +9270,6 @@ export default function OwnerDashboard() {
               <p className="text-[10px]" style={{ color: 'hsl(var(--sidebar-fg))' }}>Администратор</p>
             </div>
           </div>
-          <p className="text-[10px] px-2 mt-1" style={{ color: 'hsl(var(--sidebar-fg))', opacity: 0.5 }}>v{APP_VERSION}</p>
         </div>
       </aside>
 
@@ -9646,7 +9645,6 @@ export default function OwnerDashboard() {
                       className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold text-destructive">
                       <LogOut size={17} /> Выйти
                     </button>
-                    <p className="text-[10px] px-3 pt-2 text-center" style={{ color: 'hsl(var(--sidebar-fg))', opacity: 0.5 }}>v{APP_VERSION}</p>
                   </div>
                 </motion.div>
               </>
