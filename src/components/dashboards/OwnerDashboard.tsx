@@ -6543,10 +6543,10 @@ function periodRangeLabel(start: string, end: string): string {
       : `${startShort} ${sy} — ${monthLabel(`${ey}-${String(em).padStart(2, '0')}`)}`
   }
 
-  const shortDate = (y: number, m: number, d: number) => `${d} ${MONTH_NAMES_RU_SHORT[m - 1]}`
+  const shortDate = (m: number, d: number) => `${d} ${MONTH_NAMES_RU_SHORT[m - 1]}`
   return sy === ey
-    ? `${shortDate(sy, sm, sd)} — ${shortDate(ey, em, ed)} ${ey}`
-    : `${shortDate(sy, sm, sd)} ${sy} — ${shortDate(ey, em, ed)} ${ey}`
+    ? `${shortDate(sm, sd)} — ${shortDate(em, ed)} ${ey}`
+    : `${shortDate(sm, sd)} ${sy} — ${shortDate(em, ed)} ${ey}`
 }
 
 // Период, который закрывает конкретный счёт: если в счёте указан явный период (кварталные
