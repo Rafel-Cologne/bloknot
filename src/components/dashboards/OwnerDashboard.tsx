@@ -6496,12 +6496,17 @@ function aptBadgeColor(apartments: Apartment[], id: string) {
   return APT_BADGE_COLORS[(idx < 0 ? 0 : idx) % APT_BADGE_COLORS.length]
 }
 
-// Категории, по которым счета приходят регулярно (обычно раз в месяц) — для них имеет смысл искать пропуски.
+// Категории, по которым счета приходят регулярно — для них имеет смысл искать пропуски.
+// Периодичность (месяц/квартал/полгода/год) у каждой пары квартира+категория определяется
+// автоматически из истории счетов, а не считается фиксированной раз в месяц.
 const RECURRING_CATEGORIES = ['electricity', 'water', 'gas', 'internet']
 const MONTH_NAMES_RU = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
+const MONTH_NAMES_RU_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
 
 type MissingInvoice = {
-  apartment_id: string; category: string; month: string // month: 'YYYY-MM'
+  apartment_id: string; category: string
+  periodStart: string; periodEnd: string // ISO-даты предполагаемого пропущенного периода
+  label: string // человекочитаемое обозначение периода — "март 2026" или "янв — мар 2026"
   suggestedAmount: number | null // заполнено, только если сумма во всех прошлых счетах этой группы одинаковая
   suggestedDate: string
   suggestedProvider: string
@@ -6512,19 +6517,58 @@ function monthLabel(month: string) {
   return `${MONTH_NAMES_RU[m - 1]} ${y}`
 }
 
-// Подбирает дату внутри пропущенного месяца по дню месяца из последнего известного счёта той же группы
-// (провайдеры обычно выставляют счёт примерно в один и тот же день).
-function suggestedDateForMonth(month: string, dayOfMonth: number): string {
-  const [y, m] = month.split('-').map(Number)
-  const lastDay = new Date(y, m, 0).getDate()
-  const day = Math.min(Math.max(dayOfMonth, 1), lastDay)
-  return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+function isoAddDays(date: string, days: number): string {
+  const d = new Date(date + 'T00:00:00Z')
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
 }
 
-// Ищет пропущенные месяцы между первым и последним известным счётом для каждой пары квартира+категория.
-// Если, например, счета за электричество есть за декабрь и февраль, но нет за январь — это пропуск.
-// Если сумма во всех прошлых счетах этой группы одинаковая (например, фиксированный тариф интернета),
-// дополнительно подсказывает сумму/дату/поставщика для быстрого добавления.
+function daysBetween(a: string, b: string): number {
+  return Math.round((new Date(b + 'T00:00:00Z').getTime() - new Date(a + 'T00:00:00Z').getTime()) / 86400000)
+}
+
+// Человекочитаемое обозначение периода пропущенного счёта: один месяц целиком — просто его
+// названием ("март 2026"), несколько полных месяцев — диапазоном названий ("январь — март 2026"),
+// а произвольный диапазон дат (счета не всегда идут ровно по календарным месяцам) — короткими датами.
+function periodRangeLabel(start: string, end: string): string {
+  const [sy, sm, sd] = start.split('-').map(Number)
+  const [ey, em, ed] = end.split('-').map(Number)
+  if (sy === ey && sm === em) return monthLabel(`${sy}-${String(sm).padStart(2, '0')}`)
+
+  const endLastDay = new Date(ey, em, 0).getDate()
+  if (sd === 1 && ed === endLastDay) {
+    const startShort = MONTH_NAMES_RU_SHORT[sm - 1]
+    return sy === ey
+      ? `${startShort} — ${monthLabel(`${ey}-${String(em).padStart(2, '0')}`)}`
+      : `${startShort} ${sy} — ${monthLabel(`${ey}-${String(em).padStart(2, '0')}`)}`
+  }
+
+  const shortDate = (y: number, m: number, d: number) => `${d} ${MONTH_NAMES_RU_SHORT[m - 1]}`
+  return sy === ey
+    ? `${shortDate(sy, sm, sd)} — ${shortDate(ey, em, ed)} ${ey}`
+    : `${shortDate(sy, sm, sd)} ${sy} — ${shortDate(ey, em, ed)} ${ey}`
+}
+
+// Период, который закрывает конкретный счёт: если в счёте указан явный период (кварталные
+// счета за воду и т.п.) — используем его. Если период не указан (частый случай для помесячных
+// счетов вроде интернета) — считаем, что счёт закрывает весь календарный месяц даты счёта.
+function invoiceCoverage(e: Expense): { start: string; end: string } {
+  if (e.invoice_period_start && e.invoice_period_end) {
+    return { start: e.invoice_period_start, end: e.invoice_period_end }
+  }
+  const [y, m] = e.expense_date.slice(0, 7).split('-').map(Number)
+  const lastDay = new Date(y, m, 0).getDate()
+  return { start: `${e.expense_date.slice(0, 7)}-01`, end: `${e.expense_date.slice(0, 7)}-${String(lastDay).padStart(2, '0')}` }
+}
+
+// Ищет пропуски в покрытии счетов для каждой пары квартира+категория, автоматически определяя
+// периодичность (месяц/квартал/полгода/год) из самих счетов — вместо того чтобы считать, что
+// счёт всегда закрывает ровно один календарный месяц. Например, если счета за воду идут
+// поквартально (янв—апр, затем май—авг), пропуска между ними нет, даже если внутри
+// "не хватает" отдельных месяцев в старом понимании. Настоящий пропуск — это разрыв между
+// покрытыми периодами длиннее нескольких дней (не просто стык дат на границе периодов).
+// Если сумма во всех прошлых счетах этой группы одинаковая (например, фиксированный тариф
+// интернета), дополнительно подсказывает сумму/дату/поставщика для быстрого добавления.
 function computeMissingInvoices(expenses: Expense[]): MissingInvoice[] {
   const groups = new Map<string, Expense[]>()
   for (const e of expenses) {
@@ -6532,33 +6576,46 @@ function computeMissingInvoices(expenses: Expense[]): MissingInvoice[] {
     if (!groups.has(key)) groups.set(key, [])
     groups.get(key)!.push(e)
   }
+  const GAP_TOLERANCE_DAYS = 5 // допуск на то, что счета выставляются не день-в-день на стыке периодов
   const missing: MissingInvoice[] = []
+
   for (const [key, list] of groups) {
     if (list.length < 2) continue // недостаточно данных, чтобы понять периодичность
     const [apartment_id, category] = key.split('::')
-    const months = Array.from(new Set(list.map(e => (e.invoice_period_end ?? e.expense_date).slice(0, 7)))).sort()
-    if (months.length < 2) continue
-    const present = new Set(months)
 
     const amounts = list.map(e => e.amount)
     const allSameAmount = amounts.every(a => Math.abs(a - amounts[0]) < 0.005)
-    const latest = list[list.length - 1]
-    const dayOfMonth = Number(latest.expense_date.slice(8, 10))
 
-    let [y, m] = months[0].split('-').map(Number)
-    const [ly, lm] = months[months.length - 1].split('-').map(Number)
-    while (y < ly || (y === ly && m < lm)) {
-      const cur = `${y}-${String(m).padStart(2, '0')}`
-      if (!present.has(cur)) {
+    const coverages = list
+      .map(e => ({ ...invoiceCoverage(e), source: e }))
+      .sort((a, b) => a.start.localeCompare(b.start))
+
+    // Сливаем перекрывающиеся/смежные периоды в непрерывные "покрытые" отрезки.
+    const merged: { start: string; end: string; source: Expense }[] = []
+    for (const c of coverages) {
+      const last = merged[merged.length - 1]
+      if (last && daysBetween(last.end, c.start) <= GAP_TOLERANCE_DAYS) {
+        if (c.end > last.end) { last.end = c.end; last.source = c.source }
+      } else {
+        merged.push({ ...c })
+      }
+    }
+    if (merged.length < 2) continue // нет ни одного настоящего разрыва между отрезками
+
+    for (let i = 1; i < merged.length; i++) {
+      const prev = merged[i - 1]
+      const cur = merged[i]
+      if (daysBetween(prev.end, cur.start) > GAP_TOLERANCE_DAYS) {
+        const periodStart = isoAddDays(prev.end, 1)
+        const periodEnd = isoAddDays(cur.start, -1)
         missing.push({
-          apartment_id, category, month: cur,
+          apartment_id, category, periodStart, periodEnd,
+          label: periodRangeLabel(periodStart, periodEnd),
           suggestedAmount: allSameAmount ? amounts[0] : null,
-          suggestedDate: suggestedDateForMonth(cur, dayOfMonth),
-          suggestedProvider: latest.provider ?? '',
+          suggestedDate: periodEnd,
+          suggestedProvider: prev.source.provider ?? cur.source.provider ?? '',
         })
       }
-      m++
-      if (m > 12) { m = 1; y++ }
     }
   }
   return missing
@@ -6584,7 +6641,7 @@ const defaultDeductible = (category: string) => category !== 'tax_non_resident'
 
 // Частичные значения для быстрого предзаполнения формы нового (не редактируемого) расхода —
 // например, из подсказки "отсутствует счёт" с уже известными суммой/датой/поставщиком.
-type ExpPrefill = Partial<Pick<ExpForm, 'apartment_id' | 'category' | 'amount' | 'expense_date' | 'provider'>>
+type ExpPrefill = Partial<Pick<ExpForm, 'apartment_id' | 'category' | 'amount' | 'expense_date' | 'provider' | 'invoice_period_start' | 'invoice_period_end'>>
 
 function useExpenseForm(apartments: Apartment[], initial?: Expense | null, prefill?: ExpPrefill | null): [ExpForm, React.Dispatch<React.SetStateAction<ExpForm>>, () => void] {
   const today = new Date().toISOString().slice(0, 10)
@@ -6602,7 +6659,7 @@ function useExpenseForm(apartments: Apartment[], initial?: Expense | null, prefi
     is_tax_deductible: defaultDeductible(prefill?.category ?? 'electricity'),
     proration_method: defaultProration(prefill?.category ?? 'electricity'),
     expense_date: prefill?.expense_date ?? today,
-    invoice_period_start: '', invoice_period_end: '',
+    invoice_period_start: prefill?.invoice_period_start ?? '', invoice_period_end: prefill?.invoice_period_end ?? '',
     provider: prefill?.provider ?? '', description: '', file: null,
   }
   const [form, setForm] = useState<ExpForm>(empty)
@@ -7143,13 +7200,13 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
             {missingInvoices.map(mi => {
               const cat = catMeta(mi.category)
               return (
-                <div key={`${mi.apartment_id}-${mi.category}-${mi.month}`} className="px-4 py-2.5 flex items-center gap-2.5 text-sm">
+                <div key={`${mi.apartment_id}-${mi.category}-${mi.periodStart}`} className="px-4 py-2.5 flex items-center gap-2.5 text-sm">
                   <span className={cat.color}>{cat.icon}</span>
                   <span className="font-medium">{aptName(mi.apartment_id)}</span>
                   <span className="text-muted-foreground">·</span>
                   <span>{cat.label}</span>
                   <span className="text-muted-foreground">— нет счёта за</span>
-                  <span className="font-semibold">{monthLabel(mi.month)}</span>
+                  <span className="font-semibold">{mi.label}</span>
                   {mi.suggestedAmount != null ? (
                     <button
                       onClick={() => {
@@ -7157,6 +7214,7 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
                           apartment_id: mi.apartment_id, category: mi.category,
                           amount: String(mi.suggestedAmount), expense_date: mi.suggestedDate,
                           provider: mi.suggestedProvider,
+                          invoice_period_start: mi.periodStart, invoice_period_end: mi.periodEnd,
                         })
                         setShowAdd(true)
                       }}
@@ -7166,7 +7224,10 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
                   ) : (
                     <button
                       onClick={() => {
-                        setQuickPrefill({ apartment_id: mi.apartment_id, category: mi.category, expense_date: mi.suggestedDate, provider: mi.suggestedProvider })
+                        setQuickPrefill({
+                          apartment_id: mi.apartment_id, category: mi.category, expense_date: mi.suggestedDate, provider: mi.suggestedProvider,
+                          invoice_period_start: mi.periodStart, invoice_period_end: mi.periodEnd,
+                        })
                         setShowAdd(true)
                       }}
                       className="ml-auto px-2.5 py-1 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 text-xs font-semibold hover:bg-red-200 transition-colors flex-shrink-0">
