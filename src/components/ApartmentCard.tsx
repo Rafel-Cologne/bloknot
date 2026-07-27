@@ -1,7 +1,8 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { motion } from 'framer-motion'
-import { MapPin, Users } from 'lucide-react'
+import { Heart, Users } from 'lucide-react'
 import { addDays, format } from 'date-fns'
 import type { Database } from '@/integrations/supabase/types'
 
@@ -29,6 +30,9 @@ function calcAvgPrice(apartment: Apartment): number {
 
 export function ApartmentCard({ apartment, index = 0, isOccupied = false }: Props) {
   const { t } = useTranslation()
+  // Чисто визуальное сердечко "в избранное" — своего бэкенда для избранного пока нет,
+  // состояние только локальное (не сохраняется между визитами).
+  const [liked, setLiked] = useState(false)
 
   const images = [...apartment.apartment_images].sort((a, b) => a.order_index - b.order_index)
   const coverUrl = images[0]?.image_url ?? null
@@ -40,12 +44,9 @@ export function ApartmentCard({ apartment, index = 0, isOccupied = false }: Prop
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: index * 0.06 }}
     >
-      <Link
-        to={`/apartments/${apartment.id}`}
-        className="group flex gap-4 bg-card rounded-2xl border border-border hover:shadow-card-hover transition-shadow duration-300 overflow-hidden"
-      >
-        {/* Thumbnail */}
-        <div className="relative w-28 h-28 sm:w-36 sm:h-36 flex-shrink-0 bg-muted overflow-hidden">
+      <Link to={`/apartments/${apartment.id}`} className="group block">
+        {/* Cover image */}
+        <div className="relative aspect-[4/3] rounded-2xl overflow-hidden bg-muted mb-3">
           {coverUrl ? (
             <img
               src={coverUrl}
@@ -53,45 +54,44 @@ export function ApartmentCard({ apartment, index = 0, isOccupied = false }: Prop
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-3xl text-muted-foreground/30">🏠</div>
+            <div className="w-full h-full flex items-center justify-center text-4xl text-muted-foreground/30">🏠</div>
           )}
+
+          <span className={`absolute top-3 left-3 text-[11px] px-2.5 py-1 rounded-full font-semibold shadow-sm ${
+            isOccupied ? 'bg-white/95 text-red-700' : 'bg-white/95 text-green-700'
+          }`}>
+            {isOccupied ? t('dashboard.statusBlocked') : t('dashboard.statusFree')}
+          </span>
+
+          <button
+            type="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setLiked((v) => !v) }}
+            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/10 hover:bg-black/20 backdrop-blur-sm flex items-center justify-center transition-colors"
+            aria-label="В избранное"
+          >
+            <Heart size={17} className={liked ? 'fill-red-500 text-red-500' : 'text-white'} strokeWidth={2} />
+          </button>
         </div>
 
         {/* Content */}
-        <div className="flex-1 py-3 pr-4 flex flex-col justify-between min-w-0">
-          <div>
-            <div className="flex items-start justify-between gap-2">
-              <h3 className="font-semibold text-foreground text-base leading-snug line-clamp-1">{apartment.title}</h3>
-              <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-lg font-medium ${
-                isOccupied ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-              }`}>
-                {isOccupied ? t('dashboard.statusBlocked') : t('dashboard.statusFree')}
-              </span>
-            </div>
-
-            {apartment.address && (
-              <p className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
-                <MapPin size={11} /> {apartment.address}
-              </p>
-            )}
-
-            {apartment.description && (
-              <p className="text-xs text-muted-foreground mt-1 line-clamp-2 leading-relaxed">
-                {apartment.description}
-              </p>
-            )}
+        <div className="flex flex-col gap-0.5">
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="font-semibold text-foreground text-sm leading-snug line-clamp-1">{apartment.title}</h3>
           </div>
 
-          <div className="flex items-center justify-between mt-2">
-            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Users size={11} />
-              <span>{apartment.max_guests} {t('apartment.guests')}</span>
-            </div>
-            <div>
-              <span className="font-semibold text-primary text-sm">{t('common.currency')}{avgPrice}</span>
-              <span className="text-xs text-muted-foreground"> {t('apartment.perNight')}</span>
-            </div>
+          {apartment.address && (
+            <p className="text-xs text-muted-foreground line-clamp-1">{apartment.address}</p>
+          )}
+
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Users size={11} />
+            <span>{apartment.max_guests} {t('apartment.guests')}</span>
           </div>
+
+          <p className="text-sm mt-0.5">
+            <span className="font-semibold text-foreground">{t('common.currency')}{avgPrice}</span>
+            <span className="text-muted-foreground"> {t('apartment.perNight')}</span>
+          </p>
         </div>
       </Link>
     </motion.div>

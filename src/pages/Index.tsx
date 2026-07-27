@@ -70,18 +70,16 @@ export default function Index() {
         </div>
       </section>
 
-      {/* Apartments list */}
-      <section className="max-w-4xl mx-auto w-full px-4 sm:px-6 py-12">
-        <h2 className="text-xl font-display font-semibold text-foreground mb-6">{t('dashboard.myProperties')}</h2>
-
+      {/* Apartments grid */}
+      <section className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-12">
         {isLoading ? (
-          <div className="flex flex-col gap-4">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="h-28 rounded-2xl animate-pulse bg-muted" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="aspect-[4/3] rounded-2xl animate-pulse bg-muted" />
             ))}
           </div>
         ) : apartments && apartments.length > 0 ? (
-          <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-6 gap-y-8">
             {apartments.map((apt, i) => (
               <ApartmentCard key={apt.id} apartment={apt as never} index={i} isOccupied={occupiedIds?.has(apt.id) ?? false} />
             ))}
