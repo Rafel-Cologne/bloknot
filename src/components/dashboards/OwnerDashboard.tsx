@@ -581,18 +581,18 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
               хозяина объекта, поэтому одна уборщица может обслуживать объекты разных
               владельцев (друзей) одновременно. */}
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Уборщица</label>
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Клинер</label>
             <select value={form.cleaner_id} onChange={e => setForm(f => ({ ...f, cleaner_id: e.target.value }))} className={inputCls}>
-              <option value="">— не назначена —</option>
+              <option value="">— не назначен —</option>
               {cleanerOptions.map(c => (
                 <option key={c.id} value={c.id}>{c.name || c.email || 'Без имени'}</option>
               ))}
             </select>
             {cleanerOptions.length === 0 && (
-              <p className="text-[11px] text-muted-foreground">В системе пока нет ни одной уборщицы с ролью «клинер».</p>
+              <p className="text-[11px] text-muted-foreground">В системе пока нет ни одного пользователя с ролью «клинер».</p>
             )}
             {cleanerOptions.length === 1 && form.cleaner_id === cleanerOptions[0].id && (
-              <p className="text-[11px] text-muted-foreground">Подставлена автоматически — она единственная уборщица в системе.</p>
+              <p className="text-[11px] text-muted-foreground">Подставлен автоматически — единственный клинер в системе.</p>
             )}
           </div>
 
