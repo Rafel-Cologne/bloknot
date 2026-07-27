@@ -57,6 +57,63 @@ type RunLog = {
   debug: unknown[];
 };
 
+// Разбивка результатов запуска агента ПО КАЖДОМУ ХОЗЯИНУ — чтобы в админке можно было быстро
+// увидеть, у какого именно пользователя что произошло (сколько писем, что добавилось, что
+// пропущено и почему, сколько токенов Claude потрачено на обработку его писем), не копаясь в
+// общем логе всего запуска. Пишется в отдельную таблицу agent_run_owners, привязанную к
+// agent_logs через run_id.
+type OwnerRunItem = {
+  kind: "booking_new" | "booking_update" | "booking_cancel" | "expense" | "bank_statement" | "skip" | "error";
+  status: "success" | "skipped" | "error";
+  label: string;
+};
+
+type OwnerStats = {
+  owner_id: string;
+  account_labels: Set<string>;
+  emails_checked: number;
+  bookings_created: number;
+  bookings_updated: number;
+  bookings_cancelled: number;
+  expenses_created: number;
+  skipped: number;
+  tokens_input: number;
+  tokens_output: number;
+  had_error: boolean;
+  items: OwnerRunItem[];
+};
+
+type OwnerStatsMap = Map<string, OwnerStats>;
+
+function getOwnerStats(map: OwnerStatsMap, ownerId: string, accountLabel: string): OwnerStats {
+  let s = map.get(ownerId);
+  if (!s) {
+    s = {
+      owner_id: ownerId,
+      account_labels: new Set<string>(),
+      emails_checked: 0,
+      bookings_created: 0,
+      bookings_updated: 0,
+      bookings_cancelled: 0,
+      expenses_created: 0,
+      skipped: 0,
+      tokens_input: 0,
+      tokens_output: 0,
+      had_error: false,
+      items: [],
+    };
+    map.set(ownerId, s);
+  }
+  s.account_labels.add(accountLabel);
+  return s;
+}
+
+function addUsage(stats: OwnerStats | null, usage?: { input_tokens: number; output_tokens: number }) {
+  if (!stats || !usage) return;
+  stats.tokens_input += usage.input_tokens;
+  stats.tokens_output += usage.output_tokens;
+}
+
 type ApartmentRow = { id: string; owner_id: string; title: string; address: string; full_address: string | null; cleaner_id: string | null; cleaning_fee: number };
 
 // deno-lint-ignore no-explicit-any
@@ -277,6 +334,7 @@ type AccountCtx = {
 async function syncAccount(
   supabase: SupabaseClientAny,
   log: RunLog,
+  ownerStats: OwnerStatsMap,
   ctx: AccountCtx,
   world: WorldData,
 ): Promise<void> {
@@ -350,6 +408,9 @@ async function syncAccount(
   });
 
   for (const { id: msgId, msg, fetchError } of fetchedMessages) {
+    // Владелец этого письма — известен только после resolveOwner внутри try, но нужен и в catch,
+    // чтобы прикрепить ошибку к статистике конкретного пользователя, а не потерять её в общем логе.
+    let currentOwnerStats: OwnerStats | null = null;
     try {
       if (fetchError || !msg) {
         log.errors.push({ account: ctx.label, messageId: msgId, error: String(fetchError ?? "empty gmail response") });
@@ -362,6 +423,7 @@ async function syncAccount(
       const toHeader: string = headers["delivered-to"] || headers["to"] || "";
       const fromHeader: string = (headers["from"] || "").toLowerCase();
       const subjectHeader: string = (headers["subject"] || "").toLowerCase();
+      const subjectRaw: string = headers["subject"] || "(без темы)";
       const ownerId: string | null = ctx.resolveOwner(toHeader);
 
       if (!ownerId) {
@@ -370,9 +432,15 @@ async function syncAccount(
         continue;
       }
 
+      const stats = getOwnerStats(ownerStats, ownerId, ctx.label);
+      currentOwnerStats = stats;
+      stats.emails_checked++;
+
       const ownerApartments = world.apartments.filter((a) => a.owner_id === ownerId);
       if (ownerApartments.length === 0) {
         log.skipped++;
+        stats.skipped++;
+        stats.items.push({ kind: "skip", status: "skipped", label: `«${subjectRaw}» — у владельца нет ни одной квартиры` });
         log.debug.push({ account: ctx.label, messageId: msgId, reason: "owner has no apartments" });
         continue;
       }
@@ -403,6 +471,8 @@ async function syncAccount(
         const looksLikeBookingSubject = BOOKING_SUBJECT_KEYWORDS.some((k) => subjectHeader.includes(k));
         if (!looksLikeBookingSubject) {
           log.skipped++;
+          stats.skipped++;
+          stats.items.push({ kind: "skip", status: "skipped", label: `«${subjectRaw}» — тема не похожа на бронь, пропущено до вызова ИИ` });
           log.debug.push({
             account: ctx.label,
             messageId: msgId,
@@ -412,12 +482,15 @@ async function syncAccount(
           continue;
         }
 
-        const { extraction, raw, apiError } = await extractBooking(bodyText, ownerApartments);
+        const { extraction, raw, apiError, usage } = await extractBooking(bodyText, ownerApartments);
+        addUsage(stats, usage);
         if (apiError) log.debug.push({ account: ctx.label, messageId: msgId, apiError });
         if (raw) log.debug.push({ account: ctx.label, messageId: msgId, rawClaudeText: raw });
 
         if (!extraction) {
           log.skipped++;
+          stats.skipped++;
+          stats.items.push({ kind: "skip", status: "skipped", label: `«${subjectRaw}» — ИИ не смог распознать бронь` });
           log.debug.push({ account: ctx.label, messageId: msgId, reason: "no usable booking extraction", extraction });
           continue;
         }
@@ -435,6 +508,8 @@ async function syncAccount(
         }
         if (!bookingApartmentId) {
           log.skipped++;
+          stats.skipped++;
+          stats.items.push({ kind: "skip", status: "skipped", label: `«${subjectRaw}» — ИИ не смог распознать бронь` });
           log.debug.push({ account: ctx.label, messageId: msgId, reason: "no usable booking extraction", extraction });
           continue;
         }
@@ -442,6 +517,9 @@ async function syncAccount(
         const apt = ownerApartments.find((a) => a.id === bookingApartmentId);
         if (!apt) {
           log.skipped++;
+          stats.skipped++;
+          stats.had_error = true;
+          stats.items.push({ kind: "error", status: "error", label: `«${subjectRaw}» — ИИ вернул несуществующий ID квартиры` });
           log.debug.push({ account: ctx.label, messageId: msgId, reason: "extracted apartment_id not found", extraction });
           continue;
         }
@@ -450,10 +528,14 @@ async function syncAccount(
           const existingBooking = await findExistingBooking(supabase, apt.id, extraction);
           if (!existingBooking) {
             log.skipped++;
+            stats.skipped++;
+            stats.items.push({ kind: "skip", status: "skipped", label: `Отмена брони «${extraction.guest_name ?? "?"}» — подходящая бронь в базе не найдена` });
             log.debug.push({ account: ctx.label, messageId: msgId, reason: "cancellation email but no matching existing booking found", extraction });
             continue;
           }
 
+          stats.bookings_cancelled++;
+          stats.items.push({ kind: "booking_cancel", status: "success", label: `Бронь отменена: ${existingBooking.guest_name}, ${existingBooking.start_date}–${existingBooking.end_date} (${apt.title})` });
           await queueEvent(supabase, log, autoApply, {
             owner_id: ownerId,
             apartment_id: apt.id,
@@ -473,6 +555,8 @@ async function syncAccount(
 
         if (!extraction.start_date || !extraction.end_date) {
           log.skipped++;
+          stats.skipped++;
+          stats.items.push({ kind: "skip", status: "skipped", label: `«${subjectRaw}» — ИИ не смог распознать бронь` });
           log.debug.push({ account: ctx.label, messageId: msgId, reason: "no usable booking extraction", extraction });
           continue;
         }
@@ -493,6 +577,14 @@ async function syncAccount(
           apartment_mismatch: bookingNeedsConfirmation,
         };
 
+        if (existingBooking) {
+          stats.bookings_updated++;
+          stats.items.push({ kind: "booking_update", status: "success", label: `Бронь обновлена: ${bookingPayload.guest_name || "?"}, ${extraction.start_date}–${extraction.end_date} (${apt.title})${bookingNeedsConfirmation ? " ⚠️ объект не определён точно" : ""}` });
+        } else {
+          stats.bookings_created++;
+          stats.items.push({ kind: "booking_new", status: "success", label: `Новая бронь: ${bookingPayload.guest_name || "?"}, ${extraction.start_date}–${extraction.end_date} (${apt.title})${bookingNeedsConfirmation ? " ⚠️ объект не определён точно" : ""}` });
+        }
+
         await queueEvent(supabase, log, autoApply && !bookingNeedsConfirmation, {
           owner_id: ownerId,
           apartment_id: apt.id,
@@ -508,6 +600,8 @@ async function syncAccount(
       if (isBankStatementEmail) {
         if (!pdfPart) {
           log.skipped++;
+          stats.skipped++;
+          stats.items.push({ kind: "skip", status: "skipped", label: `«${subjectRaw}» — похоже на банковскую выписку, но нет PDF-вложения` });
           log.debug.push({ account: ctx.label, messageId: msgId, reason: "looks like a bank statement email but has no pdf attachment" });
           continue;
         }
@@ -520,20 +614,27 @@ async function syncAccount(
         const pdfBase64 = attJson.data ? base64UrlToBase64(attJson.data as string) : null;
         if (!pdfBase64) {
           log.skipped++;
+          stats.skipped++;
+          stats.had_error = true;
+          stats.items.push({ kind: "error", status: "error", label: `«${subjectRaw}» — не удалось скачать PDF-вложение выписки` });
           log.debug.push({ account: ctx.label, messageId: msgId, reason: "bank statement pdf attachment fetch returned no data", attRes: attJson });
           continue;
         }
 
-        const { extraction, raw, apiError } = await extractBankStatement(pdfBase64, ownerApartments);
+        const { extraction, raw, apiError, usage } = await extractBankStatement(pdfBase64, ownerApartments);
+        addUsage(stats, usage);
         if (apiError) log.debug.push({ account: ctx.label, messageId: msgId, apiError });
         if (raw) log.debug.push({ account: ctx.label, messageId: msgId, rawClaudeText: raw });
 
         if (!extraction || !extraction.line_items || extraction.line_items.length === 0) {
           log.skipped++;
+          stats.skipped++;
+          stats.items.push({ kind: "skip", status: "skipped", label: `«${subjectRaw}» — не удалось извлечь строки из выписки` });
           log.debug.push({ account: ctx.label, messageId: msgId, reason: "no usable line items extracted from bank statement", extraction });
           continue;
         }
 
+        stats.items.push({ kind: "bank_statement", status: "success", label: `Банковская выписка: ${extraction.line_items.length} строк на проверку` });
         await queueEvent(supabase, log, false, {
           owner_id: ownerId,
           apartment_id: null,
@@ -551,6 +652,8 @@ async function syncAccount(
       const looksLikeInvoiceText = INVOICE_TEXT_KEYWORDS.some((k) => bodyText.toLowerCase().includes(k));
       if (!pdfPart && !looksLikeInvoiceText) {
         log.skipped++;
+        stats.skipped++;
+        stats.items.push({ kind: "skip", status: "skipped", label: `«${subjectRaw}» — не похоже ни на бронь, ни на счёт` });
         log.debug.push({ account: ctx.label, messageId: msgId, reason: "not a booking email, no pdf attachment, no invoice keywords", from: fromHeader });
         continue;
       }
@@ -568,6 +671,8 @@ async function syncAccount(
       const ownerApartmentsWithAddress = ownerApartments.filter((a) => a.full_address || a.address);
       if (ownerApartmentsWithAddress.length === 0) {
         log.skipped++;
+        stats.skipped++;
+        stats.items.push({ kind: "skip", status: "skipped", label: `«${subjectRaw}» — ни у одной квартиры не указан адрес` });
         log.debug.push({ account: ctx.label, messageId: msgId, reason: "owner has no apartments with an address" });
         continue;
       }
@@ -583,12 +688,15 @@ async function syncAccount(
         else log.debug.push({ account: ctx.label, messageId: msgId, note: "attachment fetch returned no data", attRes: attJson });
       }
 
-      const { extraction, raw, apiError } = await extractInvoice(bodyText, pdfBase64, ownerApartmentsWithAddress);
+      const { extraction, raw, apiError, usage } = await extractInvoice(bodyText, pdfBase64, ownerApartmentsWithAddress);
+      addUsage(stats, usage);
       if (apiError) log.debug.push({ account: ctx.label, messageId: msgId, apiError });
       if (raw) log.debug.push({ account: ctx.label, messageId: msgId, rawClaudeText: raw });
 
       if (!extraction || !extraction.amount || !extraction.category) {
         log.skipped++;
+        stats.skipped++;
+        stats.items.push({ kind: "skip", status: "skipped", label: `«${subjectRaw}» — не удалось извлечь сумму/категорию счёта` });
         log.debug.push({ account: ctx.label, messageId: msgId, reason: "no usable extraction", extraction });
         continue;
       }
@@ -606,6 +714,8 @@ async function syncAccount(
       }
       if (!apartmentId) {
         log.skipped++;
+        stats.skipped++;
+        stats.items.push({ kind: "skip", status: "skipped", label: `Счёт «${extraction.provider ?? "?"}» — не удалось определить квартиру` });
         log.debug.push({ account: ctx.label, messageId: msgId, reason: "could not match apartment", extraction });
         continue;
       }
@@ -626,12 +736,16 @@ async function syncAccount(
       const { data: dupRows } = await dupQuery.limit(1);
       if (dupRows && dupRows.length > 0) {
         log.skipped++;
+        stats.skipped++;
+        stats.items.push({ kind: "skip", status: "skipped", label: `Счёт «${extraction.provider ?? extraction.category}», ${extraction.amount}€ — дубликат, уже есть в базе` });
         log.debug.push({ account: ctx.label, messageId: msgId, reason: "duplicate invoice content (same apartment/category/amount/period already exists)", extraction });
         continue;
       }
 
       const apartmentForExpense = ownerApartmentsWithAddress.find((a) => a.id === apartmentId);
 
+      stats.expenses_created++;
+      stats.items.push({ kind: "expense", status: "success", label: `Счёт: ${extraction.category}, ${extraction.amount}€ (${apartmentForExpense?.title ?? "?"})${needsAddressConfirmation ? " ⚠️ адрес не совпадает" : ""}` });
       await queueEvent(supabase, log, autoApply && !needsAddressConfirmation, {
         owner_id: ownerId,
         apartment_id: apartmentId,
@@ -653,6 +767,10 @@ async function syncAccount(
       });
     } catch (e) {
       log.errors.push({ account: ctx.label, messageId: msgId, error: String(e) });
+      if (currentOwnerStats) {
+        currentOwnerStats.had_error = true;
+        currentOwnerStats.items.push({ kind: "error", status: "error", label: `Внутренняя ошибка при обработке письма: ${String(e)}` });
+      }
     }
   }
 
@@ -671,6 +789,37 @@ Deno.serve(async (req: Request) => {
     emails_checked: 0, expenses_created: 0, bookings_created: 0, bookings_updated: 0,
     bookings_cancelled: 0, bank_statements_queued: 0, auto_applied: 0, skipped: 0, errors: [], debug: [],
   };
+  // Разбивка по хозяевам собирается на протяжении всего запуска (и легаси-ящик, и персональные
+  // ящики пишут в одну и ту же карту), а в самом конце превращается в строки agent_run_owners.
+  const ownerStats: OwnerStatsMap = new Map();
+  // deno-lint-ignore no-explicit-any
+  let profilesById = new Map<string, { name: string | null; email: string | null }>();
+
+  async function persistOwnerBreakdown(runId: string) {
+    if (ownerStats.size === 0) return;
+    const rows = Array.from(ownerStats.values()).map((s) => {
+      const profile = profilesById.get(s.owner_id);
+      return {
+        run_id: runId,
+        owner_id: s.owner_id,
+        owner_email: profile?.email ?? null,
+        owner_name: profile?.name ?? null,
+        account_label: Array.from(s.account_labels).join(", "),
+        emails_checked: s.emails_checked,
+        bookings_created: s.bookings_created,
+        bookings_updated: s.bookings_updated,
+        bookings_cancelled: s.bookings_cancelled,
+        expenses_created: s.expenses_created,
+        skipped: s.skipped,
+        tokens_input: s.tokens_input,
+        tokens_output: s.tokens_output,
+        status: s.had_error ? "partial" : "success",
+        items: s.items,
+      };
+    });
+    const { error } = await supabase.from("agent_run_owners").insert(rows);
+    if (error) log.errors.push({ note: "failed to insert agent_run_owners", error: String(error) });
+  }
 
   try {
     await generateRecurringExpenses(supabase, log);
@@ -680,9 +829,12 @@ Deno.serve(async (req: Request) => {
       .from("apartments")
       .select("id, owner_id, title, address, full_address, cleaner_id, cleaning_fee");
     const apartments = (apartmentsRaw ?? []) as ApartmentRow[];
-    const { data: profilesRaw } = await supabase.from("profiles").select("id, agent_auto_apply");
+    const { data: profilesRaw } = await supabase.from("profiles").select("id, name, email, agent_auto_apply");
     const autoApplyByOwner = new Map<string, boolean>(
       (profilesRaw ?? []).map((p: { id: string; agent_auto_apply: boolean | null }) => [p.id, !!p.agent_auto_apply]),
+    );
+    profilesById = new Map(
+      (profilesRaw ?? []).map((p: { id: string; name: string | null; email: string | null }) => [p.id, { name: p.name ?? null, email: p.email ?? null }]),
     );
     const world: WorldData = { apartments, autoApplyByOwner };
 
@@ -696,7 +848,7 @@ Deno.serve(async (req: Request) => {
         .eq("id", true)
         .maybeSingle();
 
-      await syncAccount(supabase, log, {
+      await syncAccount(supabase, log, ownerStats, {
         label: "legacy:shared-inbox",
         accessToken: legacyAccessToken,
         historyId: syncState?.last_history_id ?? null,
@@ -723,7 +875,7 @@ Deno.serve(async (req: Request) => {
     for (const acc of (dedicatedAccounts ?? [])) {
       try {
         const accessToken = await getAccessToken(acc.gmail_refresh_token);
-        await syncAccount(supabase, log, {
+        await syncAccount(supabase, log, ownerStats, {
           label: acc.email_address,
           accessToken,
           historyId: acc.last_history_id,
@@ -737,7 +889,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    await supabase.from("agent_logs").insert({
+    const { data: insertedRun } = await supabase.from("agent_logs").insert({
       emails_checked: log.emails_checked,
       expenses_created: log.expenses_created,
       bookings_created: log.bookings_created,
@@ -745,11 +897,13 @@ Deno.serve(async (req: Request) => {
       skipped: log.skipped,
       errors: log.errors.length ? log.errors : null,
       status: log.errors.length ? "partial" : "success",
-    });
+    }).select("id").single();
+
+    if (insertedRun?.id) await persistOwnerBreakdown(insertedRun.id);
 
     return new Response(JSON.stringify(log), { headers: { "Content-Type": "application/json" } });
   } catch (e) {
-    await supabase.from("agent_logs").insert({
+    const { data: insertedRun } = await supabase.from("agent_logs").insert({
       emails_checked: log.emails_checked,
       expenses_created: log.expenses_created,
       bookings_created: log.bookings_created,
@@ -757,7 +911,10 @@ Deno.serve(async (req: Request) => {
       skipped: log.skipped,
       errors: [{ fatal: String(e) }],
       status: "failed",
-    });
+    }).select("id").single();
+
+    if (insertedRun?.id) await persistOwnerBreakdown(insertedRun.id);
+
     return new Response(JSON.stringify({ fatal: String(e), log }), { status: 500, headers: { "Content-Type": "application/json" } });
   }
 });
@@ -850,7 +1007,9 @@ type BankStatementExtraction = {
   line_items: BankStatementLineItem[];
 };
 
-async function callClaude(content: unknown[]): Promise<{ text?: string; apiError?: unknown }> {
+type ClaudeUsage = { input_tokens: number; output_tokens: number };
+
+async function callClaude(content: unknown[]): Promise<{ text?: string; apiError?: unknown; usage?: ClaudeUsage }> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -865,20 +1024,23 @@ async function callClaude(content: unknown[]): Promise<{ text?: string; apiError
     }),
   });
   const json = await res.json();
-  if (!res.ok) return { apiError: json };
+  const usage: ClaudeUsage | undefined = json?.usage
+    ? { input_tokens: Number(json.usage.input_tokens) || 0, output_tokens: Number(json.usage.output_tokens) || 0 }
+    : undefined;
+  if (!res.ok) return { apiError: json, usage };
   const blocks = Array.isArray(json?.content) ? json.content : [];
   // deno-lint-ignore no-explicit-any
   const textBlock = blocks.find((b: any) => b && b.type === "text" && typeof b.text === "string");
   const text = textBlock?.text;
-  if (!text) return { apiError: json };
-  return { text };
+  if (!text) return { apiError: json, usage };
+  return { text, usage };
 }
 
 async function extractInvoice(
   bodyText: string,
   pdfBase64: string | null,
   apartments: ApartmentRow[],
-): Promise<{ extraction: Extraction | null; raw?: string; apiError?: unknown }> {
+): Promise<{ extraction: Extraction | null; raw?: string; apiError?: unknown; usage?: ClaudeUsage }> {
   const aptList = apartments.map((a) => `- id: ${a.id}, адрес: ${a.full_address ?? a.address}`).join("\n");
   // deno-lint-ignore no-explicit-any
   const content: any[] = [];
@@ -890,51 +1052,51 @@ async function extractInvoice(
     text: `Вот письмо со счётом за коммунальные услуги (текст письма ниже, плюс PDF-вложение, если есть).\n\nТекст письма:\n${bodyText.slice(0, 5000)}\n\nСписок квартир владельца (выбери apartment_id, если адрес счёта совпадает с одной из них, иначе null):\n${aptList}\n\nВАЖНО про адрес: если в счёте есть адрес объекта/точки поставки услуги (адрес, куда поставляется электричество/вода/газ/интернет, а не юридический адрес поставщика или адрес для переписки) — обязательно верни его дословно в поле invoice_address. Затем сравни его с адресами квартир из списка выше: если invoice_address ЯВНО указывает на другой объект (другая улица/номер дома) — верни address_mismatch: true. Если адрес в счёте не найден, слишком общий (например только город) или совпадает с одной из квартир — верни address_mismatch: false. Не путай address_mismatch с обычным confidence: low ставь только когда вообще непонятно, что за счёт.\n\nВерни СТРОГО JSON без markdown, полей:\n{"provider": string, "category": "electricity"|"water"|"gas"|"internet"|"other", "amount": number, "invoice_date": "YYYY-MM-DD"|null, "period_start": "YYYY-MM-DD"|null, "period_end": "YYYY-MM-DD"|null, "period_label": string|null, "description": string|null, "apartment_id": string|null, "invoice_address": string|null, "address_mismatch": boolean, "confidence": "high"|"low"}\nПоле category строго одно из этих английских кодов (не русскими словами!). Если это не счёт за коммунальные услуги — верни {"amount": null}.`,
   });
 
-  const { text, apiError } = await callClaude(content);
-  if (apiError || !text) return { extraction: null, apiError };
+  const { text, apiError, usage } = await callClaude(content);
+  if (apiError || !text) return { extraction: null, apiError, usage };
   try {
     const cleaned = text.trim().replace(/^```json/, "").replace(/```$/, "").trim();
-    return { extraction: JSON.parse(cleaned) as Extraction, raw: text };
+    return { extraction: JSON.parse(cleaned) as Extraction, raw: text, usage };
   } catch {
-    return { extraction: null, raw: text };
+    return { extraction: null, raw: text, usage };
   }
 }
 
 async function extractBooking(
   bodyText: string,
   apartments: ApartmentRow[],
-): Promise<{ extraction: BookingExtraction | null; raw?: string; apiError?: unknown }> {
+): Promise<{ extraction: BookingExtraction | null; raw?: string; apiError?: unknown; usage?: ClaudeUsage }> {
   const aptList = apartments.map((a) => `- id: ${a.id}, название: "${a.title}", адрес: ${a.full_address ?? a.address}`).join("\n");
   const text = `Вот письмо от Airbnb или Booking.com (может быть подтверждение брони, уведомление о выплате/аузахтании, ЛИБО уведомление ОБ ОТМЕНЕ/СТОРНИРОВАНИИ брони гостём):\n\n${bodyText.slice(0, 7000)}\n\nСписок квартир владельца (выбери apartment_id по названию/адресу из письма, если не уверен — null):\n${aptList}\n\nВАЖНО про отмену: если это письмо о том, что ГОСТЬ ОТМЕНИЛ/СТОРНИРОВАЛ бронь (немецкие письма вроде „Buchung storniert" / „Stornierung bestätigt", английские „Reservation cancelled") — верни is_cancellation: true, и ОБЯЗАТЕЛЬНО заполни external_booking_id (если есть в письме) и guest_name/start_date, чтобы можно было найти отменяемую бронь в базе — остальные денежные поля можно оставить null. Это важно, потому что отменённая бронь будет удалена из календаря, а её сумма больше не учитывается в доходе — деньги всё равно не придут. Если это НЕ отмена — просто не включай поле is_cancellation вообще или верни false.\n\nВАЖНО про деньги (немецкие письма Airbnb, обычно двухколоночная таблица „Vom Gast bezahlt" / „Auszahlung an Gastgeber:in"):\n- Бери цифры ТОЛЬКО из колонки хозяина („Auszahlung an Gastgeber:in") — не из колонки гостя („Vom Gast bezahlt").\n- total_amount = итоговая строка в этой колонке (обычно подписана „Du verdienst" или просто „Gesamt (EUR)" рядом с этой колонкой) — это то, что хозяин реально получает, уже после вычета комиссии Airbnb.\n- cleaning_fee = строка „Reinigungsgebühr" из колонки хозяина (обычно = 60).\n- host_service_fee = модуль числа в строке „Servicegebühr für Gastgeber:innen" / „Servicegebühr für Gastgeber/innen" (она всегда отрицательная в письме, но в JSON верни положительное число).\n- Если это письмо типа „Auszahlung gesendet" (уведомление о выплате) без разбивки по комиссиям — возьми total_amount из „Gesamtbetrag der Auszahlung", а cleaning_fee и host_service_fee оставь null. Даты заезда/выезда ищи в строке вида „Unterkunft • MM/DD/YYYY - MM/DD/YYYY".\n- external_booking_id = код подтверждения брони (обычно короткий буквенно-цифровой код вроде „HMXZE5WRT2" или „HME3B2TFNC"), если есть в письме — очень важно его найти, он используется для связывания нескольких писем об одной и той же брони (включая письмо об отмене).\n\nВерни СТРОГО JSON без markdown, полей:\n{"apartment_id": string|null, "guest_name": string|null, "start_date": "YYYY-MM-DD"|null, "end_date": "YYYY-MM-DD"|null, "guests_count": number|null, "total_amount": number|null, "cleaning_fee": number|null, "host_service_fee": number|null, "external_booking_id": string|null, "source": "airbnb"|"booking"|"other", "is_cancellation": boolean}\nЕсли это не подтверждение новой брони, не выплата и не отмена — верни {"apartment_id": null, "start_date": null}.`;
 
-  const { text: raw, apiError } = await callClaude([{ type: "text", text }]);
-  if (apiError || !raw) return { extraction: null, apiError };
+  const { text: raw, apiError, usage } = await callClaude([{ type: "text", text }]);
+  if (apiError || !raw) return { extraction: null, apiError, usage };
   try {
     const cleaned = raw.trim().replace(/^```json/, "").replace(/```$/, "").trim();
-    return { extraction: JSON.parse(cleaned) as BookingExtraction, raw };
+    return { extraction: JSON.parse(cleaned) as BookingExtraction, raw, usage };
   } catch {
-    return { extraction: null, raw };
+    return { extraction: null, raw, usage };
   }
 }
 
 async function extractBankStatement(
   pdfBase64: string,
   apartments: ApartmentRow[],
-): Promise<{ extraction: BankStatementExtraction | null; raw?: string; apiError?: unknown }> {
+): Promise<{ extraction: BankStatementExtraction | null; raw?: string; apiError?: unknown; usage?: ClaudeUsage }> {
   const aptList = apartments.map((a) => `- id: ${a.id}, название: "${a.title}", адрес: ${a.full_address ?? a.address}`).join("\n");
   const categoryList = EXPENSE_CATEGORY_CODES.join("|");
 
   const text = `Вот PDF банковской выписки (движения по счёту). Извлеки КАЖДУЮ строку транзакции (без учёта строки баланса/сальдо).\n\nКвартиры владельца (используй адрес, чтобы понять, к какой квартире относится строка — например, если в назначении платежа есть часть адреса одной из квартир, это она):\n${aptList}\n\nДля каждой строки верни объект:\n{\n  "date": "YYYY-MM-DD" (дата транзакции/Datum Trans.),\n  "description": string (назначение платежа как в выписке, дословно),\n  "amount": number (АБСОЛЮТНОЕ значение, всегда положительное),\n  "is_credit": boolean (true если это поступление на счёт, false если списание),\n  "provider": string|null (короткое имя получателя/отправителя, если понятно из назначения),\n  "suggested_category": один из "${categoryList}" | null,\n  "suggested_apartment_id": string|null (id квартиры, если строка явно относится к одной конкретной квартире — например коммунальные платежи, комунидад, интернет с адресом квартиры),\n  "suggested_split": boolean (true если расход общий на обе квартиры — например банковская комиссия за общий счёт или налог на владельца, а не на объект — тогда suggested_apartment_id можно оставить null),\n  "suggested_include": boolean (true ТОЛЬКО для узнаваемых регулярных расходов по недвижимости — коммуналка, комунидад/ТСЖ, налоги, кредит на квартиру, банковские комиссии, страховка, ремонт, мебель, техника, уборка. false для личных покупок по карте — супермаркеты (Mercadona, Carrefour, Aldi...), рестораны, АЗС, магазины типа Leroy Merlin/Media Markt если явно личная покупка, переводы физлицам, а также для строк Airbnb/Booking.com выплат — они уже учтены отдельно через письма о бронях, их НЕ нужно включать сюда)\n}\n\nВерни СТРОГО JSON без markdown, объект вида:\n{"statement_date_range": string|null, "line_items": [...]}\nНе пропускай ни одной строки транзакции, даже если suggested_include будет false — хозяин сам решит финально, какие строки добавить.`;
 
-  const { text: raw, apiError } = await callClaude([
+  const { text: raw, apiError, usage } = await callClaude([
     { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfBase64 } },
     { type: "text", text },
   ]);
-  if (apiError || !raw) return { extraction: null, apiError };
+  if (apiError || !raw) return { extraction: null, apiError, usage };
   try {
     const cleaned = raw.trim().replace(/^```json/, "").replace(/```$/, "").trim();
-    return { extraction: JSON.parse(cleaned) as BankStatementExtraction, raw };
+    return { extraction: JSON.parse(cleaned) as BankStatementExtraction, raw, usage };
   } catch {
-    return { extraction: null, raw };
+    return { extraction: null, raw, usage };
   }
 }
