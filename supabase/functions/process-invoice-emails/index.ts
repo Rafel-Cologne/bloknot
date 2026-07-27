@@ -8,6 +8,21 @@ const GMAIL_REFRESH_TOKEN = Deno.env.get("GMAIL_REFRESH_TOKEN")!;
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
 const CRON_SECRET = Deno.env.get("CRON_SECRET")!;
 const DEFAULT_ALIAS = "rafael";
+// Домен для персональных email-адресов инвойсов на общем ящике (держим для обратной
+// совместимости, хотя основной путь теперь — отдельный Gmail-аккаунт на каждого пользователя,
+// см. email_accounts ниже).
+const INVOICE_DOMAIN = (Deno.env.get("INVOICE_DOMAIN") ?? "").toLowerCase();
+
+function resolveAliasFromHeader(toHeader: string): string {
+  const plusMatch = toHeader.match(/\+([a-z0-9._-]+)@/i);
+  if (plusMatch) return plusMatch[1].toLowerCase();
+  if (INVOICE_DOMAIN) {
+    const domainRe = new RegExp(`([a-z0-9._-]+)@${INVOICE_DOMAIN.replace(/\./g, "\\.")}`, "i");
+    const domainMatch = toHeader.match(domainRe);
+    if (domainMatch) return domainMatch[1].toLowerCase();
+  }
+  return DEFAULT_ALIAS;
+}
 
 const BOOKING_SENDER_DOMAINS = ["airbnb.com", "booking.com"];
 const INVOICE_TEXT_KEYWORDS = ["factura", "importe", "consumo", "recibo", "contrato"];
@@ -18,16 +33,11 @@ const BOOKING_SUBJECT_KEYWORDS = [
   "cancelled", "canceled", "cancellation", "modified", "itinerary",
   "confirmada", "confirmación", "reserva", "cancelada", "pago",
 ];
-// Признаки того, что письмо содержит банковскую выписку (движения по счёту), а не отдельный счёт.
-// Ищем и в теле письма, и в теме — банки часто присылают выписку как PDF-вложение с сопроводительным
-// текстом вроде "Abfrage von Kontobewegungen" (именно так подписан реальный экспорт BancSabadell).
 const BANK_STATEMENT_KEYWORDS = [
   "kontobewegungen", "kontoauszug", "abfrage von kontobewegungen",
   "estado de cuenta", "movimientos de cuenta", "extracto de cuenta",
   "account statement", "bank statement", "consulta de movimientos",
 ];
-// Ровно те категории, что понимает UI (EXP_CATEGORIES в OwnerDashboard.tsx) — Claude должен
-// выбирать строго один из этих английских кодов, не переводить их.
 const EXPENSE_CATEGORY_CODES = [
   "electricity", "water", "gas", "internet", "repair", "furniture",
   "appliances", "insurance", "ibi", "cleaning", "community_fee",
@@ -204,7 +214,6 @@ async function queueEvent(
   }
 }
 
-// deno-lint-ignore no-explicit-any
 async function getGmailProfile(accessToken: string): Promise<{ historyId: string | null }> {
   const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -214,11 +223,6 @@ async function getGmailProfile(accessToken: string): Promise<{ historyId: string
   return { historyId: json.historyId != null ? String(json.historyId) : null };
 }
 
-// Gmail History API — возвращает ТОЛЬКО новые письма с момента startHistoryId,
-// вместо того чтобы каждый раз перечитывать весь диапазон дат. Гораздо быстрее,
-// особенно когда новых писем нет вообще. Если Gmail „забыл“ startHistoryId (обычно если
-// агент не запускался >7 дней) — вернём expired:true, и вызывающий код сделает одноразовый
-// полный скан по датам для восстановления.
 async function listNewMessagesViaHistory(
   accessToken: string,
   startHistoryId: string,
@@ -254,6 +258,380 @@ async function listNewMessagesViaHistory(
   return { ids: Array.from(ids), newHistoryId, expired };
 }
 
+type WorldData = {
+  apartments: ApartmentRow[];
+  autoApplyByOwner: Map<string, boolean>;
+};
+
+type AccountCtx = {
+  label: string;
+  accessToken: string;
+  historyId: string | null;
+  resolveOwner: (toHeader: string) => string | null;
+  saveHistoryId: (id: string) => Promise<void>;
+};
+
+// Синхронизация ОДНОГО Gmail-ящика — вынесена в отдельную функцию, чтобы вызываться одинаково как для
+// старого общего ящика (env-переменные + алиасы), так и для каждого персонального
+// ящика из email_accounts (фиксированный owner_id, свой refresh_token, свой historyId).
+async function syncAccount(
+  supabase: SupabaseClientAny,
+  log: RunLog,
+  ctx: AccountCtx,
+  world: WorldData,
+): Promise<void> {
+  const { accessToken } = ctx;
+  let messageIds: string[] = [];
+  let nextHistoryId: string | null = null;
+  let usedFallbackScan = false;
+
+  if (ctx.historyId) {
+    const { ids, newHistoryId, expired } = await listNewMessagesViaHistory(accessToken, ctx.historyId);
+    if (expired) {
+      usedFallbackScan = true;
+      log.debug.push({ account: ctx.label, note: "gmail historyId expired (agent probably idle >7 days) — falling back to full date-range scan once" });
+    } else {
+      messageIds = ids;
+      nextHistoryId = newHistoryId ?? ctx.historyId;
+    }
+  }
+
+  if (!ctx.historyId || usedFallbackScan) {
+    const { data: lastRun } = await supabase
+      .from("agent_logs")
+      .select("run_at")
+      .eq("status", "success")
+      .order("run_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const since = lastRun?.run_at ? new Date(lastRun.run_at) : new Date(Date.now() - 30 * 86400000);
+    since.setDate(since.getDate() - 1);
+    const gmailDate = `${since.getFullYear()}/${String(since.getMonth() + 1).padStart(2, "0")}/${String(since.getDate()).padStart(2, "0")}`;
+    const gmailQuery = `after:${gmailDate}`;
+
+    const listRes = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(gmailQuery)}&maxResults=50`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    const listJson = await listRes.json();
+    messageIds = (listJson.messages ?? []).map((m: { id: string }) => m.id);
+
+    const profile = await getGmailProfile(accessToken);
+    nextHistoryId = profile.historyId;
+  }
+
+  const messages: { id: string }[] = messageIds.map((id) => ({ id }));
+  log.emails_checked += messages.length;
+
+  const [existingEventsRes, existingBookingsRes, existingExpensesRes] = messageIds.length
+    ? await Promise.all([
+        supabase.from("agent_pending_events").select("source_message_id").in("source_message_id", messageIds),
+        supabase.from("bookings").select("source_message_id").in("source_message_id", messageIds),
+        supabase.from("expenses").select("source_message_id").in("source_message_id", messageIds),
+      ])
+    : [{ data: [] }, { data: [] }, { data: [] }];
+  const alreadyQueuedIds = new Set((existingEventsRes.data ?? []).map((r: { source_message_id: string }) => r.source_message_id));
+  const alreadyBookingIds = new Set((existingBookingsRes.data ?? []).map((r: { source_message_id: string }) => r.source_message_id));
+  const alreadyExpenseIds = new Set((existingExpensesRes.data ?? []).map((r: { source_message_id: string }) => r.source_message_id));
+
+  const fetchedMessages = await mapWithConcurrency(messages, 8, async (m) => {
+    try {
+      const msgRes = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      // deno-lint-ignore no-explicit-any
+      const msg: any = await msgRes.json();
+      return { id: m.id, msg, fetchError: null as unknown };
+    } catch (e) {
+      return { id: m.id, msg: null, fetchError: e };
+    }
+  });
+
+  for (const { id: msgId, msg, fetchError } of fetchedMessages) {
+    try {
+      if (fetchError || !msg) {
+        log.errors.push({ account: ctx.label, messageId: msgId, error: String(fetchError ?? "empty gmail response") });
+        continue;
+      }
+
+      const headers = Object.fromEntries(
+        (msg.payload?.headers ?? []).map((h: { name: string; value: string }) => [h.name.toLowerCase(), h.value]),
+      );
+      const toHeader: string = headers["delivered-to"] || headers["to"] || "";
+      const fromHeader: string = (headers["from"] || "").toLowerCase();
+      const subjectHeader: string = (headers["subject"] || "").toLowerCase();
+      const ownerId: string | null = ctx.resolveOwner(toHeader);
+
+      if (!ownerId) {
+        log.skipped++;
+        log.debug.push({ account: ctx.label, messageId: msgId, reason: "no owner resolved", toHeader });
+        continue;
+      }
+
+      const ownerApartments = world.apartments.filter((a) => a.owner_id === ownerId);
+      if (ownerApartments.length === 0) {
+        log.skipped++;
+        log.debug.push({ account: ctx.label, messageId: msgId, reason: "owner has no apartments" });
+        continue;
+      }
+      const autoApply = world.autoApplyByOwner.get(ownerId) ?? false;
+
+      const parts = flattenParts(msg.payload);
+      const pdfPart = parts.find((p) => p.mimeType === "application/pdf" && p.body?.attachmentId);
+      const bodyText = extractPlainText(msg.payload) ?? msg.snippet ?? "";
+      // Письмо может быть вручную ПЕРЕСЛАНО клиентом на свой личный ящик — тогда заголовок From
+      // у самого сообщения это адрес клиента, а не airbnb.com/booking.com. Исходный отправитель в
+      // этом случае виден только внутри текста письма (строка "From: ..." в блоке
+      // "---------- Forwarded message ---------", плюс обычно есть ссылки/упоминания airbnb.com в
+      // подвале письма), поэтому дополнительно ищем домен и там — иначе пересланные письма о
+      // бронях никогда не пройдут проверку отправителя.
+      const isBookingSender = BOOKING_SENDER_DOMAINS.some((d) => fromHeader.includes(d) || bodyText.toLowerCase().includes(d));
+
+      if (alreadyQueuedIds.has(msgId)) {
+        log.debug.push({ account: ctx.label, messageId: msgId, note: "already queued/resolved in agent_pending_events" });
+        continue;
+      }
+
+      if (isBookingSender) {
+        if (alreadyBookingIds.has(msgId)) {
+          log.debug.push({ account: ctx.label, messageId: msgId, note: "booking email already processed" });
+          continue;
+        }
+
+        const looksLikeBookingSubject = BOOKING_SUBJECT_KEYWORDS.some((k) => subjectHeader.includes(k));
+        if (!looksLikeBookingSubject) {
+          log.skipped++;
+          log.debug.push({
+            account: ctx.label,
+            messageId: msgId,
+            reason: "airbnb/booking email, subject doesn't look transactional — skipped before calling Claude",
+            subject: headers["subject"],
+          });
+          continue;
+        }
+
+        const { extraction, raw, apiError } = await extractBooking(bodyText, ownerApartments);
+        if (apiError) log.debug.push({ account: ctx.label, messageId: msgId, apiError });
+        if (raw) log.debug.push({ account: ctx.label, messageId: msgId, rawClaudeText: raw });
+
+        if (!extraction || !extraction.apartment_id) {
+          log.skipped++;
+          log.debug.push({ account: ctx.label, messageId: msgId, reason: "no usable booking extraction", extraction });
+          continue;
+        }
+
+        const apt = ownerApartments.find((a) => a.id === extraction.apartment_id);
+        if (!apt) {
+          log.skipped++;
+          log.debug.push({ account: ctx.label, messageId: msgId, reason: "extracted apartment_id not found", extraction });
+          continue;
+        }
+
+        if (extraction.is_cancellation) {
+          const existingBooking = await findExistingBooking(supabase, apt.id, extraction);
+          if (!existingBooking) {
+            log.skipped++;
+            log.debug.push({ account: ctx.label, messageId: msgId, reason: "cancellation email but no matching existing booking found", extraction });
+            continue;
+          }
+
+          await queueEvent(supabase, log, autoApply, {
+            owner_id: ownerId,
+            apartment_id: apt.id,
+            kind: "booking_cancel",
+            source_message_id: msgId,
+            existing_booking_id: existingBooking.id,
+            payload: {
+              apartment_title: apt.title,
+              guest_name: existingBooking.guest_name,
+              start_date: existingBooking.start_date,
+              end_date: existingBooking.end_date,
+              total_amount: existingBooking.total_amount,
+            },
+          });
+          continue;
+        }
+
+        if (!extraction.start_date || !extraction.end_date) {
+          log.skipped++;
+          log.debug.push({ account: ctx.label, messageId: msgId, reason: "no usable booking extraction", extraction });
+          continue;
+        }
+
+        const existingBooking = await findExistingBooking(supabase, apt.id, extraction);
+
+        const bookingPayload = {
+          apartment_title: apt.title,
+          guest_name: extraction.guest_name ?? "",
+          start_date: extraction.start_date,
+          end_date: extraction.end_date,
+          guests_count: extraction.guests_count ?? 1,
+          source: extraction.source ?? "airbnb",
+          total_amount: extraction.total_amount ?? null,
+          cleaning_fee_amount: extraction.cleaning_fee ?? null,
+          host_service_fee_amount: extraction.host_service_fee ?? null,
+          external_booking_id: extraction.external_booking_id ?? null,
+        };
+
+        await queueEvent(supabase, log, autoApply, {
+          owner_id: ownerId,
+          apartment_id: apt.id,
+          kind: existingBooking ? "booking_update" : "booking_new",
+          source_message_id: msgId,
+          existing_booking_id: existingBooking?.id ?? null,
+          payload: bookingPayload,
+        });
+        continue;
+      }
+
+      const isBankStatementEmail = BANK_STATEMENT_KEYWORDS.some((k) => bodyText.toLowerCase().includes(k) || subjectHeader.includes(k));
+      if (isBankStatementEmail) {
+        if (!pdfPart) {
+          log.skipped++;
+          log.debug.push({ account: ctx.label, messageId: msgId, reason: "looks like a bank statement email but has no pdf attachment" });
+          continue;
+        }
+
+        const attRes = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}/attachments/${pdfPart.body.attachmentId}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        const attJson = await attRes.json();
+        const pdfBase64 = attJson.data ? base64UrlToBase64(attJson.data as string) : null;
+        if (!pdfBase64) {
+          log.skipped++;
+          log.debug.push({ account: ctx.label, messageId: msgId, reason: "bank statement pdf attachment fetch returned no data", attRes: attJson });
+          continue;
+        }
+
+        const { extraction, raw, apiError } = await extractBankStatement(pdfBase64, ownerApartments);
+        if (apiError) log.debug.push({ account: ctx.label, messageId: msgId, apiError });
+        if (raw) log.debug.push({ account: ctx.label, messageId: msgId, rawClaudeText: raw });
+
+        if (!extraction || !extraction.line_items || extraction.line_items.length === 0) {
+          log.skipped++;
+          log.debug.push({ account: ctx.label, messageId: msgId, reason: "no usable line items extracted from bank statement", extraction });
+          continue;
+        }
+
+        await queueEvent(supabase, log, false, {
+          owner_id: ownerId,
+          apartment_id: null,
+          kind: "bank_statement",
+          source_message_id: msgId,
+          payload: {
+            filename: pdfPart.filename ?? "Банковская выписка",
+            statement_date_range: extraction.statement_date_range ?? null,
+            line_items: extraction.line_items,
+          },
+        });
+        continue;
+      }
+
+      const looksLikeInvoiceText = INVOICE_TEXT_KEYWORDS.some((k) => bodyText.toLowerCase().includes(k));
+      if (!pdfPart && !looksLikeInvoiceText) {
+        log.skipped++;
+        log.debug.push({ account: ctx.label, messageId: msgId, reason: "not a booking email, no pdf attachment, no invoice keywords", from: fromHeader });
+        continue;
+      }
+
+      if (alreadyExpenseIds.has(msgId)) {
+        log.debug.push({ account: ctx.label, messageId: msgId, note: "already processed" });
+        continue;
+      }
+
+      // full_address — необязательное поле формы квартиры (хозяин может его не заполнить).
+      // Раньше при пустом full_address квартира полностью выпадала из сопоставления счетов, и
+      // агент молча пропускал ВСЕ письма со счетами для такого хозяина без единой понятной причины.
+      // Теперь используем обычный address как запасной вариант — этого обычно достаточно для
+      // сопоставления адреса в счёте с нужной квартирой.
+      const ownerApartmentsWithAddress = ownerApartments.filter((a) => a.full_address || a.address);
+      if (ownerApartmentsWithAddress.length === 0) {
+        log.skipped++;
+        log.debug.push({ account: ctx.label, messageId: msgId, reason: "owner has no apartments with an address" });
+        continue;
+      }
+
+      let pdfBase64: string | null = null;
+      if (pdfPart) {
+        const attRes = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}/attachments/${pdfPart.body.attachmentId}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        const attJson = await attRes.json();
+        if (attJson.data) pdfBase64 = base64UrlToBase64(attJson.data as string);
+        else log.debug.push({ account: ctx.label, messageId: msgId, note: "attachment fetch returned no data", attRes: attJson });
+      }
+
+      const { extraction, raw, apiError } = await extractInvoice(bodyText, pdfBase64, ownerApartmentsWithAddress);
+      if (apiError) log.debug.push({ account: ctx.label, messageId: msgId, apiError });
+      if (raw) log.debug.push({ account: ctx.label, messageId: msgId, rawClaudeText: raw });
+
+      if (!extraction || !extraction.amount || !extraction.category) {
+        log.skipped++;
+        log.debug.push({ account: ctx.label, messageId: msgId, reason: "no usable extraction", extraction });
+        continue;
+      }
+
+      let apartmentId: string | null = extraction.confidence === "low" ? null : extraction.apartment_id;
+      if (!apartmentId && ownerApartmentsWithAddress.length === 1) apartmentId = ownerApartmentsWithAddress[0].id;
+      if (!apartmentId) {
+        log.skipped++;
+        log.debug.push({ account: ctx.label, messageId: msgId, reason: "could not match apartment", extraction });
+        continue;
+      }
+
+      let dupQuery = supabase
+        .from("expenses")
+        .select("id")
+        .eq("apartment_id", apartmentId)
+        .eq("category", extraction.category)
+        .eq("amount", extraction.amount)
+        .is("deleted_at", null)
+        .neq("status", "rejected");
+      if (extraction.period_start && extraction.period_end) {
+        dupQuery = dupQuery.eq("invoice_period_start", extraction.period_start).eq("invoice_period_end", extraction.period_end);
+      } else if (extraction.invoice_date) {
+        dupQuery = dupQuery.eq("expense_date", extraction.invoice_date);
+      }
+      const { data: dupRows } = await dupQuery.limit(1);
+      if (dupRows && dupRows.length > 0) {
+        log.skipped++;
+        log.debug.push({ account: ctx.label, messageId: msgId, reason: "duplicate invoice content (same apartment/category/amount/period already exists)", extraction });
+        continue;
+      }
+
+      const apartmentForExpense = ownerApartmentsWithAddress.find((a) => a.id === apartmentId);
+
+      await queueEvent(supabase, log, autoApply, {
+        owner_id: ownerId,
+        apartment_id: apartmentId,
+        kind: "expense",
+        source_message_id: msgId,
+        payload: {
+          apartment_title: apartmentForExpense?.title ?? null,
+          category: extraction.category,
+          amount: extraction.amount,
+          invoice_date: extraction.invoice_date,
+          period_start: extraction.period_start,
+          period_end: extraction.period_end,
+          period_label: extraction.period_label,
+          provider: extraction.provider,
+          description: extraction.description,
+        },
+      });
+    } catch (e) {
+      log.errors.push({ account: ctx.label, messageId: msgId, error: String(e) });
+    }
+  }
+
+  if (nextHistoryId) {
+    await ctx.saveHistoryId(nextHistoryId);
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.headers.get("x-cron-secret") !== CRON_SECRET) {
     return new Response("Unauthorized", { status: 401 });
@@ -268,62 +646,6 @@ Deno.serve(async (req: Request) => {
   try {
     await generateRecurringExpenses(supabase, log);
 
-    const accessToken = await getGmailAccessToken();
-
-    // ── Открытие НОВЫХ писем: сначала пробуем инкрементальный Gmail History API (быстро, только
-    // действительно новое), и только если нет сохранённой точки отсчёта или Gmail сказал, что
-    // она устарела — откатываемся к старому полному скану по датам (как раньше), но это теперь
-    // редкий аварийный случай, а не каждый запуск.
-    const { data: syncState } = await supabase
-      .from("agent_sync_state")
-      .select("last_history_id")
-      .eq("id", true)
-      .maybeSingle();
-    const storedHistoryId: string | null = syncState?.last_history_id ?? null;
-
-    let messageIds: string[] = [];
-    let nextHistoryId: string | null = null;
-    let usedFallbackScan = false;
-
-    if (storedHistoryId) {
-      const { ids, newHistoryId, expired } = await listNewMessagesViaHistory(accessToken, storedHistoryId);
-      if (expired) {
-        usedFallbackScan = true;
-        log.debug.push({ note: "gmail historyId expired (agent probably idle >7 days) — falling back to full date-range scan once" });
-      } else {
-        messageIds = ids;
-        nextHistoryId = newHistoryId ?? storedHistoryId;
-      }
-    }
-
-    if (!storedHistoryId || usedFallbackScan) {
-      const { data: lastRun } = await supabase
-        .from("agent_logs")
-        .select("run_at")
-        .eq("status", "success")
-        .order("run_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      const since = lastRun?.run_at ? new Date(lastRun.run_at) : new Date(Date.now() - 30 * 86400000);
-      since.setDate(since.getDate() - 1);
-      const gmailDate = `${since.getFullYear()}/${String(since.getMonth() + 1).padStart(2, "0")}/${String(since.getDate()).padStart(2, "0")}`;
-      const gmailQuery = `after:${gmailDate}`;
-
-      const listRes = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(gmailQuery)}&maxResults=50`,
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-      );
-      const listJson = await listRes.json();
-      messageIds = (listJson.messages ?? []).map((m: { id: string }) => m.id);
-
-      const profile = await getGmailProfile(accessToken);
-      nextHistoryId = profile.historyId;
-    }
-
-    const messages: { id: string }[] = messageIds.map((id) => ({ id }));
-    log.emails_checked = messages.length;
-
     const { data: aliases } = await supabase.from("user_email_aliases").select("alias, user_id");
     const { data: apartmentsRaw } = await supabase
       .from("apartments")
@@ -333,307 +655,57 @@ Deno.serve(async (req: Request) => {
     const autoApplyByOwner = new Map<string, boolean>(
       (profilesRaw ?? []).map((p: { id: string; agent_auto_apply: boolean | null }) => [p.id, !!p.agent_auto_apply]),
     );
+    const world: WorldData = { apartments, autoApplyByOwner };
 
-    const [existingEventsRes, existingBookingsRes, existingExpensesRes] = messageIds.length
-      ? await Promise.all([
-          supabase.from("agent_pending_events").select("source_message_id").in("source_message_id", messageIds),
-          supabase.from("bookings").select("source_message_id").in("source_message_id", messageIds),
-          supabase.from("expenses").select("source_message_id").in("source_message_id", messageIds),
-        ])
-      : [{ data: [] }, { data: [] }, { data: [] }];
-    const alreadyQueuedIds = new Set((existingEventsRes.data ?? []).map((r: { source_message_id: string }) => r.source_message_id));
-    const alreadyBookingIds = new Set((existingBookingsRes.data ?? []).map((r: { source_message_id: string }) => r.source_message_id));
-    const alreadyExpenseIds = new Set((existingExpensesRes.data ?? []).map((r: { source_message_id: string }) => r.source_message_id));
+    // ── 1) Легаси: общий шаренный ящик (bloknot.app@gmail.com из env), владелец определяется по
+    // алиасу/+tag в заголовке получателя (user_email_aliases). Оставлен для обратной совместимости.
+    try {
+      const legacyAccessToken = await getAccessToken(GMAIL_REFRESH_TOKEN);
+      const { data: syncState } = await supabase
+        .from("agent_sync_state")
+        .select("last_history_id")
+        .eq("id", true)
+        .maybeSingle();
 
-    const fetchedMessages = await mapWithConcurrency(messages, 8, async (m) => {
-      try {
-        const msgRes = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`,
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-        );
-        // deno-lint-ignore no-explicit-any
-        const msg: any = await msgRes.json();
-        return { id: m.id, msg, fetchError: null as unknown };
-      } catch (e) {
-        return { id: m.id, msg: null, fetchError: e };
-      }
-    });
-
-    for (const { id: msgId, msg, fetchError } of fetchedMessages) {
-      try {
-        if (fetchError || !msg) {
-          log.errors.push({ messageId: msgId, error: String(fetchError ?? "empty gmail response") });
-          continue;
-        }
-
-        const headers = Object.fromEntries(
-          (msg.payload?.headers ?? []).map((h: { name: string; value: string }) => [h.name.toLowerCase(), h.value]),
-        );
-        const toHeader: string = headers["delivered-to"] || headers["to"] || "";
-        const fromHeader: string = (headers["from"] || "").toLowerCase();
-        const subjectHeader: string = (headers["subject"] || "").toLowerCase();
-        const aliasMatch = toHeader.match(/\+([a-z0-9._-]+)@/i);
-        const alias = aliasMatch ? aliasMatch[1].toLowerCase() : DEFAULT_ALIAS;
-        const ownerId: string | null = aliases?.find((a) => a.alias === alias)?.user_id ?? null;
-
-        if (!ownerId) {
-          log.skipped++;
-          log.debug.push({ messageId: msgId, reason: "no owner for alias", alias, toHeader });
-          continue;
-        }
-
-        const ownerApartments = apartments.filter((a) => a.owner_id === ownerId);
-        if (ownerApartments.length === 0) {
-          log.skipped++;
-          log.debug.push({ messageId: msgId, reason: "owner has no apartments" });
-          continue;
-        }
-        const autoApply = autoApplyByOwner.get(ownerId) ?? false;
-
-        const parts = flattenParts(msg.payload);
-        const pdfPart = parts.find((p) => p.mimeType === "application/pdf" && p.body?.attachmentId);
-        const isBookingSender = BOOKING_SENDER_DOMAINS.some((d) => fromHeader.includes(d));
-        const bodyText = extractPlainText(msg.payload) ?? msg.snippet ?? "";
-
-        if (alreadyQueuedIds.has(msgId)) {
-          log.debug.push({ messageId: msgId, note: "already queued/resolved in agent_pending_events" });
-          continue;
-        }
-
-        if (isBookingSender) {
-          if (alreadyBookingIds.has(msgId)) {
-            log.debug.push({ messageId: msgId, note: "booking email already processed" });
-            continue;
-          }
-
-          const looksLikeBookingSubject = BOOKING_SUBJECT_KEYWORDS.some((k) => subjectHeader.includes(k));
-          if (!looksLikeBookingSubject) {
-            log.skipped++;
-            log.debug.push({
-              messageId: msgId,
-              reason: "airbnb/booking email, subject doesn't look transactional — skipped before calling Claude",
-              subject: headers["subject"],
-            });
-            continue;
-          }
-
-          const { extraction, raw, apiError } = await extractBooking(bodyText, ownerApartments);
-          if (apiError) log.debug.push({ messageId: msgId, apiError });
-          if (raw) log.debug.push({ messageId: msgId, rawClaudeText: raw });
-
-          if (!extraction || !extraction.apartment_id) {
-            log.skipped++;
-            log.debug.push({ messageId: msgId, reason: "no usable booking extraction", extraction });
-            continue;
-          }
-
-          const apt = ownerApartments.find((a) => a.id === extraction.apartment_id);
-          if (!apt) {
-            log.skipped++;
-            log.debug.push({ messageId: msgId, reason: "extracted apartment_id not found", extraction });
-            continue;
-          }
-
-          if (extraction.is_cancellation) {
-            const existingBooking = await findExistingBooking(supabase, apt.id, extraction);
-            if (!existingBooking) {
-              log.skipped++;
-              log.debug.push({ messageId: msgId, reason: "cancellation email but no matching existing booking found", extraction });
-              continue;
-            }
-
-            await queueEvent(supabase, log, autoApply, {
-              owner_id: ownerId,
-              apartment_id: apt.id,
-              kind: "booking_cancel",
-              source_message_id: msgId,
-              existing_booking_id: existingBooking.id,
-              payload: {
-                apartment_title: apt.title,
-                guest_name: existingBooking.guest_name,
-                start_date: existingBooking.start_date,
-                end_date: existingBooking.end_date,
-                total_amount: existingBooking.total_amount,
-              },
-            });
-            continue;
-          }
-
-          if (!extraction.start_date || !extraction.end_date) {
-            log.skipped++;
-            log.debug.push({ messageId: msgId, reason: "no usable booking extraction", extraction });
-            continue;
-          }
-
-          const existingBooking = await findExistingBooking(supabase, apt.id, extraction);
-
-          const bookingPayload = {
-            apartment_title: apt.title,
-            guest_name: extraction.guest_name ?? "",
-            start_date: extraction.start_date,
-            end_date: extraction.end_date,
-            guests_count: extraction.guests_count ?? 1,
-            source: extraction.source ?? "airbnb",
-            total_amount: extraction.total_amount ?? null,
-            cleaning_fee_amount: extraction.cleaning_fee ?? null,
-            host_service_fee_amount: extraction.host_service_fee ?? null,
-            external_booking_id: extraction.external_booking_id ?? null,
-          };
-
-          await queueEvent(supabase, log, autoApply, {
-            owner_id: ownerId,
-            apartment_id: apt.id,
-            kind: existingBooking ? "booking_update" : "booking_new",
-            source_message_id: msgId,
-            existing_booking_id: existingBooking?.id ?? null,
-            payload: bookingPayload,
-          });
-          continue;
-        }
-
-        // ── Банковская выписка: письмо не от Airbnb/Booking, а тема или текст письма
-        // указывают на выгрузку движений по счёту (а не на отдельный счёт за услугу).
-        // В этом случае извлекаем ВСЕ строки выписки одним запросом к Claude и кладём их
-        // единым событием — хозяин разбирает их сам в приложении (галочки/правки/удаление),
-        // поэтому НИКОГДА не auto-apply, даже если у владельца включено автообновление.
-        const isBankStatementEmail = BANK_STATEMENT_KEYWORDS.some((k) => bodyText.toLowerCase().includes(k) || subjectHeader.includes(k));
-        if (isBankStatementEmail) {
-          if (!pdfPart) {
-            log.skipped++;
-            log.debug.push({ messageId: msgId, reason: "looks like a bank statement email but has no pdf attachment" });
-            continue;
-          }
-
-          const attRes = await fetch(
-            `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}/attachments/${pdfPart.body.attachmentId}`,
-            { headers: { Authorization: `Bearer ${accessToken}` } },
-          );
-          const attJson = await attRes.json();
-          const pdfBase64 = attJson.data ? base64UrlToBase64(attJson.data as string) : null;
-          if (!pdfBase64) {
-            log.skipped++;
-            log.debug.push({ messageId: msgId, reason: "bank statement pdf attachment fetch returned no data", attRes: attJson });
-            continue;
-          }
-
-          const { extraction, raw, apiError } = await extractBankStatement(pdfBase64, ownerApartments);
-          if (apiError) log.debug.push({ messageId: msgId, apiError });
-          if (raw) log.debug.push({ messageId: msgId, rawClaudeText: raw });
-
-          if (!extraction || !extraction.line_items || extraction.line_items.length === 0) {
-            log.skipped++;
-            log.debug.push({ messageId: msgId, reason: "no usable line items extracted from bank statement", extraction });
-            continue;
-          }
-
-          await queueEvent(supabase, log, false, {
-            owner_id: ownerId,
-            apartment_id: null,
-            kind: "bank_statement",
-            source_message_id: msgId,
-            payload: {
-              filename: pdfPart.filename ?? "Банковская выписка",
-              statement_date_range: extraction.statement_date_range ?? null,
-              line_items: extraction.line_items,
-            },
-          });
-          continue;
-        }
-
-        const looksLikeInvoiceText = INVOICE_TEXT_KEYWORDS.some((k) => bodyText.toLowerCase().includes(k));
-        if (!pdfPart && !looksLikeInvoiceText) {
-          log.skipped++;
-          log.debug.push({ messageId: msgId, reason: "not a booking email, no pdf attachment, no invoice keywords", from: fromHeader });
-          continue;
-        }
-
-        if (alreadyExpenseIds.has(msgId)) {
-          log.debug.push({ messageId: msgId, note: "already processed" });
-          continue;
-        }
-
-        const ownerApartmentsWithAddress = ownerApartments.filter((a) => a.full_address);
-        if (ownerApartmentsWithAddress.length === 0) {
-          log.skipped++;
-          log.debug.push({ messageId: msgId, reason: "owner has no apartments with full_address" });
-          continue;
-        }
-
-        let pdfBase64: string | null = null;
-        if (pdfPart) {
-          const attRes = await fetch(
-            `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}/attachments/${pdfPart.body.attachmentId}`,
-            { headers: { Authorization: `Bearer ${accessToken}` } },
-          );
-          const attJson = await attRes.json();
-          if (attJson.data) pdfBase64 = base64UrlToBase64(attJson.data as string);
-          else log.debug.push({ messageId: msgId, note: "attachment fetch returned no data", attRes: attJson });
-        }
-
-        const { extraction, raw, apiError } = await extractInvoice(bodyText, pdfBase64, ownerApartmentsWithAddress);
-        if (apiError) log.debug.push({ messageId: msgId, apiError });
-        if (raw) log.debug.push({ messageId: msgId, rawClaudeText: raw });
-
-        if (!extraction || !extraction.amount || !extraction.category) {
-          log.skipped++;
-          log.debug.push({ messageId: msgId, reason: "no usable extraction", extraction });
-          continue;
-        }
-
-        let apartmentId: string | null = extraction.confidence === "low" ? null : extraction.apartment_id;
-        if (!apartmentId && ownerApartmentsWithAddress.length === 1) apartmentId = ownerApartmentsWithAddress[0].id;
-        if (!apartmentId) {
-          log.skipped++;
-          log.debug.push({ messageId: msgId, reason: "could not match apartment", extraction });
-          continue;
-        }
-
-        let dupQuery = supabase
-          .from("expenses")
-          .select("id")
-          .eq("apartment_id", apartmentId)
-          .eq("category", extraction.category)
-          .eq("amount", extraction.amount)
-          .is("deleted_at", null)
-          .neq("status", "rejected");
-        if (extraction.period_start && extraction.period_end) {
-          dupQuery = dupQuery.eq("invoice_period_start", extraction.period_start).eq("invoice_period_end", extraction.period_end);
-        } else if (extraction.invoice_date) {
-          dupQuery = dupQuery.eq("expense_date", extraction.invoice_date);
-        }
-        const { data: dupRows } = await dupQuery.limit(1);
-        if (dupRows && dupRows.length > 0) {
-          log.skipped++;
-          log.debug.push({ messageId: msgId, reason: "duplicate invoice content (same apartment/category/amount/period already exists)", extraction });
-          continue;
-        }
-
-        const apartmentForExpense = ownerApartmentsWithAddress.find((a) => a.id === apartmentId);
-
-        await queueEvent(supabase, log, autoApply, {
-          owner_id: ownerId,
-          apartment_id: apartmentId,
-          kind: "expense",
-          source_message_id: msgId,
-          payload: {
-            apartment_title: apartmentForExpense?.title ?? null,
-            category: extraction.category,
-            amount: extraction.amount,
-            invoice_date: extraction.invoice_date,
-            period_start: extraction.period_start,
-            period_end: extraction.period_end,
-            period_label: extraction.period_label,
-            provider: extraction.provider,
-            description: extraction.description,
-          },
-        });
-      } catch (e) {
-        log.errors.push({ messageId: msgId, error: String(e) });
-      }
+      await syncAccount(supabase, log, {
+        label: "legacy:shared-inbox",
+        accessToken: legacyAccessToken,
+        historyId: syncState?.last_history_id ?? null,
+        resolveOwner: (toHeader) => {
+          const alias = resolveAliasFromHeader(toHeader);
+          return aliases?.find((a) => a.alias === alias)?.user_id ?? null;
+        },
+        saveHistoryId: async (id) => {
+          await supabase.from("agent_sync_state").update({ last_history_id: id, updated_at: new Date().toISOString() }).eq("id", true);
+        },
+      }, world);
+    } catch (e) {
+      log.errors.push({ account: "legacy:shared-inbox", error: String(e) });
     }
 
-    if (nextHistoryId) {
-      await supabase.from("agent_sync_state").update({ last_history_id: nextHistoryId, updated_at: new Date().toISOString() }).eq("id", true);
+    // ── 2) Персональные ящики (faktura.imya@gmail.com и т.п.) — у каждого свой refresh_token и
+    // фиксированный owner_id — алиасы не нужны, всё, что пришло в этот ящик, принадлежит этому
+    // пользователю.
+    const { data: dedicatedAccounts } = await supabase
+      .from("email_accounts")
+      .select("id, owner_id, email_address, gmail_refresh_token, last_history_id")
+      .eq("is_active", true);
+
+    for (const acc of (dedicatedAccounts ?? [])) {
+      try {
+        const accessToken = await getAccessToken(acc.gmail_refresh_token);
+        await syncAccount(supabase, log, {
+          label: acc.email_address,
+          accessToken,
+          historyId: acc.last_history_id,
+          resolveOwner: () => acc.owner_id,
+          saveHistoryId: async (id) => {
+            await supabase.from("email_accounts").update({ last_history_id: id, last_synced_at: new Date().toISOString() }).eq("id", acc.id);
+          },
+        }, world);
+      } catch (e) {
+        log.errors.push({ account: acc.email_address, error: String(e) });
+      }
     }
 
     await supabase.from("agent_logs").insert({
@@ -661,14 +733,14 @@ Deno.serve(async (req: Request) => {
   }
 });
 
-async function getGmailAccessToken(): Promise<string> {
+async function getAccessToken(refreshToken: string): Promise<string> {
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       client_id: GMAIL_CLIENT_ID,
       client_secret: GMAIL_CLIENT_SECRET,
-      refresh_token: GMAIL_REFRESH_TOKEN,
+      refresh_token: refreshToken,
       grant_type: "refresh_token",
     }),
   });
@@ -776,7 +848,7 @@ async function extractInvoice(
   pdfBase64: string | null,
   apartments: ApartmentRow[],
 ): Promise<{ extraction: Extraction | null; raw?: string; apiError?: unknown }> {
-  const aptList = apartments.map((a) => `- id: ${a.id}, адрес: ${a.full_address}`).join("\n");
+  const aptList = apartments.map((a) => `- id: ${a.id}, адрес: ${a.full_address ?? a.address}`).join("\n");
   // deno-lint-ignore no-explicit-any
   const content: any[] = [];
   if (pdfBase64) {
