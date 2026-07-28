@@ -5,7 +5,7 @@ import {
   CalendarDays, Banknote, FileText, Star, X, ChevronRight, ChevronLeft, Brush, LogOut,
   CheckCircle2, Wallet, Users, Plus, Minus, History, ClipboardList, Archive, User,
 } from 'lucide-react'
-import { format, parseISO, getDaysInMonth } from 'date-fns'
+import { format, parseISO, getDaysInMonth, addDays } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { supabase } from '@/integrations/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
@@ -77,6 +77,7 @@ function pluralDaysWord(n: number): string {
   return 'дней'
 }
 const daysUntilLabel = (n: number) => n === 0 ? 'сегодня' : `через ${n} ${pluralDaysWord(n)}`
+const isoAddDays = (dateStr: string, n: number) => format(addDays(parseISO(dateStr), n), 'yyyy-MM-dd')
 
 // Minimal phone → country lookup
 const DIAL_CODES: [string, string, string][] = [
@@ -1144,6 +1145,14 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
             const daysToNextF = upF.length > 0
               ? Math.max(0, Math.round((parseISO(upF[0].bookings.start_date).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000))
               : null
+            // Клик по карточке "ближайший заезд" должен показывать только сам ближайший день
+            // плюс следующий за ним — а не вообще все предстоящие заезды на месяцы вперёд.
+            // Как только ближайшая дата проходит, эта же логика на следующий день сама
+            // сдвигается на новую ближайшую дату (upF уже отфильтрован/отсортирован по "сегодня").
+            const nearestCheckinDate = upF[0]?.bookings.start_date ?? null
+            const upFNear = nearestCheckinDate
+              ? upF.filter(t => t.bookings.start_date === nearestCheckinDate || t.bookings.start_date === isoAddDays(nearestCheckinDate, 1))
+              : []
             // Ближайший выезд — среди тех, кто заселён прямо сейчас (у них выезд уже известен
             // и он всегда ближе, чем выезд ещё не заехавших гостей).
             const curFByCheckout = [...curF].sort((a, b) => a.bookings.end_date.localeCompare(b.bookings.end_date))
@@ -1186,11 +1195,11 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                   <p className="text-[11px] text-muted-foreground mt-0.5">сейчас заселено</p>
                 </button>
                 <button type="button" disabled={daysToNextF === null}
-                  onClick={() => setStatModal({ title: 'Ближайшие заезды', items: upF })}
+                  onClick={() => setStatModal({ title: upFNear.length === 1 ? 'Ближайший заезд' : 'Ближайшие заезды', items: upFNear })}
                   className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center disabled:cursor-default enabled:hover:border-primary/40 enabled:hover:shadow-md transition-all">
                   {daysToNextF !== null ? (
                     <><p className="text-2xl font-bold text-foreground">{daysToNextF === 0 ? '🎉' : daysToNextF}</p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">{daysToNextF === 0 ? 'заезд сегодня!' : `${daysUntilLabel(daysToNextF)} до заезда`}</p></>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">{daysToNextF === 0 ? 'Ближайший заезд сегодня' : `Ближайший заезд ${daysUntilLabel(daysToNextF)}`}</p></>
                   ) : (
                     <><p className="text-2xl font-bold text-muted-foreground">—</p>
                       <p className="text-[11px] text-muted-foreground mt-0.5">нет заездов</p></>
