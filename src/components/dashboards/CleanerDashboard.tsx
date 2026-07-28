@@ -47,6 +47,7 @@ type CashEntry = {
   id: string
   type: 'deposit' | 'withdrawal'
   amount: number
+  owner_id: string
   booking_id: string | null
   cleaning_task_id: string | null
   note: string | null
@@ -694,6 +695,78 @@ function StatListModal({ title, subtitle, items, aptColor, ownerName, onSelectTa
   )
 }
 
+// ─── Cash-till breakdown modal ──────────────────────────────────────────────────
+// "Касса" — общая сумма наличных, но деньги в ней принадлежат разным хозяевам (гости
+// разных объектов отдают наличные за аренду). Клинеру важно видеть не только общий
+// баланс, а по каждому хозяину: сколько он внёс и сколько из этого уже списано
+// (погашено) за уборки.
+
+type CashOwnerGroup = {
+  ownerId: string; name: string; deposited: number; withdrawn: number; balance: number; entries: CashEntry[]
+}
+
+function CashByOwnerModal({ groups, describeEntry, onClose }: {
+  groups: CashOwnerGroup[]; describeEntry: (e: CashEntry) => { title: string; sub: string }; onClose: () => void
+}) {
+  return (
+    <motion.div key="cash-modal-backdrop"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <motion.div key="cash-modal-panel"
+        initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 16, scale: 0.97 }} transition={{ type: 'spring', damping: 28, stiffness: 380 }}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-md max-h-[85vh] overflow-y-auto bg-card rounded-3xl shadow-2xl border border-border p-6 flex flex-col gap-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-display font-bold text-foreground">Касса по хозяевам</h2>
+            <p className="text-sm text-muted-foreground mt-0.5">Кто сколько внёс наличными и сколько уже погашено</p>
+          </div>
+          <button onClick={onClose} className="flex-shrink-0 w-8 h-8 rounded-full bg-secondary flex items-center justify-center hover:bg-muted transition-colors">
+            <X size={15} />
+          </button>
+        </div>
+        {groups.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-6">Касса пуста</p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {groups.map(g => (
+              <div key={g.ownerId} className="rounded-2xl border border-border p-4 flex flex-col gap-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-bold text-foreground">{g.name}</p>
+                  <p className={`text-sm font-bold whitespace-nowrap ${g.balance > 0 ? 'text-purple-700' : 'text-muted-foreground'}`}>
+                    {fmtEur(g.balance)} <span className="font-normal text-[10px] text-muted-foreground">в кассе</span>
+                  </p>
+                </div>
+                <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                  <span>Внесено: <span className="font-semibold text-emerald-700">{fmtEur(g.deposited)}</span></span>
+                  <span>Погашено: <span className="font-semibold text-red-600">{fmtEur(g.withdrawn)}</span></span>
+                </div>
+                <div className="flex flex-col gap-1.5 pt-1.5 border-t border-border/60">
+                  {g.entries.map(e => {
+                    const info = describeEntry(e)
+                    const isDeposit = e.type === 'deposit'
+                    return (
+                      <div key={e.id} className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="text-muted-foreground truncate">
+                          {info.title} · {format(parseISO(e.created_at.slice(0, 10)), 'd MMM yyyy', { locale: ru })}
+                        </span>
+                        <span className={`font-semibold flex-shrink-0 ${isDeposit ? 'text-emerald-700' : 'text-red-600'}`}>
+                          {isDeposit ? '+' : '−'}{fmtEur(e.amount)}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </motion.div>
+    </motion.div>
+  )
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { previewAsAdmin?: boolean; onExitPreview?: () => void } = {}) {
@@ -709,6 +782,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   // Модалка-детализация для кликабельных карточек-счётчиков во вкладке "Заезды"
   // ("Сейчас заселено" / "Дней до заезда" / "Ближайший выезд").
   const [statModal, setStatModal] = useState<{ title: string; subtitle?: string; items: TaskRow[] } | null>(null)
+  const [showCashBreakdown, setShowCashBreakdown] = useState(false)
   const [showCashForm, setShowCashForm] = useState(false)
   const [cashDirection, setCashDirection] = useState<'deposit' | 'withdrawal'>('deposit')
   const [cashAmount, setCashAmount] = useState('')
@@ -806,6 +880,25 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   const invalidate = () => qc.invalidateQueries({ queryKey: ['cleaner-tasks'] })
 
   const cashBalance = (ledger ?? []).reduce((s, e) => s + (e.type === 'deposit' ? e.amount : -e.amount), 0)
+
+  // Разбивка кассы по хозяевам — общий баланс кассы это сумма чужих денег, и клинеру
+  // важно видеть по каждому хозяину отдельно: сколько внёс наличными и сколько из этого
+  // уже списано ("погашено") за уборки, а не только один общий итог.
+  const cashByOwner: CashOwnerGroup[] = useMemo(() => {
+    const map = new Map<string, CashEntry[]>()
+    ;(ledger ?? []).forEach(e => {
+      if (!map.has(e.owner_id)) map.set(e.owner_id, [])
+      map.get(e.owner_id)!.push(e)
+    })
+    return [...map.entries()].map(([ownerId, entries]) => {
+      const deposited = entries.filter(e => e.type === 'deposit').reduce((s, e) => s + e.amount, 0)
+      const withdrawn = entries.filter(e => e.type === 'withdrawal').reduce((s, e) => s + e.amount, 0)
+      return {
+        ownerId, name: ownerName(ownerId) || 'Хозяин', deposited, withdrawn, balance: deposited - withdrawn,
+        entries: [...entries].sort((a, b) => b.created_at.localeCompare(a.created_at)),
+      }
+    }).sort((a, b) => b.balance - a.balance)
+  }, [ledger, ownerName])
 
   const today = new Date().toISOString().slice(0, 10)
   const all = tasks ?? []
@@ -1034,10 +1127,11 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
           ))}
         </nav>
         {cashBalance > 0 && (
-          <div className="mt-3 mx-1 p-3 rounded-xl bg-purple-50 border border-purple-100">
+          <button type="button" onClick={() => setShowCashBreakdown(true)}
+            className="mt-3 mx-1 p-3 rounded-xl bg-purple-50 border border-purple-100 text-left hover:border-purple-300 transition-colors">
             <p className="text-[10px] text-purple-700 font-semibold mb-0.5 flex items-center gap-1"><Wallet size={11} /> Касса (наличные)</p>
             <p className="text-lg font-bold text-purple-800">{fmtEur(cashBalance)}</p>
-          </div>
+          </button>
         )}
         {totalOwed > 0 ? (
           <div className="mt-3 mx-1 p-3 rounded-xl bg-red-50 border border-red-100">
@@ -1430,11 +1524,12 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                   <p className="text-xl sm:text-2xl font-bold text-emerald-600 whitespace-nowrap">{fmtEur(totalPaid)}</p>
                   <p className="text-xs text-muted-foreground mt-1">{paidList.length} оплачено</p>
                 </div>
-                <div className="bg-card border border-purple-200 rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center">
+                <div onClick={() => setShowCashBreakdown(true)}
+                  className="bg-card border border-purple-200 rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center cursor-pointer hover:border-purple-400 hover:shadow-md transition-all">
                   <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1"><Wallet size={12} /> Касса (наличные)</p>
                   <p className="text-xl sm:text-2xl font-bold text-purple-700 whitespace-nowrap">{fmtEur(cashBalance)}</p>
                   {!previewAsAdmin && (
-                    <button onClick={() => setShowCashForm(p => !p)}
+                    <button onClick={e => { e.stopPropagation(); setShowCashForm(p => !p) }}
                       className="text-[11px] text-primary font-semibold hover:underline mt-1">
                       Изменить кассу
                     </button>
@@ -1658,10 +1753,11 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                   <p className="text-xl font-bold text-foreground">{fmtEur(totalEarned)}</p>
                   <p className="text-[11px] text-muted-foreground mt-0.5">Всего заработано</p>
                 </div>
-                <div className="bg-card border border-purple-200 rounded-2xl p-4 shadow-sm text-center">
+                <button type="button" onClick={() => setShowCashBreakdown(true)}
+                  className="bg-card border border-purple-200 rounded-2xl p-4 shadow-sm text-center hover:border-purple-400 hover:shadow-md transition-all">
                   <p className="text-xl font-bold text-purple-700 flex items-center justify-center gap-1"><Wallet size={15} /> {fmtEur(cashBalance)}</p>
                   <p className="text-[11px] text-muted-foreground mt-0.5">Касса (наличные)</p>
-                </div>
+                </button>
               </div>
               <button onClick={() => previewAsAdmin ? onExitPreview?.() : signOut()}
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl bg-secondary text-sm font-semibold text-foreground hover:bg-muted transition-colors">
@@ -1713,6 +1809,12 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
             aptColor={aptColor} ownerName={ownerName}
             onSelectTask={t => { setStatModal(null); setSelectedTask(t) }}
             onClose={() => setStatModal(null)} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showCashBreakdown && (
+          <CashByOwnerModal groups={cashByOwner} describeEntry={describeCashEntry} onClose={() => setShowCashBreakdown(false)} />
         )}
       </AnimatePresence>
     </div>
