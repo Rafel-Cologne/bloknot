@@ -1198,8 +1198,8 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                   onClick={() => setStatModal({ title: upFNear.length === 1 ? 'Ближайший заезд' : 'Ближайшие заезды', items: upFNear })}
                   className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center disabled:cursor-default enabled:hover:border-primary/40 enabled:hover:shadow-md transition-all">
                   {daysToNextF !== null ? (
-                    <><p className="text-2xl font-bold text-foreground">{daysToNextF === 0 ? '🎉' : daysToNextF}</p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">{daysToNextF === 0 ? 'Ближайший заезд сегодня' : `Ближайший заезд ${daysUntilLabel(daysToNextF)}`}</p></>
+                    <><p className="text-2xl font-bold text-foreground">{upFNear.length}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">{upFNear.length === 1 ? 'Ближайший заезд' : 'Ближайшие заезды'}</p></>
                   ) : (
                     <><p className="text-2xl font-bold text-muted-foreground">—</p>
                       <p className="text-[11px] text-muted-foreground mt-0.5">нет заездов</p></>
