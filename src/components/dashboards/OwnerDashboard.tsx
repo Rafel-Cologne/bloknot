@@ -449,10 +449,13 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Уборщица, назначенная на объект — сейчас у большинства пользователей она вообще одна на
+  // Клинер, назначенный на объект — сейчас у большинства пользователей он вообще один на
   // всех (несколько владельцев пользуются одним и тем же клинером), поэтому если вариант ровно
-  // один — подставляем его автоматически для нового объекта, но поле остаётся редактируемым
-  // (пригодится, когда клинеров станет больше одной).
+  // один — подставляем его автоматически, но поле остаётся редактируемым (пригодится, когда
+  // клинеров станет больше одного). Автоподстановка срабатывает не только для нового объекта,
+  // но и при открытии настроек уже существующего без назначенного клинера — иначе старые
+  // объекты, созданные до появления этого поля, так и остаются без клинера, пока хозяин сам
+  // не зайдёт и не выберет вручную (а его брони при этом тихо не попадают в кабинет уборщицы).
   const { data: cleanerOptions = [] } = useQuery({
     queryKey: ['cleaner-options-for-apartment'],
     queryFn: async () => {
@@ -464,7 +467,7 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
     },
   })
   useEffect(() => {
-    if (!initial && !form.cleaner_id && cleanerOptions.length === 1) {
+    if (!form.cleaner_id && cleanerOptions.length === 1) {
       setForm(f => ({ ...f, cleaner_id: cleanerOptions[0].id }))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
