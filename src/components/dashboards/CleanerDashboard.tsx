@@ -68,6 +68,16 @@ const fmtEur = (n: number) =>
   n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
 const pad = (n: number) => String(n).padStart(2, '0')
 
+// Русское склонение "день/дня/дней" — с учётом исключения 11-14 (всегда "дней").
+function pluralDaysWord(n: number): string {
+  const mod10 = n % 10, mod100 = n % 100
+  if (mod100 >= 11 && mod100 <= 14) return 'дней'
+  if (mod10 === 1) return 'день'
+  if (mod10 >= 2 && mod10 <= 4) return 'дня'
+  return 'дней'
+}
+const daysUntilLabel = (n: number) => n === 0 ? 'сегодня' : `через ${n} ${pluralDaysWord(n)}`
+
 // Minimal phone → country lookup
 const DIAL_CODES: [string, string, string][] = [
   ['+351','🇵🇹','Португалия'],['+352','🇱🇺','Люксембург'],['+353','🇮🇪','Ирландия'],
@@ -641,6 +651,48 @@ function CleanerCalendar({ tasks, aptColor }: { tasks: TaskRow[]; aptColor: (id:
   )
 }
 
+// ─── Stat card detail modal ─────────────────────────────────────────────────────
+// Общий попап для карточек-счётчиков ("Сейчас заселено", "Дней до заезда", "Ближайший
+// выезд") — по клику показывает список конкретных броней, которые эта цифра считает,
+// вместо того чтобы заставлять клинера искать их вручную во вкладках.
+
+function StatListModal({ title, subtitle, items, aptColor, ownerName, onSelectTask, onClose }: {
+  title: string; subtitle?: string; items: TaskRow[]; aptColor: (id: string) => string
+  ownerName: (id: string) => string; onSelectTask: (t: TaskRow) => void; onClose: () => void
+}) {
+  return (
+    <motion.div key="stat-modal-backdrop"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <motion.div key="stat-modal-panel"
+        initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 16, scale: 0.97 }} transition={{ type: 'spring', damping: 28, stiffness: 380 }}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-md max-h-[85vh] overflow-y-auto bg-card rounded-3xl shadow-2xl border border-border p-6 flex flex-col gap-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-display font-bold text-foreground">{title}</h2>
+            {subtitle && <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>}
+          </div>
+          <button onClick={onClose} className="flex-shrink-0 w-8 h-8 rounded-full bg-secondary flex items-center justify-center hover:bg-muted transition-colors">
+            <X size={15} />
+          </button>
+        </div>
+        {items.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-6">Ничего нет</p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {items.map(t => (
+              <TaskCard key={t.id} task={t} onSelect={() => onSelectTask(t)} aptColor={aptColor}
+                ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />
+            ))}
+          </div>
+        )}
+      </motion.div>
+    </motion.div>
+  )
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { previewAsAdmin?: boolean; onExitPreview?: () => void } = {}) {
@@ -652,6 +704,10 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   const [expandedClientId, setExpandedClientId] = useState<string | null>(null)
   const [selectedTask, setSelectedTask] = useState<TaskRow | null>(null)
   const [aptFilter, setAptFilter] = useState<string>('all')
+  const [ownerFilter, setOwnerFilter] = useState<string>('all')
+  // Модалка-детализация для кликабельных карточек-счётчиков во вкладке "Заезды"
+  // ("Сейчас заселено" / "Дней до заезда" / "Ближайший выезд").
+  const [statModal, setStatModal] = useState<{ title: string; subtitle?: string; items: TaskRow[] } | null>(null)
   const [showCashForm, setShowCashForm] = useState(false)
   const [cashDirection, setCashDirection] = useState<'deposit' | 'withdrawal'>('deposit')
   const [cashAmount, setCashAmount] = useState('')
@@ -844,6 +900,12 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
       }
     }).sort((a, b) => {
       if (a.hasAlert !== b.hasAlert) return a.hasAlert ? -1 : 1
+      // У кого заезд ближе — тот выше; если ни у кого нет предстоящего заезда, по имени.
+      const aDate = a.nearestUpcoming?.bookings.start_date
+      const bDate = b.nearestUpcoming?.bookings.start_date
+      if (aDate && bDate) return aDate.localeCompare(bDate)
+      if (aDate) return -1
+      if (bDate) return 1
       return a.name.localeCompare(b.name, 'ru')
     })
   }, [ownerIds, pendingCleaning, newTasks, upcoming, ownerName])
@@ -1075,42 +1137,76 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
               </div>
             )
           ) : tab === 'bookings' ? (() => {
-            const curF = currentStays.filter(byApartment)
-            const overF = overdue.filter(byApartment)
-            const upF = upcoming.filter(byApartment)
+            const byOwner = (t: TaskRow) => ownerFilter === 'all' || t.bookings.apartments.owner_id === ownerFilter
+            const curF = currentStays.filter(byApartment).filter(byOwner)
+            const overF = overdue.filter(byApartment).filter(byOwner)
+            const upF = upcoming.filter(byApartment).filter(byOwner)
             const daysToNextF = upF.length > 0
               ? Math.max(0, Math.round((parseISO(upF[0].bookings.start_date).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000))
               : null
+            // Ближайший выезд — среди тех, кто заселён прямо сейчас (у них выезд уже известен
+            // и он всегда ближе, чем выезд ещё не заехавших гостей).
+            const curFByCheckout = [...curF].sort((a, b) => a.bookings.end_date.localeCompare(b.bookings.end_date))
+            const daysToCheckoutF = curFByCheckout.length > 0
+              ? Math.max(0, Math.round((parseISO(curFByCheckout[0].bookings.end_date).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000))
+              : null
             return (
             <div className="flex flex-col gap-5">
-              {apartments.length > 1 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground font-medium">Квартира:</span>
-                  <select value={aptFilter} onChange={e => setAptFilter(e.target.value)}
-                    className="text-xs rounded-xl border border-border bg-card px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-ring">
-                    <option value="all">Все квартиры</option>
-                    {apartments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
-                  </select>
-                </div>
-              )}
-              <div className="grid grid-cols-3 gap-3">
+              <div className="flex items-center gap-4 flex-wrap">
+                {apartments.length > 1 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground font-medium">Квартира:</span>
+                    <select value={aptFilter} onChange={e => setAptFilter(e.target.value)}
+                      className="text-xs rounded-xl border border-border bg-card px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-ring">
+                      <option value="all">Все квартиры</option>
+                      {apartments.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
+                    </select>
+                  </div>
+                )}
+                {multiOwner && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground font-medium">Клиент:</span>
+                    <select value={ownerFilter} onChange={e => setOwnerFilter(e.target.value)}
+                      className="text-xs rounded-xl border border-border bg-card px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-ring">
+                      <option value="all">Все клиенты</option>
+                      {ownerIds.map(id => <option key={id} value={id}>{ownerName(id) || 'Хозяин'}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center">
                   <p className="text-2xl font-bold text-primary">{curF.length + upF.length + overF.length}</p>
                   <p className="text-[11px] text-muted-foreground mt-0.5">заездов впереди</p>
                 </div>
-                <div className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center">
+                <button type="button" disabled={curF.length === 0}
+                  onClick={() => setStatModal({ title: 'Сейчас заселены', items: curF })}
+                  className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center disabled:cursor-default enabled:hover:border-primary/40 enabled:hover:shadow-md transition-all">
                   <p className="text-2xl font-bold text-foreground">{curF.length}</p>
                   <p className="text-[11px] text-muted-foreground mt-0.5">сейчас заселено</p>
-                </div>
-                <div className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center">
+                </button>
+                <button type="button" disabled={daysToNextF === null}
+                  onClick={() => setStatModal({ title: 'Ближайшие заезды', items: upF })}
+                  className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center disabled:cursor-default enabled:hover:border-primary/40 enabled:hover:shadow-md transition-all">
                   {daysToNextF !== null ? (
-                    <><p className="text-2xl font-bold text-foreground">{daysToNextF}</p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">{daysToNextF === 0 ? 'заезд сегодня!' : 'дней до заезда'}</p></>
+                    <><p className="text-2xl font-bold text-foreground">{daysToNextF === 0 ? '🎉' : daysToNextF}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">{daysToNextF === 0 ? 'заезд сегодня!' : `${daysUntilLabel(daysToNextF)} до заезда`}</p></>
                   ) : (
                     <><p className="text-2xl font-bold text-muted-foreground">—</p>
                       <p className="text-[11px] text-muted-foreground mt-0.5">нет заездов</p></>
                   )}
-                </div>
+                </button>
+                <button type="button" disabled={daysToCheckoutF === null}
+                  onClick={() => setStatModal({ title: 'Ближайшие выезды', items: curFByCheckout })}
+                  className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center disabled:cursor-default enabled:hover:border-primary/40 enabled:hover:shadow-md transition-all">
+                  {daysToCheckoutF !== null ? (
+                    <><p className="text-2xl font-bold text-foreground">{daysToCheckoutF === 0 ? '🧳' : daysToCheckoutF}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">{daysToCheckoutF === 0 ? 'выезд сегодня' : `${daysUntilLabel(daysToCheckoutF)} до выезда`}</p></>
+                  ) : (
+                    <><p className="text-2xl font-bold text-muted-foreground">—</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">нет выездов</p></>
+                  )}
+                </button>
               </div>
 
               {curF.length > 0 && (
@@ -1284,7 +1380,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className="text-sm font-bold text-foreground">{b.apartments.title}</p>
                                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold">
-                                  {daysUntil === 0 ? 'Заезд сегодня' : `Через ${daysUntil} ${daysUntil === 1 ? 'день' : daysUntil < 5 ? 'дня' : 'дней'}`}
+                                  {daysUntil === 0 ? 'Заезд сегодня' : `Через ${daysUntil} ${pluralDaysWord(daysUntil)}`}
                                 </span>
                               </div>
                               <p className="text-xs text-muted-foreground">{b.guest_name}</p>
@@ -1599,6 +1695,15 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
         {selectedTask && (
           <TaskDetailModal key={selectedTask.id} task={selectedTask} cashBalance={cashBalance}
             onClose={() => setSelectedTask(null)} onRefresh={invalidate} readOnly={previewAsAdmin} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {statModal && (
+          <StatListModal title={statModal.title} subtitle={statModal.subtitle} items={statModal.items}
+            aptColor={aptColor} ownerName={ownerName}
+            onSelectTask={t => { setStatModal(null); setSelectedTask(t) }}
+            onClose={() => setStatModal(null)} />
         )}
       </AnimatePresence>
     </div>
