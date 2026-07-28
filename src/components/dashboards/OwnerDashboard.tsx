@@ -5261,6 +5261,15 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
   const [cashDirection, setCashDirection] = useState<'deposit' | 'withdrawal'>('deposit')
   const [cashAmount, setCashAmount] = useState('')
   const [cashNote, setCashNote] = useState('')
+  // Свёрнутые секции ("Долг" / "Оплачено" / "История кассы") — ключ произвольный,
+  // наличие в сете значит "свёрнуто". Списки на вкладке "Оплата" со временем растут,
+  // и без возможности их скрыть экран быстро становится неудобным.
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
+  const toggleSection = (key: string) => setCollapsedSections(prev => {
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key); else next.add(key)
+    return next
+  })
 
   const { data: ledger } = useQuery({
     queryKey: ['owner-cash-ledger', ownerId],
@@ -5391,6 +5400,15 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
   const totalPaid   = all.reduce((s, b) => s + b.cleaning_tasks.reduce((ss, t) => ss + getPaidAmt(t), 0), 0)
   const totalEarned = totalOwed + totalPaid
   const pct         = totalEarned > 0 ? Math.round((totalPaid / totalEarned) * 100) : 0
+
+  // Долг считается "активным" (реально ожидает перевода прямо сейчас) только после того,
+  // как гость выехал И уборка отмечена сделанной — до этого момента сумма за предстоящий
+  // или ещё не убранный заезд это не то, что хозяин должен платить сегодня, а просто
+  // будущий объём. Показываем это отдельно и серым, чтобы не пугать "долгом", которого
+  // по факту ещё нет.
+  const isDueNow  = (b: BookingRow) => b.end_date <= today && b.cleaning_tasks.every(t => t.status === 'done')
+  const dueOwed    = all.filter(isDueNow).reduce((s, b) => s + b.cleaning_tasks.reduce((ss, t) => ss + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0), 0)
+  const futureOwed = Math.max(0, totalOwed - dueOwed)
 
   // Stable apartment list + colors (for the calendar and the payment filter)
   const apartments = (() => {
@@ -5948,10 +5966,15 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
           <p className="text-xl sm:text-2xl font-bold text-foreground whitespace-nowrap">{fmtEur(totalEarned)}</p>
           <p className="text-xs text-muted-foreground mt-1">{all.length} уборок</p>
         </div>
-        <div className={`bg-card border rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center ${totalOwed > 0 ? 'border-red-200' : 'border-emerald-200'}`}>
+        <div className={`bg-card border rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center ${dueOwed > 0 ? 'border-red-200' : 'border-emerald-200'}`}>
           <p className="text-xs text-muted-foreground mb-2">Задолженность</p>
-          <p className={`text-xl sm:text-2xl font-bold whitespace-nowrap ${totalOwed > 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtEur(totalOwed)}</p>
-          <p className="text-xs text-muted-foreground mt-1">{totalOwed > 0 ? 'ожидает перевода' : 'долгов нет 🎉'}</p>
+          <p className={`text-xl sm:text-2xl font-bold whitespace-nowrap ${dueOwed > 0 ? 'text-red-600' : 'text-emerald-600'}`}>{fmtEur(dueOwed)}</p>
+          <p className="text-xs text-muted-foreground mt-1">{dueOwed > 0 ? 'ожидает перевода' : 'долгов нет 🎉'}</p>
+          {futureOwed > 0 && (
+            <p className="text-[10px] text-muted-foreground/70 mt-1.5 pt-1.5 border-t border-border/60 w-full">
+              + {fmtEur(futureOwed)} за предстоящие <span className="italic">(неактивно)</span>
+            </p>
+          )}
         </div>
         <div className="bg-card border border-emerald-200 rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center">
           <p className="text-xs text-muted-foreground mb-2">Получено</p>
@@ -6014,29 +6037,35 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
 
       {(ledger?.length ?? 0) > 0 && (
         <div>
-          <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3 flex items-center gap-1.5">
-            <History size={13} /> История кассы — {ledger!.length}
-          </h3>
-          <div className="flex flex-col gap-2">
-            {ledger!.map(e => {
-              const info = describeCashEntry(e)
-              const isDeposit = e.type === 'deposit'
-              return (
-                <div key={e.id} className="bg-card border border-border rounded-2xl px-4 py-3 flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${isDeposit ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
-                    {isDeposit ? <Plus size={15} /> : <Minus size={15} />}
+          <button onClick={() => toggleSection('cash-history')}
+            className="w-full flex items-center gap-1.5 mb-3 text-left">
+            <ChevronRight size={13} className={`text-muted-foreground transition-transform ${collapsedSections.has('cash-history') ? '' : 'rotate-90'}`} />
+            <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label flex items-center gap-1.5">
+              <History size={13} /> История кассы — {ledger!.length}
+            </h3>
+          </button>
+          {!collapsedSections.has('cash-history') && (
+            <div className="flex flex-col gap-2">
+              {ledger!.map(e => {
+                const info = describeCashEntry(e)
+                const isDeposit = e.type === 'deposit'
+                return (
+                  <div key={e.id} className="bg-card border border-border rounded-2xl px-4 py-3 flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${isDeposit ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                      {isDeposit ? <Plus size={15} /> : <Minus size={15} />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-foreground truncate">{info.title}</p>
+                      <p className="text-xs text-muted-foreground truncate">{info.sub || (isDeposit ? 'Пополнение' : 'Списание')} · {format(parseISO(e.created_at.slice(0, 10)), 'd MMM yyyy', { locale: ru })}</p>
+                    </div>
+                    <p className={`text-sm font-bold flex-shrink-0 ${isDeposit ? 'text-emerald-700' : 'text-red-600'}`}>
+                      {isDeposit ? '+' : '−'}{fmtEur(e.amount)}
+                    </p>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-foreground truncate">{info.title}</p>
-                    <p className="text-xs text-muted-foreground truncate">{info.sub || (isDeposit ? 'Пополнение' : 'Списание')} · {format(parseISO(e.created_at.slice(0, 10)), 'd MMM yyyy', { locale: ru })}</p>
-                  </div>
-                  <p className={`text-sm font-bold flex-shrink-0 ${isDeposit ? 'text-emerald-700' : 'text-red-600'}`}>
-                    {isDeposit ? '+' : '−'}{fmtEur(e.amount)}
-                  </p>
-                </div>
-              )
-            })}
-          </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -6080,29 +6109,41 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
           <>
             {unpaidList.length > 0 && (
               <div>
-                {/* Section header with select-all */}
+                {/* Section header with select-all + свернуть/развернуть */}
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label">
-                    Долг — {unpaidList.length} уборок
-                  </h3>
-                  <button onClick={() => allSelected ? clearBulk() : setBulkIds(allUnpaidIds)}
-                    className="text-[11px] text-primary font-semibold hover:underline">
-                    {allSelected ? 'Снять всё' : 'Выбрать все'}
+                  <button onClick={() => toggleSection('unpaid')} className="flex items-center gap-1.5 text-left">
+                    <ChevronRight size={13} className={`text-muted-foreground transition-transform ${collapsedSections.has('unpaid') ? '' : 'rotate-90'}`} />
+                    <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label">
+                      Долг — {unpaidList.length} уборок
+                    </h3>
                   </button>
+                  {!collapsedSections.has('unpaid') && (
+                    <button onClick={() => allSelected ? clearBulk() : setBulkIds(allUnpaidIds)}
+                      className="text-[11px] text-primary font-semibold hover:underline">
+                      {allSelected ? 'Снять всё' : 'Выбрать все'}
+                    </button>
+                  )}
                 </div>
-                <div className="flex flex-col gap-2">
-                  {unpaidList.map(b => renderPaymentCard(b))}
-                </div>
+                {!collapsedSections.has('unpaid') && (
+                  <div className="flex flex-col gap-2">
+                    {unpaidList.map(b => renderPaymentCard(b))}
+                  </div>
+                )}
               </div>
             )}
             {paidList.length > 0 && (
               <div>
-                <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">
-                  Оплачено — {paidList.length} уборок
-                </h3>
-                <div className="flex flex-col gap-2">
-                  {paidList.map(b => renderPaymentCard(b))}
-                </div>
+                <button onClick={() => toggleSection('paid')} className="w-full flex items-center gap-1.5 mb-3 text-left">
+                  <ChevronRight size={13} className={`text-muted-foreground transition-transform ${collapsedSections.has('paid') ? '' : 'rotate-90'}`} />
+                  <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label">
+                    Оплачено — {paidList.length} уборок
+                  </h3>
+                </button>
+                {!collapsedSections.has('paid') && (
+                  <div className="flex flex-col gap-2">
+                    {paidList.map(b => renderPaymentCard(b))}
+                  </div>
+                )}
               </div>
             )}
             {all.length === 0 && (
@@ -6206,7 +6247,7 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
   const NAV: { id: typeof tab; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'today',    label: 'Уборка',     icon: <Brush size={16} />,        count: pendingCleaning.length },
     { id: 'bookings', label: 'Заезды',    icon: <CalendarDays size={16} />, count: currentStays.length + upcoming.length },
-    { id: 'payment',  label: 'Оплата',    icon: <Banknote size={16} />,    count: totalOwed > 0 ? undefined : undefined },
+    { id: 'payment',  label: 'Оплата',    icon: <Banknote size={16} />,    count: dueOwed > 0 ? undefined : undefined },
     { id: 'calendar', label: 'Календарь', icon: <CalendarDays size={16} /> },
     { id: 'archive',  label: 'Архив',     icon: <FileText size={16} />,     count: archive.length },
   ]
@@ -6241,9 +6282,9 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
                   {item.count}
                 </span>
               )}
-              {item.id === 'payment' && totalOwed > 0 && (
+              {item.id === 'payment' && dueOwed > 0 && (
                 <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-600 flex-shrink-0">
-                  {fmtEur(totalOwed)}
+                  {fmtEur(dueOwed)}
                 </span>
               )}
             </button>
@@ -6251,19 +6292,21 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
         </nav>
 
         {/* Payment hint */}
-        {totalOwed > 0 && (
+        {dueOwed > 0 && (
           <div className="mt-auto mx-1 p-3 rounded-xl bg-red-50 border border-red-100">
             <p className="text-[10px] text-red-600 font-semibold mb-0.5">Ожидает оплаты</p>
-            <p className="text-lg font-bold text-red-700">{fmtEur(totalOwed)}</p>
+            <p className="text-lg font-bold text-red-700">{fmtEur(dueOwed)}</p>
+            {futureOwed > 0 && <p className="text-[10px] text-red-600/60 mt-0.5">+ {fmtEur(futureOwed)} за предстоящие</p>}
           </div>
         )}
-        {totalOwed === 0 && totalEarned > 0 && (
+        {dueOwed === 0 && totalEarned > 0 && (
           <div className="mt-auto mx-1 p-3 rounded-xl bg-emerald-50 border border-emerald-100">
             <p className="text-[10px] text-emerald-700 font-semibold">✓ Все выплачено</p>
             <p className="text-lg font-bold text-emerald-700">{fmtEur(totalPaid)}</p>
+            {futureOwed > 0 && <p className="text-[10px] text-emerald-700/60 mt-0.5">+ {fmtEur(futureOwed)} за предстоящие</p>}
           </div>
         )}
-        <p className={`${totalOwed === 0 && totalEarned === 0 ? 'mt-auto' : 'mt-2'} mx-1 text-[10px] text-muted-foreground/50`}>v{APP_VERSION}</p>
+        <p className={`${dueOwed === 0 && totalEarned === 0 ? 'mt-auto' : 'mt-2'} mx-1 text-[10px] text-muted-foreground/50`}>v{APP_VERSION}</p>
       </aside>
 
       {/* ── Main content ── */}
@@ -6281,7 +6324,7 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
               className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${tab === item.id ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
               {item.icon}
               {item.label}
-              {item.id === 'payment' && totalOwed > 0 && (
+              {item.id === 'payment' && dueOwed > 0 && (
                 <span className="text-[9px] px-1 rounded-full bg-red-500 text-white font-bold">€</span>
               )}
               {item.id === 'today' && pendingCleaning.length > 0 && (
