@@ -443,7 +443,12 @@ function TaskCard({ task, onSelect, aptColor, ownerLabel, highlightCheckoutToday
           </div>
           <div className="flex-1 min-w-0">
             {ownerLabel && <p className="text-[11px] text-muted-foreground leading-tight truncate">Хозяин: {ownerLabel}</p>}
-            <p className="text-sm font-semibold text-foreground truncate">{b.guest_name || '—'}</p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <p className="text-sm font-semibold text-foreground truncate">{b.guest_name || '—'}</p>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold text-white flex-shrink-0" style={{ backgroundColor: color }}>
+                {b.apartments.title}
+              </span>
+            </div>
             <p className="text-xs text-muted-foreground truncate">{nights} н. · {b.guests_count} чел.</p>
           </div>
           <ChevronRight size={14} className="text-muted-foreground/40 flex-shrink-0 mt-1" />
@@ -467,7 +472,6 @@ function TaskCard({ task, onSelect, aptColor, ownerLabel, highlightCheckoutToday
             <span className="text-sm font-bold text-foreground whitespace-nowrap">{fmtEur(task.cleaning_fee)}</span>
             {isPaid && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold whitespace-nowrap">✓</span>}
             {isPartial && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-semibold whitespace-nowrap">½</span>}
-            {!isPaid && !isPartial && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 font-semibold whitespace-nowrap">✕</span>}
           </div>
         </div>
       </button>
@@ -897,6 +901,34 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   const unpaidList = all.filter(t => t.payment_status !== 'paid' && byApartment(t))
     .sort((a, b) => a.bookings.end_date.localeCompare(b.bookings.end_date))
   const doneCount = all.filter(t => t.status === 'done').length
+
+  // Группировка по хозяину для вкладки "Оплата" — уборщица может обслуживать объекты
+  // нескольких хозяев (друзей), и ей важно видеть отдельно по каждому: сколько он уже
+  // заплатил и сколько ещё должен, а не общий список без привязки к хозяину.
+  const groupByOwner = (list: TaskRow[]) => {
+    const map = new Map<string, TaskRow[]>()
+    list.forEach(t => {
+      const oid = t.bookings.apartments.owner_id
+      if (!map.has(oid)) map.set(oid, [])
+      map.get(oid)!.push(t)
+    })
+    return [...map.entries()]
+      .map(([ownerId, items]) => ({ ownerId, name: ownerName(ownerId) || 'Хозяин', items }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+  }
+  const unpaidByOwner = groupByOwner(unpaidList)
+  const paidByOwner = groupByOwner(paidList)
+  const ownerBalances = ownerIds.map(ownerId => {
+    const theirTasks = all.filter(t => t.bookings.apartments.owner_id === ownerId && byApartment(t))
+    const owed = theirTasks.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
+    const paid = theirTasks.reduce((s, t) => s + getPaidAmt(t), 0)
+    return {
+      ownerId, name: ownerName(ownerId) || 'Хозяин', owed, paid,
+      unpaidCount: theirTasks.filter(t => t.payment_status !== 'paid').length,
+      paidCount: theirTasks.filter(t => t.payment_status === 'paid').length,
+    }
+  }).sort((a, b) => b.owed - a.owed)
+  const multiOwner = ownerIds.length > 1
   const pendingCleaningSum = pendingCleaning.reduce((s, t) => s + t.cleaning_fee, 0)
   const pluralUborka = (n: number) => n === 1 ? 'уборка' : n < 5 ? 'уборки' : 'уборок'
 
@@ -1397,6 +1429,34 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                 </div>
               )}
 
+              {multiOwner && ownerBalances.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Баланс по хозяевам</h3>
+                  <div className="flex flex-col gap-2">
+                    {ownerBalances.map(ob => (
+                      <div key={ob.ownerId} className={`bg-card border rounded-2xl px-4 py-3 flex items-center gap-3 ${ob.owed > 0 ? 'border-red-200' : 'border-emerald-200'}`}>
+                        <div className="w-8 h-8 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center flex-shrink-0 text-xs">
+                          {ob.name.slice(0, 1).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-foreground truncate">{ob.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {ob.unpaidCount > 0 ? `${ob.unpaidCount} ${pluralUborka(ob.unpaidCount)} не оплачено` : 'всё оплачено'}
+                            {ob.paidCount > 0 ? ` · ${ob.paidCount} оплачено` : ''}
+                          </p>
+                        </div>
+                        <div className="flex-shrink-0 text-right">
+                          {ob.owed > 0
+                            ? <p className="text-sm font-bold text-red-600 whitespace-nowrap">−{fmtEur(ob.owed)}</p>
+                            : <p className="text-sm font-bold text-emerald-600 whitespace-nowrap">✓ 0,00 €</p>}
+                          {ob.paid > 0 && <p className="text-[10px] text-muted-foreground whitespace-nowrap">получено {fmtEur(ob.paid)}</p>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {unpaidList.length > 0 && (
                 <div>
                   <button onClick={() => toggleSection('unpaid')}
@@ -1405,7 +1465,20 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                     <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label">Не оплачено — {unpaidList.length}</h3>
                   </button>
                   {!collapsedSections.has('unpaid') && (
-                    <div className="flex flex-col gap-2">{unpaidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
+                    multiOwner ? (
+                      <div className="flex flex-col gap-4">
+                        {unpaidByOwner.map(group => (
+                          <div key={group.ownerId}>
+                            <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest px-1 mb-2">{group.name} — {group.items.length}</p>
+                            <div className="flex flex-col gap-2">
+                              {group.items.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} highlightCheckoutToday />)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2">{unpaidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} highlightCheckoutToday />)}</div>
+                    )
                   )}
                 </div>
               )}
@@ -1417,7 +1490,20 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                     <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label">Оплачено — {paidList.length}</h3>
                   </button>
                   {!collapsedSections.has('paid') && (
-                    <div className="flex flex-col gap-2">{paidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
+                    multiOwner ? (
+                      <div className="flex flex-col gap-4">
+                        {paidByOwner.map(group => (
+                          <div key={group.ownerId}>
+                            <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest px-1 mb-2">{group.name} — {group.items.length}</p>
+                            <div className="flex flex-col gap-2">
+                              {group.items.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} highlightCheckoutToday />)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2">{paidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} highlightCheckoutToday />)}</div>
+                    )
                   )}
                 </div>
               )}
