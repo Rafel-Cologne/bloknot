@@ -953,6 +953,14 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   const totalEarned = totalOwed + totalPaid
   const pct = totalEarned > 0 ? Math.round((totalPaid / totalEarned) * 100) : 0
 
+  // "Ожидает оплаты" должно отражать только то, что хозяин реально должен перевести прямо
+  // сейчас — то есть гость уже выехал И уборка отмечена сделанной. Пока бронь ещё не
+  // случилась (или случилась, но уборки ещё не было), это будущая, а не текущая
+  // задолженность — и не должно попадать в общую сумму "к оплате".
+  const isDueNow = (t: TaskRow) => t.bookings.end_date <= today && t.status === 'done'
+  const dueOwed = all.filter(isDueNow).reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
+  const futureOwed = Math.max(0, totalOwed - dueOwed)
+
   // Stable apartment list + colors (for calendar + the payment filter)
   const apartments = useMemo(() => {
     const seen = new Set<string>()
@@ -1076,17 +1084,20 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   const paidByOwner = groupByOwner(paidList)
   const ownerBalances = ownerIds.map(ownerId => {
     const theirTasks = all.filter(t => t.bookings.apartments.owner_id === ownerId && byApartment(t))
-    const owed = theirTasks.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
+    const dueTasks = theirTasks.filter(isDueNow)
+    const owed = dueTasks.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
     const paid = theirTasks.reduce((s, t) => s + getPaidAmt(t), 0)
+    const futureUnpaid = theirTasks.filter(t => !isDueNow(t) && t.payment_status !== 'paid')
+    const future = futureUnpaid.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
     return {
-      ownerId, name: ownerName(ownerId) || 'Хозяин', owed, paid,
-      unpaidCount: theirTasks.filter(t => t.payment_status !== 'paid').length,
+      ownerId, name: ownerName(ownerId) || 'Хозяин', owed, paid, future,
+      unpaidCount: dueTasks.filter(t => t.payment_status !== 'paid').length,
       paidCount: theirTasks.filter(t => t.payment_status === 'paid').length,
     }
   }).sort((a, b) => b.owed - a.owed)
   const multiOwner = ownerIds.length > 1
-  const pendingCleaningSum = pendingCleaning.reduce((s, t) => s + t.cleaning_fee, 0)
   const pluralUborka = (n: number) => n === 1 ? 'уборка' : n < 5 ? 'уборки' : 'уборок'
+  const dueUnpaidCount = all.filter(t => isDueNow(t) && t.payment_status !== 'paid').length
 
   return (
     <div className="flex flex-1 h-full overflow-hidden">
@@ -1120,8 +1131,8 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                   {item.count}
                 </span>
               )}
-              {item.id === 'payment' && totalOwed > 0 && (
-                <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-600 flex-shrink-0">{fmtEur(totalOwed)}</span>
+              {item.id === 'payment' && dueOwed > 0 && (
+                <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-600 flex-shrink-0">{fmtEur(dueOwed)}</span>
               )}
             </button>
           ))}
@@ -1133,15 +1144,17 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
             <p className="text-lg font-bold text-purple-800">{fmtEur(cashBalance)}</p>
           </button>
         )}
-        {totalOwed > 0 ? (
+        {dueOwed > 0 ? (
           <div className="mt-3 mx-1 p-3 rounded-xl bg-red-50 border border-red-100">
             <p className="text-[10px] text-red-600 font-semibold mb-0.5">Ожидает оплаты</p>
-            <p className="text-lg font-bold text-red-700">{fmtEur(totalOwed)}</p>
+            <p className="text-lg font-bold text-red-700">{fmtEur(dueOwed)}</p>
+            {futureOwed > 0 && <p className="text-[10px] text-red-600/60 mt-0.5">+{fmtEur(futureOwed)} за предстоящие</p>}
           </div>
         ) : totalEarned > 0 ? (
           <div className="mt-3 mx-1 p-3 rounded-xl bg-emerald-50 border border-emerald-100">
             <p className="text-[10px] text-emerald-700 font-semibold">✓ Всё выплачено</p>
             <p className="text-lg font-bold text-emerald-700">{fmtEur(totalPaid)}</p>
+            {futureOwed > 0 && <p className="text-[10px] text-emerald-700/60 mt-0.5">+{fmtEur(futureOwed)} за предстоящие</p>}
           </div>
         ) : null}
         <button onClick={() => previewAsAdmin ? onExitPreview?.() : signOut()}
@@ -1512,12 +1525,12 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                   <p className="text-xl sm:text-2xl font-bold text-foreground whitespace-nowrap">{doneCount}</p>
                   <p className="text-xs text-muted-foreground mt-1">{fmtEur(totalEarned)} за все заезды</p>
                 </div>
-                <div className={`bg-card border rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center ${pendingCleaning.length > 0 ? 'border-red-200' : 'border-emerald-200'}`}>
+                <div className={`bg-card border rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center ${dueOwed > 0 ? 'border-red-200' : 'border-emerald-200'}`}>
                   <p className="text-xs text-muted-foreground mb-2">Ожидает оплаты</p>
-                  <p className={`text-xl sm:text-2xl font-bold whitespace-nowrap ${pendingCleaning.length > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                    {pendingCleaning.length > 0 ? `${pendingCleaning.length} ${pluralUborka(pendingCleaning.length)}` : '0 уборок'}
+                  <p className={`text-xl sm:text-2xl font-bold whitespace-nowrap ${dueOwed > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                    {dueUnpaidCount > 0 ? `${dueUnpaidCount} ${pluralUborka(dueUnpaidCount)}` : '0 уборок'}
                   </p>
-                  <p className="text-xs text-muted-foreground mt-1">{pendingCleaning.length > 0 ? fmtEur(pendingCleaningSum) : 'долгов нет 🎉'}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{dueOwed > 0 ? fmtEur(dueOwed) : ''}</p>
                 </div>
                 <div className="bg-card border border-emerald-200 rounded-2xl p-4 sm:p-5 shadow-sm text-center flex flex-col items-center">
                   <p className="text-xs text-muted-foreground mb-2">Получено</p>
@@ -1650,6 +1663,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                             ? <p className="text-sm font-bold text-red-600 whitespace-nowrap">−{fmtEur(ob.owed)}</p>
                             : <p className="text-sm font-bold text-emerald-600 whitespace-nowrap">✓ 0,00 €</p>}
                           {ob.paid > 0 && <p className="text-[10px] text-muted-foreground whitespace-nowrap">получено {fmtEur(ob.paid)}</p>}
+                          {ob.future > 0 && <p className="text-[10px] text-muted-foreground/70 whitespace-nowrap">+{fmtEur(ob.future)} за предстоящие</p>}
                         </div>
                       </div>
                     ))}
@@ -1782,7 +1796,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
               )}
               {item.icon}
               <span className="text-[10px] font-medium">{item.label}</span>
-              {item.id === 'payment' && totalOwed > 0 && (
+              {item.id === 'payment' && dueOwed > 0 && (
                 <span className="absolute top-0 right-4 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">€</span>
               )}
               {item.id === 'today' && pendingCleaning.length > 0 && (
