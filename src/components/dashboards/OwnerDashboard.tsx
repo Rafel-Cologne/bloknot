@@ -5435,6 +5435,18 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
     onSuccess: () => { onRefresh(); qc.invalidateQueries({ queryKey: ['owner-bookings-full'] }) },
   })
 
+  // Хозяин может напрямую переключить способ оплаты (наличные/перевод) для конкретной
+  // брони — независимо от того, оплачена она уже или нет. Для Airbnb/Booking способ жёстко
+  // "перевод" (гость с уборщицей не встречается лично), поэтому там переключатель не даём.
+  const changePaymentMethod = useMutation({
+    mutationFn: async ({ taskId, method }: { taskId: string; method: 'owner_transfer' | 'guest_cash' }) => {
+      const { error } = await supabase.from('cleaning_tasks')
+        .update({ payment_method: method } as never).eq('id', taskId)
+      if (error) throw error
+    },
+    onSuccess: () => { onRefresh(); qc.invalidateQueries({ queryKey: ['owner-bookings-full'] }) },
+  })
+
   const bulkPayment = useMutation({
     mutationFn: async (taskIds: string[]) => {
       for (const id of taskIds) {
@@ -6526,10 +6538,27 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
                       {!isPaid && !isPartial && <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-semibold">Не оплачено</span>}
                     </span>
                   </div>
-                  {task?.payment_method && (
+                  {task && (
                     <div className="flex items-center justify-between gap-2 text-sm">
                       <span className="text-muted-foreground">Способ</span>
-                      <span className="text-foreground text-xs">{task.payment_method === 'owner_transfer' ? '🏦 Перевод' : '💵 Наличные'}</span>
+                      {isPlatform(b) ? (
+                        <span className="text-foreground text-xs">🏦 Перевод</span>
+                      ) : (
+                        <div className="flex gap-1">
+                          <button type="button"
+                            onClick={() => changePaymentMethod.mutate({ taskId: task.id, method: 'guest_cash' })}
+                            disabled={changePaymentMethod.isPending}
+                            className={`text-[11px] px-2 py-1 rounded-lg font-semibold border transition-colors disabled:opacity-50 ${task.payment_method === 'guest_cash' ? 'bg-purple-600 text-white border-purple-600' : 'border-border text-muted-foreground hover:bg-muted'}`}>
+                            💵 Наличные
+                          </button>
+                          <button type="button"
+                            onClick={() => changePaymentMethod.mutate({ taskId: task.id, method: 'owner_transfer' })}
+                            disabled={changePaymentMethod.isPending}
+                            className={`text-[11px] px-2 py-1 rounded-lg font-semibold border transition-colors disabled:opacity-50 ${task.payment_method === 'owner_transfer' ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:bg-muted'}`}>
+                            🏦 Перевод
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                   <div className="flex items-center justify-between gap-2 text-sm">
