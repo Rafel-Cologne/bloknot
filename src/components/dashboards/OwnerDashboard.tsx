@@ -3772,6 +3772,10 @@ function EditBookingModal({ booking, onClose, onSaved }: {
   const [cleaningStr, setCleaningStr] = useState(
     String(booking.cleaning_tasks[0]?.cleaning_fee ?? '')
   )
+  // Тоже строкой — иначе при стирании числа поле мгновенно откатывается обратно к 1
+  // (min=1 + Math.max(1, +'')), не давая ввести новое число нормально (получалось "12"
+  // вместо "2", потому что печаталось поверх "1", а не после очистки поля).
+  const [guestsStr, setGuestsStr] = useState(String(booking.guests_count || ''))
 
   // Normalize decimal separator (comma → dot) for European input
   const parseDecimal = (val: string) => parseFloat(val.replace(',', '.'))
@@ -3811,12 +3815,13 @@ function EditBookingModal({ booking, onClose, onSaved }: {
     setSaving(true); setError(null)
 
     const totalAmount = parseDecimal(rentalStr)
+    const guestsCount = Math.max(1, parseInt(guestsStr, 10) || 1)
     const { error: err } = await supabase.from('bookings').update({
       guest_name: form.guest_name.trim(),
       guest_phone: form.guest_phone.trim(),
       start_date: form.start_date,
       end_date: form.end_date,
-      guests_count: form.guests_count,
+      guests_count: guestsCount,
       source: form.source,
       total_amount: !isNaN(totalAmount) && totalAmount > 0 ? totalAmount : null,
       owner_notes: form.owner_notes.trim() || null,
@@ -3919,8 +3924,8 @@ function EditBookingModal({ booking, onClose, onSaved }: {
           <div className="grid grid-cols-3 gap-3">
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Гостей</label>
-              <input type="number" min={1} max={20} value={form.guests_count}
-                onChange={e => set('guests_count', Math.max(1, +e.target.value))} className={inputCls} />
+              <input type="text" inputMode="numeric" placeholder="1" value={guestsStr}
+                onChange={e => setGuestsStr(e.target.value.replace(/[^0-9]/g, ''))} className={inputCls} />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Аренда, €</label>
