@@ -449,6 +449,25 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // "Цена/ночь" в этой форме — базовая ставка (колонка apartments.price_per_night), а не
+  // сиюминутная действующая цена: если сейчас идёт сезон (см. "Сезонные цены"), реальная
+  // цена на сегодня может отличаться. Подменять здесь редактируемое поле сезонным значением
+  // нельзя — иначе случайное сохранение формы (например, ради смены фото) молча перезаписало
+  // бы базовую цену сезонной. Вместо этого просто показываем действующую сейчас цену рядом,
+  // чтобы хозяин не путался, почему в поле "старое" число.
+  const today = new Date().toISOString().slice(0, 10)
+  const { data: activeTodayPrice } = useQuery({
+    queryKey: ['apt-active-price-single', initial?.id, today],
+    queryFn: async () => {
+      if (!initial?.id) return null
+      const { data, error } = await supabase.from('custom_pricing')
+        .select('price').eq('apartment_id', initial.id).eq('date', today).maybeSingle()
+      if (error) throw error
+      return (data as { price: number } | null)?.price ?? null
+    },
+    enabled: !!initial?.id,
+  })
+
   // Клинер, назначенный на объект — сейчас у большинства пользователей он вообще один на
   // всех (несколько владельцев пользуются одним и тем же клинером), поэтому если вариант ровно
   // один — подставляем его автоматически, но поле остаётся редактируемым (пригодится, когда
@@ -571,6 +590,11 @@ function ApartmentModal({ initial, ownerId, onClose, onSaved }: {
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{l}</label>
                 <input type="number" min={0} value={form[k as keyof AptForm] as number}
                   onChange={e => setForm(f => ({ ...f, [k]: parseFloat(e.target.value) || 0 }))} className={inputCls} />
+                {k === 'price_per_night' && activeTodayPrice != null && activeTodayPrice !== form.price_per_night && (
+                  <p className="text-[10px] text-amber-700 leading-tight">
+                    Сейчас действует сезонная цена: <span className="font-semibold">{fmtEur(activeTodayPrice)}</span>. Это поле — базовая цена вне сезона.
+                  </p>
+                )}
               </div>
             ))}
           </div>
