@@ -6457,7 +6457,11 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
       {/* ── Booking detail modal ── */}
       <AnimatePresence>
         {selectedBooking && (() => {
-          const b    = selectedBooking
+          // Берём свежую версию брони из bookings по id, а не застывший снимок из
+          // selectedBooking — иначе после смены способа оплаты (или любого другого
+          // изменения) кнопки в открытом окне не отражают новое состояние, пока окно
+          // не закроют и не откроют заново (хотя в базе всё уже сохранено верно).
+          const b    = bookings.find(x => x.id === selectedBooking.id) ?? selectedBooking
           const task = b.cleaning_tasks[0]
           const fee  = task?.cleaning_fee ?? 0
           const paid = task ? getPaidAmt(task) : 0
