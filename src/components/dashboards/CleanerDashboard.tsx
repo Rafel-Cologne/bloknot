@@ -412,9 +412,9 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh, readOnly }: {
 
 // ─── Card (list item) ───────────────────────────────────────────────────────────
 
-function TaskCard({ task, onSelect, aptColor, ownerLabel, highlightCheckoutToday, compact }: {
+function TaskCard({ task, onSelect, aptColor, ownerLabel, highlightCheckoutToday, compact, showDueBadge }: {
   task: TaskRow; onSelect: () => void; aptColor: (id: string) => string
-  ownerLabel?: string; highlightCheckoutToday?: boolean; compact?: boolean
+  ownerLabel?: string; highlightCheckoutToday?: boolean; compact?: boolean; showDueBadge?: boolean
 }) {
   const b = task.bookings
   const today = new Date().toISOString().slice(0, 10)
@@ -426,11 +426,18 @@ function TaskCard({ task, onSelect, aptColor, ownerLabel, highlightCheckoutToday
   const nights = Math.max(1, Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000))
   const color = aptColor(b.apartments.id)
   const country = b.guest_phone ? detectCountry(b.guest_phone) : null
+  // На вкладке "Оплата" карточка входит в реальную задолженность "Ожидает оплаты" только
+  // если выезд уже случился и уборка отмечена сделанной — так же, как считается dueOwed.
+  // Подсвечиваем такие карточки красным, чтобы было видно, какие именно уборки составляют сумму.
+  const dueNow = b.end_date <= today && task.status === 'done'
+  const highlightDue = showDueBadge && dueNow && !isPaid && !isPartial
 
   const borderClass = checkoutToday && highlightCheckoutToday
     ? 'border-2 border-amber-400'
-    : `border hover:border-primary/30 ${isCur ? 'ring-1 ring-primary/20' : 'border-border'}`
-  const borderStyle = isCur && !(checkoutToday && highlightCheckoutToday) ? { borderColor: color } : undefined
+    : highlightDue
+      ? 'border border-red-300 bg-red-50/60'
+      : `border hover:border-primary/30 ${isCur ? 'ring-1 ring-primary/20' : 'border-border'}`
+  const borderStyle = isCur && !(checkoutToday && highlightCheckoutToday) && !highlightDue ? { borderColor: color } : undefined
 
   // Компактная карточка — для узких колонок (сетка по объектам во вкладке "Уборка"),
   // где широкий горизонтальный ряд из обычной карточки переносился на несколько строк
@@ -545,7 +552,8 @@ function TaskCard({ task, onSelect, aptColor, ownerLabel, highlightCheckoutToday
           <p className="text-lg font-bold text-foreground">{fmtEur(task.cleaning_fee)}</p>
           {isPaid && <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">✓ Оплачено</span>}
           {isPartial && <span className="text-[11px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-semibold">Частично</span>}
-          {!isPaid && !isPartial && <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-semibold">Не оплачено</span>}
+          {!isPaid && !isPartial && (!showDueBadge || dueNow) && <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-semibold">Не оплачено</span>}
+          {!isPaid && !isPartial && showDueBadge && !dueNow && <span className="text-[11px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-semibold">Предстоящее</span>}
           <p className="text-[10px] text-muted-foreground font-medium">{task.payment_method === 'owner_transfer' ? '🏦 Перевод' : task.payment_method === 'guest_cash' ? '💵 Наличные' : ''}</p>
         </div>
         <ChevronRight size={14} className="text-muted-foreground/40 flex-shrink-0" />
@@ -1678,22 +1686,28 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                     <ChevronRight size={13} className={`text-muted-foreground transition-transform ${collapsedSections.has('unpaid') ? '' : 'rotate-90'}`} />
                     <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label">Не оплачено — {unpaidList.length}</h3>
                   </button>
-                  {!collapsedSections.has('unpaid') && (
-                    multiOwner ? (
+                  {!collapsedSections.has('unpaid') && (<>
+                    {dueOwed > 0 && (
+                      <div className="flex items-center gap-3 mb-2.5 text-[10px] text-muted-foreground">
+                        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-100 border border-red-300 inline-block" /> входит в «Ожидает оплаты» ({fmtEur(dueOwed)})</span>
+                        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-muted border border-border inline-block" /> ещё предстоящее, не долг</span>
+                      </div>
+                    )}
+                    {multiOwner ? (
                       <div className="flex flex-col gap-4">
                         {unpaidByOwner.map(group => (
                           <div key={group.ownerId}>
                             <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest px-1 mb-2">{group.name} — {group.items.length}</p>
                             <div className="flex flex-col gap-2">
-                              {group.items.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} highlightCheckoutToday />)}
+                              {group.items.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} highlightCheckoutToday showDueBadge />)}
                             </div>
                           </div>
                         ))}
                       </div>
                     ) : (
-                      <div className="flex flex-col gap-2">{unpaidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} highlightCheckoutToday />)}</div>
-                    )
-                  )}
+                      <div className="flex flex-col gap-2">{unpaidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} highlightCheckoutToday showDueBadge />)}</div>
+                    )}
+                  </>)}
                 </div>
               )}
               {paidList.length > 0 && (
