@@ -1090,17 +1090,23 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   }
   const unpaidByOwner = groupByOwner(unpaidList)
   const paidByOwner = groupByOwner(paidList)
+  // Баланс по хозяевам всегда считаем по ВСЕМ объектам хозяина, а не только по объекту,
+  // выбранному в фильтре "Квартира" — иначе при переключении фильтра долг хозяина за
+  // другие его квартиры пропадал бы из виду (он никуда не делся, просто скрыт фильтром
+  // списка карточек ниже). Фильтр квартиры должен влиять только на список карточек.
   const ownerBalances = ownerIds.map(ownerId => {
-    const theirTasks = all.filter(t => t.bookings.apartments.owner_id === ownerId && byApartment(t))
+    const theirTasks = all.filter(t => t.bookings.apartments.owner_id === ownerId)
     const dueTasks = theirTasks.filter(isDueNow)
-    const owed = dueTasks.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
+    const dueUnpaidTasks = dueTasks.filter(t => t.payment_status !== 'paid')
+    const owed = dueUnpaidTasks.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
     const paid = theirTasks.reduce((s, t) => s + getPaidAmt(t), 0)
     const futureUnpaid = theirTasks.filter(t => !isDueNow(t) && t.payment_status !== 'paid')
     const future = futureUnpaid.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
     return {
       ownerId, name: ownerName(ownerId) || 'Хозяин', owed, paid, future,
-      unpaidCount: dueTasks.filter(t => t.payment_status !== 'paid').length,
+      unpaidCount: dueUnpaidTasks.length,
       paidCount: theirTasks.filter(t => t.payment_status === 'paid').length,
+      dueUnpaidTasks,
     }
   }).sort((a, b) => b.owed - a.owed)
   const multiOwner = ownerIds.length > 1
@@ -1655,7 +1661,12 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                   <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Баланс по хозяевам</h3>
                   <div className="flex flex-col gap-2">
                     {ownerBalances.map(ob => (
-                      <div key={ob.ownerId} className={`bg-card border rounded-2xl px-4 py-3 flex items-center gap-3 ${ob.owed > 0 ? 'border-red-200' : 'border-emerald-200'}`}>
+                      <button key={ob.ownerId} onClick={() => setStatModal({
+                        title: ob.name,
+                        subtitle: ob.owed > 0 ? `Должен ${fmtEur(ob.owed)} — за какие уборки` : 'Долгов нет',
+                        items: ob.dueUnpaidTasks,
+                      })}
+                        className={`bg-card border rounded-2xl px-4 py-3 flex items-center gap-3 text-left w-full transition-colors hover:bg-muted/50 ${ob.owed > 0 ? 'border-red-200' : 'border-emerald-200'}`}>
                         <div className="w-8 h-8 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center flex-shrink-0 text-xs">
                           {ob.name.slice(0, 1).toUpperCase()}
                         </div>
@@ -1673,7 +1684,8 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                           {ob.paid > 0 && <p className="text-[10px] text-muted-foreground whitespace-nowrap">получено {fmtEur(ob.paid)}</p>}
                           {ob.future > 0 && <p className="text-[10px] text-muted-foreground/70 whitespace-nowrap">+{fmtEur(ob.future)} за предстоящие</p>}
                         </div>
-                      </div>
+                        <ChevronRight size={14} className="text-muted-foreground/40 flex-shrink-0" />
+                      </button>
                     ))}
                   </div>
                 </div>
