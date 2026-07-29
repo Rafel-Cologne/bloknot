@@ -1735,7 +1735,9 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
             (s: number, t: { cleaning_fee: number }) => s + (t.cleaning_fee ?? 0), 0
           ) ?? 0
           const rent = (bk as any).total_amount ?? null
-          const total = rent != null ? rent + cleaningFee : null
+          // Округляем до центов сразу — сложение чисел с плавающей точкой (например 459.68 + 60)
+          // в JS может давать 519.6800000000001, и без округления это утекало в отображение.
+          const total = rent != null ? Math.round((rent + cleaningFee) * 100) / 100 : null
           return (
             <div
               className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm px-4"
@@ -1788,19 +1790,19 @@ export function CalendarSection({ apartments, selectedApt, setSelectedApt, readO
                     {rent != null && (
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-muted-foreground">Аренда</span>
-                        <span className="text-sm font-semibold">{rent} €</span>
+                        <span className="text-sm font-semibold">{fmtEur(rent)}</span>
                       </div>
                     )}
                     {cleaningFee > 0 && (
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-muted-foreground">Уборка</span>
-                        <span className="text-sm font-semibold text-slate-600">{cleaningFee} €</span>
+                        <span className="text-sm font-semibold text-slate-600">{fmtEur(cleaningFee)}</span>
                       </div>
                     )}
                     {total != null && (
                       <div className="flex items-center justify-between border-t border-border pt-2 mt-1">
                         <span className="text-sm font-bold">Итого</span>
-                        <span className="text-base font-bold text-emerald-700">{total} €</span>
+                        <span className="text-base font-bold text-emerald-700">{fmtEur(total)}</span>
                       </div>
                     )}
                   </div>
@@ -3246,7 +3248,7 @@ function DashboardOverview({
                   {eventBooking.total_amount && eventBooking.total_amount > 0 && (
                     <div>
                       <p className="text-[10px] text-muted-foreground">Сумма</p>
-                      <p className="font-bold text-primary mt-0.5">{eventBooking.total_amount} €</p>
+                      <p className="font-bold text-primary mt-0.5">{fmtEur(eventBooking.total_amount)}</p>
                     </div>
                   )}
                 </div>
@@ -4076,6 +4078,7 @@ function BookingDetailModal({
 
 function AgentRefreshControl() {
   const qc = useQueryClient()
+  const { user } = useAuth()
   const [running, setRunning] = useState(false)
   const [resultMsg, setResultMsg] = useState<string | null>(null)
   const [isError, setIsError] = useState(false)
@@ -4097,6 +4100,7 @@ function AgentRefreshControl() {
 
   const invalidateAll = () => {
     qc.invalidateQueries({ queryKey: ['agent-last-run'] })
+    qc.invalidateQueries({ queryKey: ['agent-pending-events'] })
     qc.invalidateQueries({ queryKey: ['owner-bookings-full'] })
     qc.invalidateQueries({ queryKey: ['expenses-confirmed'] })
     qc.invalidateQueries({ queryKey: ['expenses-pending'] })
@@ -4144,7 +4148,22 @@ function AgentRefreshControl() {
           if (updated > 0) parts.push(`обновлено: ${updated}`)
           setResultMsg(parts.join(', '))
         } else {
-          setResultMsg('новых данных нет — всё актуально')
+          // created/updated считает только то, что агент применил САМ (auto-apply).
+          // Если хозяину нужно подтверждение вручную, новая бронь/счёт из этого запуска
+          // осядет в agent_pending_events, а не в bookings/expenses — и без этой проверки
+          // тут ошибочно писало бы "новых данных нет" рядом с красным колокольчиком.
+          let pendingCount = 0
+          if (user) {
+            const { count } = await supabase
+              .from('agent_pending_events')
+              .select('id', { count: 'exact', head: true })
+              .eq('owner_id', user.id)
+              .eq('seen', false)
+            pendingCount = count ?? 0
+          }
+          setResultMsg(pendingCount > 0
+            ? `ждёт подтверждения: ${pendingCount} 🔔`
+            : 'новых данных нет — всё актуально')
         }
         invalidateAll()
       } else {
