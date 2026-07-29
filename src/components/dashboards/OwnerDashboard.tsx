@@ -9411,7 +9411,10 @@ export default function OwnerDashboard() {
   // Админ может переключаться между тем, как видит кабинет он сам (admin — полный доступ),
   // обычный хозяин (owner — без вкладки "Админ") и уборщица (cleaner — реальный CleanerDashboard
   // с объектами всех клинеров/хозяев, в режиме только для чтения).
-  const [adminViewMode, setAdminViewMode] = useState<'admin' | 'owner' | 'cleaner'>('admin')
+  // По умолчанию кабинет открывается как обычный хозяин ("owner"), а не сразу в режиме
+  // администратора — админ-доступ переключается вручную через "Админ" в шапке, когда
+  // реально нужен (диагностика чужих данных и т.п.), а не показывается при каждом входе.
+  const [adminViewMode, setAdminViewMode] = useState<'admin' | 'owner' | 'cleaner'>('owner')
   const effectiveIsAdmin = isAdmin && adminViewMode === 'admin'
   const { theme, setTheme } = useTheme()
   const isSaasTheme = theme === 'saas-dark' || theme === 'saas-light'
