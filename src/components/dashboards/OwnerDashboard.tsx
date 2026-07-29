@@ -642,7 +642,10 @@ function PricingModal({ apartment, onClose }: { apartment: Apartment; onClose: (
   const qc = useQueryClient()
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  const [price, setPrice] = useState(apartment.price_per_night || 0)
+  // Строкой, а не числом — иначе при попытке стереть "0" и ввести свою цену e.target.value
+  // становится пустой строкой, +'' даёт 0, и поле тут же само возвращается к "0" вместо того
+  // чтобы остаться пустым для ввода (из-за этого цифры печатались после "0", напр. "090").
+  const [price, setPrice] = useState(apartment.price_per_night ? String(apartment.price_per_night) : '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const today = new Date().toISOString().slice(0, 10)
@@ -682,13 +685,15 @@ function PricingModal({ apartment, onClose }: { apartment: Apartment; onClose: (
 
   const handleSave = async () => {
     if (!from || !to || to < from) { setError('Укажите корректный период'); return }
+    const priceNum = Number(price.replace(',', '.'))
+    if (!price || isNaN(priceNum) || priceNum <= 0) { setError('Укажите цену за ночь'); return }
     setSaving(true); setError(null)
     // Generate all dates in range
     const records: { apartment_id: string; date: string; price: number }[] = []
     let d = parseISO(from)
     const end = parseISO(to)
     while (d <= end) {
-      records.push({ apartment_id: apartment.id, date: format(d, 'yyyy-MM-dd'), price })
+      records.push({ apartment_id: apartment.id, date: format(d, 'yyyy-MM-dd'), price: priceNum })
       d = addDays(d, 1)
     }
     // Upsert (insert or update on conflict)
@@ -740,7 +745,7 @@ function PricingModal({ apartment, onClose }: { apartment: Apartment; onClose: (
           <div className="flex gap-2 items-end">
             <div className="flex flex-col gap-1 flex-1">
               <label className="text-xs text-muted-foreground">Цена за ночь, €</label>
-              <input type="number" min={0} value={price} onChange={e => setPrice(+e.target.value)} className={inputCls} />
+              <input type="text" inputMode="decimal" value={price} onChange={e => setPrice(e.target.value)} placeholder="0" className={inputCls} />
             </div>
             <button onClick={handleSave} disabled={saving || !from || !to}
               className="btn-primary rounded-xl px-4 py-2 text-sm disabled:opacity-50 whitespace-nowrap">
