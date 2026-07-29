@@ -5659,10 +5659,15 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
     const isCur      = b.start_date <= today && b.end_date > today
     const nights     = Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000)
     const color      = aptColorOf(b.apartment_id)
+    // Карточка входит в "Ожидает оплаты" (реальный долг прямо сейчас), только если выезд
+    // уже случился и уборка отмечена сделанной. Подсвечиваем такие карточки красным —
+    // чтобы визуально было видно, какие именно уборки составляют сумму в виджете.
+    const dueNow     = isDueNow(b)
+    const highlightDue = dueNow && !isPaid && !isChecked
 
     return (
-      <div key={b.id} className={`bg-card border rounded-2xl shadow-sm overflow-hidden transition-all ${isChecked ? 'border-emerald-400 ring-1 ring-emerald-300' : isCur ? 'ring-1 ring-primary/20' : 'border-border'}`}
-        style={isCur && !isChecked ? { borderColor: color } : undefined}>
+      <div key={b.id} className={`bg-card border rounded-2xl shadow-sm overflow-hidden transition-all ${isChecked ? 'border-emerald-400 ring-1 ring-emerald-300' : highlightDue ? 'border-red-300 bg-red-50/60' : isCur ? 'ring-1 ring-primary/20' : 'border-border'}`}
+        style={isCur && !isChecked && !highlightDue ? { borderColor: color } : undefined}>
         <div className="flex items-center gap-3 px-4 py-4">
           {/* Checkbox for bulk (only for unpaid) */}
           {!isPaid && (
@@ -5702,7 +5707,8 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
             <p className="text-lg font-bold text-foreground">{fmtEur(fee)}</p>
             {isPaid    && <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">✓ Оплачено</span>}
             {isPartial && <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-semibold">Частично {fmtEur(paid)}</span>}
-            {!isPaid && !isPartial && <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-semibold">{fmtEur(owed)} долг</span>}
+            {!isPaid && !isPartial && dueNow && <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-semibold">{fmtEur(owed)} долг</span>}
+            {!isPaid && !isPartial && !dueNow && <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-semibold">{fmtEur(owed)} предстоящее</span>}
             <div className="flex gap-1.5 mt-0.5">
               {(isPaid || isPartial) && (
                 <button onClick={() => revertPayment.mutate(task.id)}
@@ -6144,9 +6150,17 @@ function CleanerView({ bookings, onRefresh, ownerId, fullApartments }: { booking
                   )}
                 </div>
                 {!collapsedSections.has('unpaid') && (
-                  <div className="flex flex-col gap-2">
-                    {unpaidList.map(b => renderPaymentCard(b))}
-                  </div>
+                  <>
+                    {dueOwed > 0 && (
+                      <div className="flex items-center gap-3 mb-2.5 text-[10px] text-muted-foreground">
+                        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-100 border border-red-300 inline-block" /> входит в «Ожидает оплаты» ({fmtEur(dueOwed)})</span>
+                        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-muted border border-border inline-block" /> ещё предстоящее, не долг</span>
+                      </div>
+                    )}
+                    <div className="flex flex-col gap-2">
+                      {unpaidList.map(b => renderPaymentCard(b))}
+                    </div>
+                  </>
                 )}
               </div>
             )}
