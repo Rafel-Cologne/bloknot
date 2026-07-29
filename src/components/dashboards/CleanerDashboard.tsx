@@ -1663,7 +1663,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                     {ownerBalances.map(ob => (
                       <button key={ob.ownerId} onClick={() => setStatModal({
                         title: ob.name,
-                        subtitle: ob.owed > 0 ? `Должен ${fmtEur(ob.owed)} — за какие уборки` : 'Долгов нет',
+                        subtitle: ob.owed > 0 ? `Должен ${fmtEur(ob.owed)}` : 'Долгов нет',
                         items: ob.dueUnpaidTasks,
                       })}
                         className={`bg-card border rounded-2xl px-4 py-3 flex items-center gap-3 text-left w-full transition-colors hover:bg-muted/50 ${ob.owed > 0 ? 'border-red-200' : 'border-emerald-200'}`}>
