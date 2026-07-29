@@ -704,6 +704,7 @@ function PricingModal({ apartment, onClose }: { apartment: Apartment; onClose: (
     if (err) { setError(err.message); return }
     refetch()
     qc.invalidateQueries({ queryKey: ['cal-bookings'] })
+    qc.invalidateQueries({ queryKey: ['apt-active-prices'] })
     setFrom(''); setTo('')
   }
 
@@ -714,6 +715,7 @@ function PricingModal({ apartment, onClose }: { apartment: Apartment; onClose: (
     while (d <= end) { dates.push(format(d, 'yyyy-MM-dd')); d = addDays(d, 1) }
     await supabase.from('custom_pricing').delete()
       .eq('apartment_id', apartment.id).in('date', dates)
+    qc.invalidateQueries({ queryKey: ['apt-active-prices'] })
     refetch()
   }
 
@@ -3546,6 +3548,27 @@ function ApartmentsSection({
     return map
   }, [apartments, bookings])
 
+  // Карточка квартиры должна показывать реально действующую сейчас цену за ночь — если на
+  // сегодня установлена сезонная цена в "Сезонные цены", а не всегда только базовую
+  // price_per_night. Иначе после сохранения новой сезонной цены на текущий период карточка
+  // молча продолжает показывать старую (базовую) цифру, хотя фактически цена уже другая.
+  const today = new Date().toISOString().slice(0, 10)
+  const aptIds = apartments.map(a => a.id)
+  const { data: todayPrices } = useQuery({
+    queryKey: ['apt-active-prices', today, aptIds.join(',')],
+    queryFn: async () => {
+      if (!aptIds.length) return {} as Record<string, number>
+      const { data, error } = await supabase.from('custom_pricing')
+        .select('apartment_id, price').eq('date', today).in('apartment_id', aptIds)
+      if (error) throw error
+      const map: Record<string, number> = {}
+      ;(data as { apartment_id: string; price: number }[] | null)?.forEach(r => { map[r.apartment_id] = r.price })
+      return map
+    },
+    enabled: aptIds.length > 0,
+  })
+  const activePriceOf = (apt: Apartment) => todayPrices?.[apt.id] ?? apt.price_per_night
+
   const togglePublic = useMutation({
     mutationFn: async ({ id, is_public }: { id: string; is_public: boolean }) => {
       const { error } = await supabase.from('apartments').update({ is_public }).eq('id', id)
@@ -3617,8 +3640,11 @@ function ApartmentsSection({
                     <p className="flex items-center gap-1 text-xs text-muted-foreground">
                       <MapPin size={10} /> {apt.address}
                     </p>
-                    <p className="text-primary font-semibold text-sm">
-                      {apt.price_per_night > 0 ? `${fmtEur(apt.price_per_night)}/ночь` : '— €/ночь'}
+                    <p className="text-primary font-semibold text-sm flex items-center gap-1.5">
+                      {activePriceOf(apt) > 0 ? `${fmtEur(activePriceOf(apt))}/ночь` : '— €/ночь'}
+                      {todayPrices?.[apt.id] !== undefined && todayPrices[apt.id] !== apt.price_per_night && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">сезонная</span>
+                      )}
                     </p>
                     {amenities.length > 0 && (
                       <div className="flex gap-1 flex-wrap">
