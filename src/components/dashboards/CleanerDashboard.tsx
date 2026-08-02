@@ -996,19 +996,44 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
     ownerId: string; name: string
     pendingCleaning: TaskRow[]; newTasks: TaskRow[]; nearestUpcoming: TaskRow | null
     hasAlert: boolean
+    owed: number; paid: number; future: number; unpaidCount: number
   }
   const clients: ClientSummary[] = useMemo(() => {
     return ownerIds.map(ownerId => {
       const theirPendingCleaning = pendingCleaning.filter(t => t.bookings.apartments.owner_id === ownerId)
       const theirNewTasks = newTasks.filter(t => t.bookings.apartments.owner_id === ownerId)
       const theirUpcoming = upcoming.filter(t => t.bookings.apartments.owner_id === ownerId)
+      // Долг/оплата — так же, как считается на вкладке "Оплата": в "должен" попадают только
+      // уже реально ожидающие перевода уборки (гость выехал и уборка отмечена сделанной),
+      // а не всё, что ещё впереди — это отдельно показываем как "future".
+      const theirTasks = all.filter(t => t.bookings.apartments.owner_id === ownerId)
+      const dueTasks = theirTasks.filter(isDueNow)
+      const dueUnpaid = dueTasks.filter(t => t.payment_status !== 'paid')
+      const owed = dueUnpaid.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
+      const paid = theirTasks.reduce((s, t) => s + getPaidAmt(t), 0)
+      const futureUnpaid = theirTasks.filter(t => !isDueNow(t) && t.payment_status !== 'paid')
+      const future = futureUnpaid.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
       return {
         ownerId, name: ownerName(ownerId) || 'Хозяин',
         pendingCleaning: theirPendingCleaning, newTasks: theirNewTasks,
         nearestUpcoming: theirUpcoming[0] ?? null,
         hasAlert: theirPendingCleaning.length > 0 || theirNewTasks.length > 0,
+        owed, paid, future, unpaidCount: dueUnpaid.length,
       }
-    }).sort((a, b) => {
+    })
+  }, [ownerIds, pendingCleaning, newTasks, upcoming, ownerName, all])
+  const clientsWithAlert = clients.filter(c => c.hasAlert).length
+
+  // Сортировка списка клиентов — "По важности" (по умолчанию: сначала кто требует внимания,
+  // затем по ближайшему заезду) или "По долгу" (сначала кто должен больше всего — чтобы
+  // уборщица сразу видела, с кого спрашивать оплату).
+  const [clientSort, setClientSort] = useState<'priority' | 'debt'>('priority')
+  const sortedClients = useMemo(() => {
+    const list = [...clients]
+    if (clientSort === 'debt') {
+      return list.sort((a, b) => b.owed - a.owed || a.name.localeCompare(b.name, 'ru'))
+    }
+    return list.sort((a, b) => {
       if (a.hasAlert !== b.hasAlert) return a.hasAlert ? -1 : 1
       // У кого заезд ближе — тот выше; если ни у кого нет предстоящего заезда, по имени.
       const aDate = a.nearestUpcoming?.bookings.start_date
@@ -1018,8 +1043,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
       if (bDate) return 1
       return a.name.localeCompare(b.name, 'ru')
     })
-  }, [ownerIds, pendingCleaning, newTasks, upcoming, ownerName])
-  const clientsWithAlert = clients.filter(c => c.hasAlert).length
+  }, [clients, clientSort])
 
   const toggleClient = (ownerId: string) => {
     const opening = expandedClientId !== ownerId
@@ -1373,7 +1397,22 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
               </div>
             ) : (
               <div className="flex flex-col gap-3">
-                {clients.map(c => {
+                {clients.length > 1 && (
+                  <div className="flex items-center gap-2 self-start">
+                    <span className="text-xs text-muted-foreground font-medium">Сортировка:</span>
+                    <div className="flex items-center gap-0.5 bg-muted rounded-xl p-0.5">
+                      <button onClick={() => setClientSort('priority')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${clientSort === 'priority' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                        По важности
+                      </button>
+                      <button onClick={() => setClientSort('debt')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${clientSort === 'debt' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                        По долгу
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {sortedClients.map(c => {
                   const isOpen = expandedClientId === c.ownerId
                   return (
                     <div key={c.ownerId} className={`bg-card rounded-2xl shadow-sm transition-all ${c.hasAlert ? 'border-2 border-red-300' : 'border border-border'}`}>
@@ -1399,6 +1438,13 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                                 : 'Нет предстоящих заездов'
                             )}
                           </p>
+                        </div>
+                        {/* Должен / оплачено — видно сразу, без разворачивания карточки */}
+                        <div className="flex-shrink-0 text-right">
+                          {c.owed > 0
+                            ? <p className="text-sm font-bold text-red-600 whitespace-nowrap">−{fmtEur(c.owed)}</p>
+                            : <p className="text-sm font-bold text-emerald-600 whitespace-nowrap">✓ 0,00 €</p>}
+                          {c.paid > 0 && <p className="text-[10px] text-muted-foreground whitespace-nowrap">оплачено {fmtEur(c.paid)}</p>}
                         </div>
                         <ChevronRight size={16} className={`text-muted-foreground/40 flex-shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
                       </button>
