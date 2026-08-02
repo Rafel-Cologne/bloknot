@@ -7630,6 +7630,10 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
   const [aptFilter, setAptFilter] = useState<string>('all')
   const [chartMode, setChartMode] = useState<'income_expense' | 'paid_pending'>('income_expense')
   const [selMonth, setSelMonth] = useState(new Date().getMonth())
+  // "Актуальный доход" — только уже завершённые заезды (выезд позади) — против "весь
+  // ожидаемый доход", который включает ещё не заехавших/не выехавших гостей по уже
+  // подтверждённым броням. По умолчанию показываем весь ожидаемый — как было раньше.
+  const [onlyActual, setOnlyActual] = useState(false)
   const todayStr = format(new Date(), 'yyyy-MM-dd')
   const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i)
 
@@ -7644,7 +7648,7 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
     enabled: !!user,
   })
 
-  const [breakdownModal, setBreakdownModal] = useState<null | 'revenue' | 'cleaning' | 'expense' | 'net'>(null)
+  const [breakdownModal, setBreakdownModal] = useState<null | 'revenue' | 'cleaning' | 'expense' | 'net' | 'platform' | 'private'>(null)
 
   // Доход по брони: total_amount, если указан (уже за вычетом комиссии Airbnb); для частных
   // броней без суммы — грубая оценка по базовому тарифу квартиры; личные поездки хозяина — 0.
@@ -7673,6 +7677,7 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
     return Array.from({ length: 12 }, (_, m) => {
       const monthBookings = filteredBookings.filter(b => {
         if (b.status !== 'accepted') return false
+        if (onlyActual && b.end_date > todayStr) return false
         const d = parseISO(b.end_date)
         return d.getMonth() === m && d.getFullYear() === year
       })
@@ -7686,7 +7691,7 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
       return { m, revenue, cleaning, paid, pending, expense, net }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredBookings, filteredExpenses, year, todayStr, apartments])
+  }, [filteredBookings, filteredExpenses, year, todayStr, apartments, onlyActual])
 
   const selMonthData = monthly[selMonth] ?? { revenue: 0, cleaning: 0, paid: 0, pending: 0, expense: 0, net: 0 }
 
@@ -7698,13 +7703,23 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
   }), { revenue: 0, cleaning: 0, expense: 0, net: 0 })
 
   // Брони, которые вошли в «Общий доход» и «Уборку» за год — выезд приходится на выбранный
-  // год (учитываются и уже прошедшие, и ещё предстоящие подтверждённые брони, в отличие от
-  // карточки «Общий доход с начала года» на Дашборде, которая считает только уже завершённые
-  // заезды с начала года по сегодня — отсюда и разные цифры на этих двух страницах).
+  // год. В режиме "весь ожидаемый доход" (onlyActual=false) — и уже прошедшие, и ещё
+  // предстоящие подтверждённые брони; в режиме "только актуальный" (onlyActual=true) —
+  // только те, где гость уже выехал. Из-за этого цифры здесь могут отличаться от карточки
+  // «Общий доход с начала года» на Дашборде, которая всегда считает только завершённые
+  // заезды с начала года по сегодня.
   const yearBookings = useMemo(() => filteredBookings
-    .filter(b => b.status === 'accepted' && parseISO(b.end_date).getFullYear() === year)
+    .filter(b => b.status === 'accepted' && (!onlyActual || b.end_date <= todayStr) && parseISO(b.end_date).getFullYear() === year)
     .sort((a, b) => a.start_date.localeCompare(b.start_date)),
-  [filteredBookings, year])
+  [filteredBookings, year, onlyActual, todayStr])
+
+  // Разбивка по источнику — сколько приносят брони с платформ (Airbnb/Booking.com,
+  // комиссия площадки уже вычтена из total_amount) против частных броней (гость платит
+  // хозяину напрямую). Личные поездки хозяина (source 'personal') всегда считаются €0.
+  const platformBookings = useMemo(() => yearBookings.filter(b => b.source === 'airbnb' || b.source === 'booking'), [yearBookings])
+  const privateBookings  = useMemo(() => yearBookings.filter(b => b.source === 'other' || b.source === 'personal'), [yearBookings])
+  const platformRevenue  = platformBookings.reduce((s, b) => s + calcRevenue(b), 0)
+  const privateRevenue   = privateBookings.reduce((s, b) => s + calcRevenue(b), 0)
 
   const chartMax = Math.max(
     ...monthly.map(d => chartMode === 'income_expense' ? Math.max(d.revenue, d.expense) : d.revenue),
@@ -7740,6 +7755,23 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
         </div>
       </div>
 
+      {/* Actual vs expected income toggle */}
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-0.5 bg-muted rounded-xl p-0.5">
+          <button onClick={() => setOnlyActual(false)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${!onlyActual ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+            Весь ожидаемый доход
+          </button>
+          <button onClick={() => setOnlyActual(true)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${onlyActual ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+            Только актуальный (завершённые)
+          </button>
+        </div>
+        <p className="text-[11px] text-muted-foreground hidden sm:block">
+          {onlyActual ? '— считаются только уже выехавшие гости' : '— считаются и уже прошедшие, и ещё предстоящие подтверждённые заезды'}
+        </p>
+      </div>
+
       {/* Summary cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {([
@@ -7759,6 +7791,29 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
         ))}
       </div>
 
+      {/* Income by source */}
+      <div>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Доход по источнику</p>
+        <div className="grid grid-cols-2 gap-3">
+          <button onClick={() => setBreakdownModal('platform')}
+            className="bg-card border border-border rounded-2xl p-4 text-left hover:shadow-md hover:border-primary/30 transition-all">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide leading-tight flex items-center gap-1">
+              С платформ (Airbnb/Booking) <Info size={11} className="opacity-50" />
+            </p>
+            <p className="text-xl font-bold mt-1 text-foreground">{fmtEur(platformRevenue)}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">{platformBookings.length} {platformBookings.length === 1 ? 'бронь' : 'броней'}</p>
+          </button>
+          <button onClick={() => setBreakdownModal('private')}
+            className="bg-card border border-border rounded-2xl p-4 text-left hover:shadow-md hover:border-primary/30 transition-all">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide leading-tight flex items-center gap-1">
+              Частные брони <Info size={11} className="opacity-50" />
+            </p>
+            <p className="text-xl font-bold mt-1 text-foreground">{fmtEur(privateRevenue)}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">{privateBookings.length} {privateBookings.length === 1 ? 'бронь' : 'броней'}</p>
+          </button>
+        </div>
+      </div>
+
       {/* Breakdown modal — explains where each summary number comes from */}
       <AnimatePresence>
         {breakdownModal && (
@@ -7772,35 +7827,42 @@ function IncomeSection({ apartments, bookings }: { apartments: Apartment[]; book
                   {breakdownModal === 'cleaning' && 'Откуда взялась сумма уборки'}
                   {breakdownModal === 'expense' && 'Откуда взялись расходы'}
                   {breakdownModal === 'net' && 'Как считаются чистые на руки'}
+                  {breakdownModal === 'platform' && 'Доход с платформ (Airbnb/Booking)'}
+                  {breakdownModal === 'private' && 'Доход с частных броней'}
                 </h3>
                 <button onClick={() => setBreakdownModal(null)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X size={16} /></button>
               </div>
 
               <div className="flex-1 overflow-y-auto px-5 py-4">
-                {(breakdownModal === 'revenue' || breakdownModal === 'cleaning') && (
+                {(breakdownModal === 'revenue' || breakdownModal === 'cleaning' || breakdownModal === 'platform' || breakdownModal === 'private') && (
                   <>
                     <p className="text-sm text-muted-foreground mb-3">
                       {breakdownModal === 'revenue'
-                        ? <>Сумма по всем подтверждённым броням, у которых <b>выезд приходится на {year} год</b> — включая уже прошедшие заезды и ещё предстоящие (уже подтверждённые, но гость ещё не заехал). Личные поездки считаются как €0.</>
-                        : <>Уборка — это сумма, которая проходит транзитом клинеру и не является доходом хозяина. Берётся фактическая стоимость задачи на уборку (то, что реально получает уборщица), а если задачи нет — из разбивки Airbnb.</>
+                        ? <>Сумма по всем подтверждённым броням, у которых <b>выезд приходится на {year} год</b>{onlyActual ? <> и уже <b>состоялся</b> (режим «Только актуальный»)</> : <> — включая уже прошедшие заезды и ещё предстоящие (уже подтверждённые, но гость ещё не заехал)</>}. Личные поездки считаются как €0.</>
+                        : breakdownModal === 'cleaning'
+                        ? <>Уборка — это сумма, которая проходит транзитом клинеру и не является доходом хозяина. Берётся фактическая стоимость задачи на уборку (то, что реально получает уборщица), а если задачи нет — из разбивки Airbnb.</>
+                        : breakdownModal === 'platform'
+                        ? <>Брони с Airbnb и Booking.com за {year} год{onlyActual ? ' (только уже завершённые)' : ''} — сумма уже за вычетом комиссии площадки.</>
+                        : <>Частные брони (гость платит хозяину напрямую, минуя платформу) за {year} год{onlyActual ? ' (только уже завершённые)' : ''}.</>
                       }
                     </p>
-                    <p className="text-[11px] text-muted-foreground mb-2">
-                      Это <b>не то же самое</b>, что карточка «Общий доход с начала {year} года» на Дашборде — та считает только уже завершённые заезды с начала года по сегодня, а здесь — весь {year} год целиком, включая будущие брони.
-                    </p>
+                    {(breakdownModal === 'revenue' || breakdownModal === 'cleaning') && (
+                      <p className="text-[11px] text-muted-foreground mb-2">
+                        Это <b>не то же самое</b>, что карточка «Общий доход с начала {year} года» на Дашборде — та считает только уже завершённые заезды с начала года по сегодня, а здесь — {onlyActual ? 'тоже только завершённые, но за весь выбранный год' : 'весь ' + year + ' год целиком, включая будущие брони'}.
+                      </p>
+                    )}
                     <div className="flex flex-col divide-y divide-border border border-border rounded-xl overflow-hidden">
-                      {yearBookings.map(b => {
-                        const amount = breakdownModal === 'revenue'
-                          ? (b.source === 'personal' ? 0 : (b.total_amount && b.total_amount > 0) ? b.total_amount
-                              : (apartments.find(a => a.id === b.apartment_id)?.price_per_night ?? 0) * Math.round((parseISO(b.end_date).getTime() - parseISO(b.start_date).getTime()) / 86400000))
-                          : (b.cleaning_tasks[0]?.cleaning_fee ?? b.cleaning_fee_amount ?? 0)
+                      {(breakdownModal === 'platform' ? platformBookings : breakdownModal === 'private' ? privateBookings : yearBookings).map(b => {
+                        const amount = breakdownModal === 'cleaning'
+                          ? (b.cleaning_tasks[0]?.cleaning_fee ?? b.cleaning_fee_amount ?? 0)
+                          : calcRevenue(b)
                         if (amount === 0) return null
                         return (
                           <div key={b.id} className="flex items-center justify-between px-3 py-2 text-sm">
                             <div className="min-w-0">
                               <p className="font-medium text-foreground truncate">{b.guest_name || 'Без имени'}</p>
                               <p className="text-[11px] text-muted-foreground truncate">
-                                {b.apartments.title} · {format(parseISO(b.start_date), 'd MMM', { locale: ru })}–{format(parseISO(b.end_date), 'd MMM', { locale: ru })}
+                                {b.apartments.title} · {format(parseISO(b.start_date), 'd MMM', { locale: ru })}–{format(parseISO(b.end_date), 'd MMM', { locale: ru })} · {SOURCE_LABELS[b.source] ?? b.source}
                               </p>
                             </div>
                             <span className="font-semibold flex-shrink-0 ml-2">{fmtEur(amount)}</span>
