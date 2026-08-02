@@ -7276,19 +7276,23 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
 
   const aptName = (id: string) => apartments.find(a => a.id === id)?.title ?? '—'
 
+  // .toISOString() конвертирует в UTC — при часовом поясе восточнее UTC (Испания, UTC+1/+2)
+  // локальная полночь 1 января превращается в 31 декабря 22:00/23:00 UTC, и .slice(0,10)
+  // считывает уже "предыдущий" день. Форматируем дату по локальным полям, без UTC-конверсии.
+  const toLocalISO = (dt: Date) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
+
   const setQuickPeriod = (months: number | 'year') => {
     const d = new Date()
     if (months === 0) { setFilterFrom(''); setFilterTo(''); return }
     // "Текущий год" — календарный год с 1 января по сегодня, а не скользящее окно в
     // 12 месяцев назад (это разные вещи: например 31.08.2025–02.08.2026 — это НЕ текущий год).
     if (months === 'year') {
-      const yearStart = new Date(d.getFullYear(), 0, 1)
-      setFilterFrom(yearStart.toISOString().slice(0, 10))
+      setFilterFrom(toLocalISO(new Date(d.getFullYear(), 0, 1)))
       setFilterTo(today)
       return
     }
     const from = new Date(d.getFullYear(), d.getMonth() - months + 1, 1)
-    setFilterFrom(from.toISOString().slice(0, 10))
+    setFilterFrom(toLocalISO(from))
     setFilterTo(today)
   }
 
