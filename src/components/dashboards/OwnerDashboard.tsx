@@ -2010,9 +2010,9 @@ function DashboardOverview({
     queryFn: async () => {
       if (!aptIds.length) return []
       const { data } = await supabase.from('expenses')
-        .select('amount,expense_date,apartment_id')
+        .select('amount,expense_date,apartment_id,category,provider,description')
         .eq('status', 'confirmed').is('deleted_at', null).in('apartment_id', aptIds)
-      return (data ?? []).map(e => ({ ...e, paid_date: e.expense_date })) as { amount: number; paid_date: string; apartment_id: string }[]
+      return (data ?? []).map(e => ({ ...e, paid_date: e.expense_date })) as { amount: number; paid_date: string; apartment_id: string; category: string; provider: string | null; description: string | null }[]
     },
     enabled: aptIds.length > 0,
   })
@@ -2024,7 +2024,7 @@ function DashboardOverview({
   // Month selector
   const [selMonth, setSelMonth] = useState(today.getMonth())
   const [selYear, setSelYear] = useState(today.getFullYear())
-  const [dashModal, setDashModal] = useState<null | 'upcoming' | 'debt' | 'cleanings'>(null)
+  const [dashModal, setDashModal] = useState<null | 'upcoming' | 'debt' | 'cleanings' | 'profit'>(null)
   const [debtFilterApt, setDebtFilterApt] = useState('all')
   const [debtFilterSource, setDebtFilterSource] = useState('all')
   const [eventBooking, setEventBooking] = useState<BookingRow | null>(null)
@@ -2124,7 +2124,8 @@ function DashboardOverview({
   const monthCleanings = monthBookings.length  // checkouts = cleanings
   // Expenses for selected month
   const selMonthStr = `${selYear}-${String(selMonth + 1).padStart(2, '0')}`
-  const monthExpenses = dashExpenses.filter(e => e.paid_date.startsWith(selMonthStr)).reduce((s, e) => s + e.amount, 0)
+  const monthExpensesList = dashExpenses.filter(e => e.paid_date.startsWith(selMonthStr))
+  const monthExpenses = monthExpensesList.reduce((s, e) => s + e.amount, 0)
   // Net income = revenue − expenses
   const actualIncome = monthRevenue - monthExpenses
 
@@ -2434,14 +2435,15 @@ function DashboardOverview({
           </button>
 
           {/* Чистая прибыль */}
-          <div className="bg-card border border-border rounded-2xl p-3.5 shadow-sm flex flex-col min-h-[96px]">
+          <button onClick={() => setDashModal('profit')}
+            className="bg-card border border-border rounded-2xl p-3.5 text-left hover:shadow-md transition-all shadow-sm flex flex-col min-h-[96px]">
             <div className="flex items-start justify-between mb-2.5">
               <p className="text-xs text-muted-foreground leading-snug">Чистая прибыль</p>
               <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 flex-shrink-0"><TrendingUp size={15} /></div>
             </div>
             <p className={`text-xl font-bold leading-tight ${actualIncome < 0 ? 'text-destructive' : 'text-foreground'}`}>{fmtEur(actualIncome)}</p>
             <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">доход − расходы</p>
-          </div>
+          </button>
         </div>
       </div>
 
@@ -2505,7 +2507,8 @@ function DashboardOverview({
         </button>
 
         {/* Актуальный доход (чистая прибыль) */}
-        <div className="bg-card border border-border rounded-2xl p-4 shadow-sm flex flex-col min-h-[116px]">
+        <button onClick={() => setDashModal('profit')}
+          className="bg-card border border-border rounded-2xl p-4 text-left hover:shadow-md transition-all shadow-sm flex flex-col min-h-[116px]">
           <div className="flex items-start justify-between mb-3">
             <p className="text-xs text-muted-foreground leading-snug">Чистая прибыль</p>
             <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 flex-shrink-0"><TrendingUp size={15} /></div>
@@ -2515,7 +2518,7 @@ function DashboardOverview({
           {monthExpenses > 0 && (
             <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">−{fmtEur(monthExpenses)} расходов</p>
           )}
-        </div>
+        </button>
       </div>
 
       {/* ── Row 3: Line chart + Events ── */}
@@ -3220,6 +3223,103 @@ function DashboardOverview({
             </div>
           )
         })()}
+      </AnimatePresence>
+
+      {/* ── Modal: Чистая прибыль (расчёт) ── */}
+      <AnimatePresence>
+        {dashModal === 'profit' && (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30 backdrop-blur-sm px-4 pb-4 sm:pb-0"
+            onClick={e => { if (e.target === e.currentTarget) setDashModal(null) }}>
+            <motion.div initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 40 }}
+              className="bg-card rounded-2xl shadow-xl w-full max-w-lg max-h-[88vh] flex flex-col overflow-hidden">
+
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+                <div>
+                  <h3 className="font-semibold">Чистая прибыль за {MONTHS_RU[selMonth].toLowerCase()} {selYear}</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    <span className={`font-bold ${actualIncome < 0 ? 'text-destructive' : 'text-emerald-600'}`}>{fmtEur(actualIncome)}</span>
+                    <span className="ml-1">= {fmtEur(monthRevenue)} дохода − {fmtEur(monthExpenses)} расходов</span>
+                  </p>
+                </div>
+                <button onClick={() => setDashModal(null)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X size={16} /></button>
+              </div>
+
+              <div className="overflow-y-auto flex-1 min-h-0">
+                {/* Доход */}
+                <div className="sticky top-0 z-10 bg-muted/80 backdrop-blur-sm px-5 py-2 flex items-center justify-between border-b border-border">
+                  <span className="text-xs font-semibold text-foreground">
+                    Доход · {monthBookings.length} заезд{monthBookings.length === 1 ? '' : monthBookings.length < 5 ? 'а' : 'ов'} (по дате выезда)
+                  </span>
+                  <span className="text-xs font-bold text-emerald-600">+{fmtEur(monthRevenue)}</span>
+                </div>
+                {monthBookings.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-6">Нет заездов с выездом в этом месяце</p>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {monthBookings.slice().sort((a, b) => a.end_date.localeCompare(b.end_date)).map(b => (
+                      <div key={b.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                            <span className="font-medium text-sm truncate">{b.guest_name}</span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${SOURCE_COLOR[b.source] ?? 'bg-muted text-muted-foreground'}`}>
+                              {SOURCE_LABELS[b.source] ?? b.source}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground truncate">{b.apartments.title} · выезд {format(parseISO(b.end_date), 'd MMM', { locale: ru })}</p>
+                        </div>
+                        <span className="text-sm font-bold text-emerald-600 flex-shrink-0">{fmtEur(calcRevenue(b))}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Расходы */}
+                <div className="sticky top-0 z-10 bg-muted/80 backdrop-blur-sm px-5 py-2 flex items-center justify-between border-b border-border mt-1">
+                  <span className="text-xs font-semibold text-foreground">Расходы · {monthExpensesList.length} {monthExpensesList.length === 1 ? 'запись' : 'записей'} (по дате оплаты)</span>
+                  <span className="text-xs font-bold text-destructive">−{fmtEur(monthExpenses)}</span>
+                </div>
+                {monthExpensesList.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-6">Расходов за этот месяц нет</p>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {monthExpensesList.map((e, i) => {
+                      const meta = catMeta(e.category)
+                      const apt = apartments.find(a => a.id === e.apartment_id)
+                      return (
+                        <div key={i} className="px-5 py-3 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <div className={`p-1.5 rounded-lg flex-shrink-0 ${meta.bg} ${meta.color}`}>{meta.icon}</div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">{meta.label}{e.provider ? ` · ${e.provider}` : ''}</p>
+                              <p className="text-xs text-muted-foreground truncate">{apt?.title ?? '—'} · {format(parseISO(e.paid_date), 'd MMM', { locale: ru })}</p>
+                            </div>
+                          </div>
+                          <span className="text-sm font-bold text-destructive flex-shrink-0">−{fmtEur(e.amount)}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer formula */}
+              <div className="border-t border-border bg-muted/30 px-5 py-3 flex-shrink-0">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <p className="text-xs font-bold text-foreground uppercase tracking-wide">Итого</p>
+                  <p className="text-sm font-bold">
+                    <span className="text-emerald-600">{fmtEur(monthRevenue)}</span>
+                    <span className="text-muted-foreground mx-1">−</span>
+                    <span className="text-destructive">{fmtEur(monthExpenses)}</span>
+                    <span className="text-muted-foreground mx-1">=</span>
+                    <span className={actualIncome < 0 ? 'text-destructive' : 'text-foreground'}>{fmtEur(actualIncome)}</span>
+                  </p>
+                </div>
+              </div>
+
+            </motion.div>
+          </div>
+        )}
       </AnimatePresence>
 
       {/* ── Modal: Event detail ── */}
