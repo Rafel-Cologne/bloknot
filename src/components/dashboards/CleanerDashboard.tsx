@@ -1106,26 +1106,11 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   }, [ownerIds, pendingCleaning, newTasks, upcoming, ownerName, all])
   const clientsWithAlert = clients.filter(c => c.hasAlert).length
 
-  // Сортировка списка клиентов — "По важности" (по умолчанию: сначала кто требует внимания,
-  // затем по ближайшему заезду) или "По долгу" (сначала кто должен больше всего — чтобы
-  // уборщица сразу видела, с кого спрашивать оплату).
-  const [clientSort, setClientSort] = useState<'priority' | 'debt'>('priority')
-  const sortedClients = useMemo(() => {
-    const list = [...clients]
-    if (clientSort === 'debt') {
-      return list.sort((a, b) => b.owed - a.owed || a.name.localeCompare(b.name, 'ru'))
-    }
-    return list.sort((a, b) => {
-      if (a.hasAlert !== b.hasAlert) return a.hasAlert ? -1 : 1
-      // У кого заезд ближе — тот выше; если ни у кого нет предстоящего заезда, по имени.
-      const aDate = a.nearestUpcoming?.bookings.start_date
-      const bDate = b.nearestUpcoming?.bookings.start_date
-      if (aDate && bDate) return aDate.localeCompare(bDate)
-      if (aDate) return -1
-      if (bDate) return 1
-      return a.name.localeCompare(b.name, 'ru')
-    })
-  }, [clients, clientSort])
+  // Список клиентов всегда отсортирован по сумме долга — кто должен больше, тот выше
+  // (чтобы уборщица сразу видела, с кого в первую очередь спрашивать оплату).
+  const sortedClients = useMemo(() =>
+    [...clients].sort((a, b) => b.owed - a.owed || a.name.localeCompare(b.name, 'ru')),
+  [clients])
 
   const toggleClient = (ownerId: string) => {
     const opening = expandedClientId !== ownerId
@@ -1477,21 +1462,6 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
               </div>
             ) : (
               <div className="flex flex-col gap-3">
-                {clients.length > 1 && (
-                  <div className="flex items-center gap-2 self-start">
-                    <span className="text-xs text-muted-foreground font-medium">Сортировка:</span>
-                    <div className="flex items-center gap-0.5 bg-muted rounded-xl p-0.5">
-                      <button onClick={() => setClientSort('priority')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${clientSort === 'priority' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-                        По важности
-                      </button>
-                      <button onClick={() => setClientSort('debt')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${clientSort === 'debt' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-                        По долгу
-                      </button>
-                    </div>
-                  </div>
-                )}
                 {sortedClients.map(c => {
                   const isOpen = expandedClientId === c.ownerId
                   return (
