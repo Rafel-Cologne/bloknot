@@ -703,6 +703,84 @@ function StatListModal({ title, subtitle, items, aptColor, ownerName, onSelectTa
   )
 }
 
+// ─── Client balance modal ────────────────────────────────────────────────────────
+// Клик по клиенту в "Баланс по клиентам" — карточка со сводкой (должен/оплачено/
+// предстоит) и вкладками, чтобы не вываливать все брони одним списком, а дать клинеру
+// самому выбрать, что посмотреть: за что должен сейчас, что уже оплачено, что впереди.
+
+type ClientBalanceInfo = {
+  ownerId: string; name: string; owed: number; paid: number; future: number
+  dueUnpaidTasks: TaskRow[]; paidTasks: TaskRow[]; futureUnpaidTasks: TaskRow[]
+}
+
+function ClientBalanceModal({ client, aptColor, onSelectTask, onClose }: {
+  client: ClientBalanceInfo; aptColor: (id: string) => string
+  onSelectTask: (t: TaskRow) => void; onClose: () => void
+}) {
+  const [clientTab, setClientTab] = useState<'due' | 'paid' | 'future'>('due')
+  const items = clientTab === 'due' ? client.dueUnpaidTasks : clientTab === 'paid' ? client.paidTasks : client.futureUnpaidTasks
+
+  return (
+    <motion.div key="client-balance-backdrop"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <motion.div key="client-balance-panel"
+        initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 16, scale: 0.97 }} transition={{ type: 'spring', damping: 28, stiffness: 380 }}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-md max-h-[85vh] overflow-y-auto bg-card rounded-3xl shadow-2xl border border-border p-6 flex flex-col gap-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center flex-shrink-0">
+              {client.name.slice(0, 1).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-display font-bold text-foreground truncate">{client.name}</h2>
+              <p className={`text-sm font-semibold mt-0.5 ${client.owed > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                {client.owed > 0 ? `Должен ${fmtEur(client.owed)}` : 'Долгов нет'}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="flex-shrink-0 w-8 h-8 rounded-full bg-secondary flex items-center justify-center hover:bg-muted transition-colors">
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="flex items-center gap-0.5 bg-muted rounded-xl p-0.5">
+          <button onClick={() => setClientTab('due')}
+            className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors ${clientTab === 'due' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+            Должен ({client.dueUnpaidTasks.length})
+          </button>
+          <button onClick={() => setClientTab('paid')}
+            className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors ${clientTab === 'paid' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+            Оплачено ({client.paidTasks.length})
+          </button>
+          <button onClick={() => setClientTab('future')}
+            className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors ${clientTab === 'future' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+            Ожидается ({client.futureUnpaidTasks.length})
+          </button>
+        </div>
+
+        {clientTab === 'future' && client.future > 0 && (
+          <p className="text-[11px] text-muted-foreground -mt-2">
+            Ещё не долг — заезд впереди или уборка ещё не сделана. Сумма: {fmtEur(client.future)}
+          </p>
+        )}
+
+        {items.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-6">Ничего нет</p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {items.map(t => (
+              <TaskCard key={t.id} task={t} onSelect={() => onSelectTask(t)} aptColor={aptColor} highlightCheckoutToday showDueBadge />
+            ))}
+          </div>
+        )}
+      </motion.div>
+    </motion.div>
+  )
+}
+
 // ─── Cash-till breakdown modal ──────────────────────────────────────────────────
 // "Касса" — общая сумма наличных, но деньги в ней принадлежат разным хозяевам (гости
 // разных объектов отдают наличные за аренду). Клинеру важно видеть не только общий
@@ -790,6 +868,10 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   // Модалка-детализация для кликабельных карточек-счётчиков во вкладке "Заезды"
   // ("Сейчас заселено" / "Дней до заезда" / "Ближайший выезд").
   const [statModal, setStatModal] = useState<{ title: string; subtitle?: string; items: TaskRow[] } | null>(null)
+  // Храним только id, а не снимок объекта — иначе после смены статуса оплаты изнутри этого
+  // окна (открыть бронь → оплатить → закрыть) счётчики в самом окне баланса останутся
+  // старыми, пока окно не закроют и не откроют заново.
+  const [clientBalanceModalId, setClientBalanceModalId] = useState<string | null>(null)
   const [showCashBreakdown, setShowCashBreakdown] = useState(false)
   const [showCashForm, setShowCashForm] = useState(false)
   const [cashDirection, setCashDirection] = useState<'deposit' | 'withdrawal'>('deposit')
@@ -1126,11 +1208,12 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
     const paid = theirTasks.reduce((s, t) => s + getPaidAmt(t), 0)
     const futureUnpaid = theirTasks.filter(t => !isDueNow(t) && t.payment_status !== 'paid')
     const future = futureUnpaid.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
+    const paidTasks = theirTasks.filter(t => t.payment_status === 'paid')
     return {
       ownerId, name: ownerName(ownerId) || 'Хозяин', owed, paid, future,
       unpaidCount: dueUnpaidTasks.length,
-      paidCount: theirTasks.filter(t => t.payment_status === 'paid').length,
-      dueUnpaidTasks,
+      paidCount: paidTasks.length,
+      dueUnpaidTasks, paidTasks, futureUnpaidTasks: futureUnpaid,
     }
   }).sort((a, b) => b.owed - a.owed)
   const multiOwner = ownerIds.length > 1
@@ -1168,9 +1251,6 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                 }`}>
                   {item.count}
                 </span>
-              )}
-              {item.id === 'payment' && dueOwed > 0 && (
-                <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-600 flex-shrink-0">{fmtEur(dueOwed)}</span>
               )}
             </button>
           ))}
@@ -1704,14 +1784,10 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
 
               {multiOwner && ownerBalances.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Баланс по хозяевам</h3>
+                  <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Баланс по клиентам</h3>
                   <div className="flex flex-col gap-2">
                     {ownerBalances.map(ob => (
-                      <button key={ob.ownerId} onClick={() => setStatModal({
-                        title: ob.name,
-                        subtitle: ob.owed > 0 ? `Должен ${fmtEur(ob.owed)}` : 'Долгов нет',
-                        items: ob.dueUnpaidTasks,
-                      })}
+                      <button key={ob.ownerId} onClick={() => setClientBalanceModalId(ob.ownerId)}
                         className={`bg-card border rounded-2xl px-4 py-3 flex items-center gap-3 text-left w-full transition-colors hover:bg-muted/50 ${ob.owed > 0 ? 'border-red-200' : 'border-emerald-200'}`}>
                         <div className="w-8 h-8 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center flex-shrink-0 text-xs">
                           {ob.name.slice(0, 1).toUpperCase()}
@@ -1753,14 +1829,23 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                     )}
                     {multiOwner ? (
                       <div className="flex flex-col gap-4">
-                        {unpaidByOwner.map(group => (
-                          <div key={group.ownerId}>
-                            <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest px-1 mb-2">{group.name} — {group.items.length}</p>
-                            <div className="flex flex-col gap-2">
-                              {group.items.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} highlightCheckoutToday showDueBadge />)}
+                        {unpaidByOwner.map(group => {
+                          const key = `unpaid-client-${group.ownerId}`
+                          const open = !collapsedSections.has(key)
+                          return (
+                            <div key={group.ownerId}>
+                              <button onClick={() => toggleSection(key)} className="flex items-center gap-1.5 mb-2 text-left">
+                                <ChevronRight size={11} className={`text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} />
+                                <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">{group.name} — {group.items.length}</p>
+                              </button>
+                              {open && (
+                                <div className="flex flex-col gap-2">
+                                  {group.items.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} highlightCheckoutToday showDueBadge />)}
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     ) : (
                       <div className="flex flex-col gap-2">{unpaidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} highlightCheckoutToday showDueBadge />)}</div>
@@ -1778,14 +1863,23 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                   {!collapsedSections.has('paid') && (
                     multiOwner ? (
                       <div className="flex flex-col gap-4">
-                        {paidByOwner.map(group => (
-                          <div key={group.ownerId}>
-                            <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest px-1 mb-2">{group.name} — {group.items.length}</p>
-                            <div className="flex flex-col gap-2">
-                              {group.items.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} highlightCheckoutToday />)}
+                        {paidByOwner.map(group => {
+                          const key = `paid-client-${group.ownerId}`
+                          const open = !collapsedSections.has(key)
+                          return (
+                            <div key={group.ownerId}>
+                              <button onClick={() => toggleSection(key)} className="flex items-center gap-1.5 mb-2 text-left">
+                                <ChevronRight size={11} className={`text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} />
+                                <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">{group.name} — {group.items.length}</p>
+                              </button>
+                              {open && (
+                                <div className="flex flex-col gap-2">
+                                  {group.items.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} highlightCheckoutToday />)}
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     ) : (
                       <div className="flex flex-col gap-2">{paidList.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} highlightCheckoutToday />)}</div>
@@ -1902,6 +1996,18 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
         {showCashBreakdown && (
           <CashByOwnerModal groups={cashByOwner} describeEntry={describeCashEntry} onClose={() => setShowCashBreakdown(false)} />
         )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {clientBalanceModalId && (() => {
+          const client = ownerBalances.find(ob => ob.ownerId === clientBalanceModalId)
+          if (!client) return null
+          return (
+            <ClientBalanceModal client={client} aptColor={aptColor}
+              onSelectTask={t => { setClientBalanceModalId(null); setSelectedTask(t) }}
+              onClose={() => setClientBalanceModalId(null)} />
+          )
+        })()}
       </AnimatePresence>
     </div>
   )
