@@ -2027,6 +2027,7 @@ function DashboardOverview({
   const [dashModal, setDashModal] = useState<null | 'upcoming' | 'debt' | 'cleanings' | 'profit'>(null)
   const [debtFilterApt, setDebtFilterApt] = useState('all')
   const [debtFilterSource, setDebtFilterSource] = useState('all')
+  const [upcomingFilterApt, setUpcomingFilterApt] = useState('all')
   const [eventBooking, setEventBooking] = useState<BookingRow | null>(null)
   const [showRevenueModal, setShowRevenueModal] = useState(false)
   const [revenueFromDate, setRevenueFromDate] = useState(`${today.getFullYear()}-01-01`)
@@ -2133,6 +2134,21 @@ function DashboardOverview({
   // Upcoming bookings
   const upcoming = bookings
     .filter(b => b.end_date >= todayStr && b.status === 'accepted')
+    .sort((a, b) => a.start_date.localeCompare(b.start_date))
+  // Upcoming modal: unique apartments list for filter, and filtered/sorted-by-nearest-date list
+  const upcomingApts = (() => {
+    const seen = new Set<string>()
+    const result: { id: string; title: string }[] = []
+    upcoming.forEach(b => {
+      if (!seen.has(b.apartment_id)) {
+        seen.add(b.apartment_id)
+        result.push({ id: b.apartment_id, title: b.apartments.title })
+      }
+    })
+    return result
+  })()
+  const filteredUpcoming = upcoming
+    .filter(b => upcomingFilterApt === 'all' || b.apartment_id === upcomingFilterApt)
     .sort((a, b) => a.start_date.localeCompare(b.start_date))
   // Today's events
   const todayCheckIns = bookings.filter(b => b.status === 'accepted' && b.start_date === todayStr)
@@ -2405,6 +2421,9 @@ function DashboardOverview({
             </div>
             <p className="text-2xl font-bold text-foreground leading-tight">{monthCheckIns}</p>
             <p className="text-[11px] text-muted-foreground mt-1.5">в этом месяце</p>
+            {upcoming.length !== monthCheckIns && (
+              <p className="text-[10px] text-muted-foreground mt-0.5">всего {upcoming.length} предстоящих</p>
+            )}
           </button>
 
           {/* Уборки */}
@@ -2470,7 +2489,11 @@ function DashboardOverview({
           </div>
           <p className="text-2xl font-bold text-foreground leading-tight">{monthCheckIns}</p>
           <p className="text-[11px] text-muted-foreground mt-1.5">в этом месяце</p>
-          <p className="text-[10px] text-transparent select-none mt-0.5">&nbsp;</p>
+          {upcoming.length !== monthCheckIns ? (
+            <p className="text-[10px] text-muted-foreground mt-0.5">всего {upcoming.length} предстоящих</p>
+          ) : (
+            <p className="text-[10px] text-transparent select-none mt-0.5">&nbsp;</p>
+          )}
         </button>
 
         {/* Уборки */}
@@ -2907,24 +2930,54 @@ function DashboardOverview({
           <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30 backdrop-blur-sm px-4 pb-4 sm:pb-0"
             onClick={e => { if (e.target === e.currentTarget) setDashModal(null) }}>
             <motion.div initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 40 }}
-              className="bg-card rounded-2xl shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-                <h3 className="font-semibold">Ближайшие заезды ({upcoming.length})</h3>
+              className="bg-card rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+                <div>
+                  <h3 className="font-semibold">Ближайшие заезды ({upcoming.length})</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {monthCheckIns} в этом месяце ({MONTHS_RU[selMonth].toLowerCase()} {selYear}) · {upcoming.length} всего предстоящих
+                  </p>
+                </div>
                 <button onClick={() => setDashModal(null)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X size={16} /></button>
               </div>
-              <div className="overflow-y-auto divide-y divide-border">
-                {upcoming.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-10">Предстоящих заездов нет</p>
-                ) : upcoming.map(b => {
+
+              {/* Apartment filter */}
+              {upcomingApts.length > 1 && (
+                <div className="px-5 py-3 border-b border-border flex-shrink-0 flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium mr-0.5">Квартира:</span>
+                  <button
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${upcomingFilterApt === 'all' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}
+                    onClick={() => setUpcomingFilterApt('all')}>Все</button>
+                  {upcomingApts.map(a => (
+                    <button key={a.id}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${upcomingFilterApt === a.id ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}
+                      onClick={() => setUpcomingFilterApt(a.id)}>{a.title}</button>
+                  ))}
+                </div>
+              )}
+
+              <div className="overflow-y-auto divide-y divide-border flex-1 min-h-0">
+                {filteredUpcoming.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-10">
+                    {upcoming.length === 0 ? 'Предстоящих заездов нет' : 'Нет заездов по фильтру'}
+                  </p>
+                ) : filteredUpcoming.map(b => {
                   const nights = Math.round((new Date(b.end_date).getTime() - new Date(b.start_date).getTime()) / 86400000)
                   const isNow = b.start_date <= todayStr
                   const daysUntil = Math.round((new Date(b.start_date).getTime() - today.getTime()) / 86400000)
+                  const startD = parseISO(b.start_date)
+                  const inSelMonth = startD.getMonth() === selMonth && startD.getFullYear() === selYear
                   return (
-                    <div key={b.id} className="px-5 py-4">
+                    <div key={b.id} className={`px-5 py-4 ${inSelMonth ? 'bg-primary/5 border-l-2 border-primary' : ''}`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex flex-col gap-1.5 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-bold text-base text-foreground">{b.guest_name}</span>
+                            {inSelMonth && (
+                              <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-primary/15 text-primary font-semibold">
+                                {MONTHS_RU_SHORT[selMonth]}
+                              </span>
+                            )}
                             {isNow
                               ? <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold">● сейчас</span>
                               : daysUntil === 1
