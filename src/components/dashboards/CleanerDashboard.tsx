@@ -399,7 +399,7 @@ function TaskDetailModal({ task, cashBalance, onClose, onRefresh, readOnly }: {
             </button>
           )}
           {b.source === 'other' && isOwnerTransfer && !isPaid && !canWithdraw && (
-            <p className="text-xs text-muted-foreground italic text-center py-1">Ждём перевода от хозяина</p>
+            <p className="text-xs text-muted-foreground italic text-center py-1">Ждём перевода от клиента</p>
           )}
           <button onClick={onClose} className="w-full py-2.5 rounded-2xl bg-secondary text-sm font-medium text-foreground hover:bg-muted transition-colors">
             Закрыть
@@ -461,7 +461,7 @@ function TaskCard({ task, onSelect, aptColor, ownerLabel, highlightCheckoutToday
             </div>
           </div>
           <div className="flex-1 min-w-0">
-            {ownerLabel && <p className="text-[11px] text-muted-foreground leading-tight truncate">Хозяин: {ownerLabel}</p>}
+            {ownerLabel && <p className="text-[11px] text-muted-foreground leading-tight truncate">Клиент: {ownerLabel}</p>}
             <div className="flex items-center gap-1.5 flex-wrap">
               <p className="text-sm font-semibold text-foreground truncate">{b.guest_name || '—'}</p>
               <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold text-white flex-shrink-0" style={{ backgroundColor: color }}>
@@ -528,7 +528,7 @@ function TaskCard({ task, onSelect, aptColor, ownerLabel, highlightCheckoutToday
                 : null}
           </div>
           {ownerLabel && (
-            <p className="text-xs text-muted-foreground -mt-0.5">Хозяин: {ownerLabel}</p>
+            <p className="text-xs text-muted-foreground -mt-0.5">Клиент: {ownerLabel}</p>
           )}
           {b.guest_name && (
             <p className="text-sm font-semibold text-foreground/90 mt-0.5 truncate">{b.guest_name}</p>
@@ -939,7 +939,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   })
   const ownerName = useMemo(() => {
     const m = new Map<string, string>()
-    ownerProfiles.forEach(p => m.set(p.id, p.name || p.email || 'Хозяин'))
+    ownerProfiles.forEach(p => m.set(p.id, p.name || p.email || 'Клиент'))
     return (id: string) => m.get(id) ?? ''
   }, [ownerProfiles])
 
@@ -984,7 +984,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
       const deposited = entries.filter(e => e.type === 'deposit').reduce((s, e) => s + e.amount, 0)
       const withdrawn = entries.filter(e => e.type === 'withdrawal').reduce((s, e) => s + e.amount, 0)
       return {
-        ownerId, name: ownerName(ownerId) || 'Хозяин', deposited, withdrawn, balance: deposited - withdrawn,
+        ownerId, name: ownerName(ownerId) || 'Клиент', deposited, withdrawn, balance: deposited - withdrawn,
         entries: [...entries].sort((a, b) => b.created_at.localeCompare(a.created_at)),
       }
     }).sort((a, b) => b.balance - a.balance)
@@ -1096,7 +1096,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
       const futureUnpaid = theirTasks.filter(t => !isDueNow(t) && t.payment_status !== 'paid')
       const future = futureUnpaid.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
       return {
-        ownerId, name: ownerName(ownerId) || 'Хозяин',
+        ownerId, name: ownerName(ownerId) || 'Клиент',
         pendingCleaning: theirPendingCleaning, newTasks: theirNewTasks,
         nearestUpcoming: theirUpcoming[0] ?? null,
         hasAlert: theirPendingCleaning.length > 0 || theirNewTasks.length > 0,
@@ -1176,7 +1176,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
       map.get(oid)!.push(t)
     })
     return [...map.entries()]
-      .map(([ownerId, items]) => ({ ownerId, name: ownerName(ownerId) || 'Хозяин', items }))
+      .map(([ownerId, items]) => ({ ownerId, name: ownerName(ownerId) || 'Клиент', items }))
       .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
   }
   const unpaidByOwner = groupByOwner(unpaidList)
@@ -1195,7 +1195,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
     const future = futureUnpaid.reduce((s, t) => s + Math.max(0, t.cleaning_fee - getPaidAmt(t)), 0)
     const paidTasks = theirTasks.filter(t => t.payment_status === 'paid')
     return {
-      ownerId, name: ownerName(ownerId) || 'Хозяин', owed, paid, future,
+      ownerId, name: ownerName(ownerId) || 'Клиент', owed, paid, future,
       unpaidCount: dueUnpaidTasks.length,
       paidCount: paidTasks.length,
       dueUnpaidTasks, paidTasks, futureUnpaidTasks: futureUnpaid,
@@ -1363,11 +1363,18 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
             const upFNear = nearestCheckinDate
               ? upF.filter(t => t.bookings.start_date === nearestCheckinDate || t.bookings.start_date === isoAddDays(nearestCheckinDate, 1))
               : []
-            // Ближайший выезд — среди тех, кто заселён прямо сейчас (у них выезд уже известен
-            // и он всегда ближе, чем выезд ещё не заехавших гостей).
-            const curFByCheckout = [...curF].sort((a, b) => a.bookings.end_date.localeCompare(b.bookings.end_date))
-            const daysToCheckoutF = curFByCheckout.length > 0
-              ? Math.max(0, Math.round((parseISO(curFByCheckout[0].bookings.end_date).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000))
+            // Ближайший выезд — учитываем и тех, кто заселён прямо сейчас (выезд ещё впереди),
+            // и тех, у кого выезд ровно сегодня (они уже попадают в overF, т.к. end_date === today
+            // не проходит условие curF "end_date > today" — без этого объединения выезды "сегодня"
+            // молча пропадали из этой карточки, хотя фактически они есть и видны в "Нужна уборка сейчас").
+            const checkoutCandidates = [...curF, ...overF.filter(t => t.bookings.end_date === today)]
+              .sort((a, b) => a.bookings.end_date.localeCompare(b.bookings.end_date))
+            const nearestCheckoutDate = checkoutCandidates[0]?.bookings.end_date ?? null
+            const checkoutsOnNearestDay = nearestCheckoutDate
+              ? checkoutCandidates.filter(t => t.bookings.end_date === nearestCheckoutDate)
+              : []
+            const daysToCheckoutF = nearestCheckoutDate
+              ? Math.max(0, Math.round((parseISO(nearestCheckoutDate).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000))
               : null
             return (
             <div className="flex flex-col gap-5">
@@ -1388,7 +1395,7 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                     <select value={ownerFilter} onChange={e => setOwnerFilter(e.target.value)}
                       className="text-xs rounded-xl border border-border bg-card px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-ring">
                       <option value="all">Все клиенты</option>
-                      {ownerIds.map(id => <option key={id} value={id}>{ownerName(id) || 'Хозяин'}</option>)}
+                      {ownerIds.map(id => <option key={id} value={id}>{ownerName(id) || 'Клиент'}</option>)}
                     </select>
                   </div>
                 )}
@@ -1416,10 +1423,10 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                   )}
                 </button>
                 <button type="button" disabled={daysToCheckoutF === null}
-                  onClick={() => setStatModal({ title: 'Ближайшие выезды', items: curFByCheckout })}
+                  onClick={() => setStatModal({ title: checkoutsOnNearestDay.length === 1 ? 'Ближайший выезд' : 'Ближайшие выезды', items: checkoutsOnNearestDay })}
                   className="bg-card border border-border rounded-2xl p-4 shadow-sm text-center disabled:cursor-default enabled:hover:border-primary/40 enabled:hover:shadow-md transition-all">
                   {daysToCheckoutF !== null ? (
-                    <><p className="text-2xl font-bold text-foreground">{daysToCheckoutF === 0 ? '🧳' : daysToCheckoutF}</p>
+                    <><p className="text-2xl font-bold text-foreground">{checkoutsOnNearestDay.length}</p>
                       <p className="text-[11px] text-muted-foreground mt-0.5">{daysToCheckoutF === 0 ? 'выезд сегодня' : `${daysUntilLabel(daysToCheckoutF)} до выезда`}</p></>
                   ) : (
                     <><p className="text-2xl font-bold text-muted-foreground">—</p>
@@ -1442,8 +1449,14 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
               )}
               {upF.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label mb-3">Предстоящие — {upF.length}</h3>
-                  <div className="flex flex-col gap-2">{upF.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
+                  <button onClick={() => toggleSection('bookings-upcoming')}
+                    className="w-full flex items-center gap-1.5 mb-3 text-left">
+                    <ChevronRight size={13} className={`text-muted-foreground transition-transform ${collapsedSections.has('bookings-upcoming') ? '' : 'rotate-90'}`} />
+                    <h3 className="text-xs font-bold text-foreground uppercase tracking-widest font-label">Предстоящие — {upF.length}</h3>
+                  </button>
+                  {!collapsedSections.has('bookings-upcoming') && (
+                    <div className="flex flex-col gap-2">{upF.map(t => <TaskCard key={t.id} task={t} onSelect={() => setSelectedTask(t)} aptColor={aptColor} ownerLabel={ownerName(t.bookings.apartments.owner_id)} highlightCheckoutToday />)}</div>
+                  )}
                 </div>
               )}
               {curF.length === 0 && overF.length === 0 && upF.length === 0 && (
