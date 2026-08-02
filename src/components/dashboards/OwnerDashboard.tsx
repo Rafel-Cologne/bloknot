@@ -7276,9 +7276,17 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
 
   const aptName = (id: string) => apartments.find(a => a.id === id)?.title ?? '—'
 
-  const setQuickPeriod = (months: number) => {
+  const setQuickPeriod = (months: number | 'year') => {
     const d = new Date()
     if (months === 0) { setFilterFrom(''); setFilterTo(''); return }
+    // "Текущий год" — календарный год с 1 января по сегодня, а не скользящее окно в
+    // 12 месяцев назад (это разные вещи: например 31.08.2025–02.08.2026 — это НЕ текущий год).
+    if (months === 'year') {
+      const yearStart = new Date(d.getFullYear(), 0, 1)
+      setFilterFrom(yearStart.toISOString().slice(0, 10))
+      setFilterTo(today)
+      return
+    }
     const from = new Date(d.getFullYear(), d.getMonth() - months + 1, 1)
     setFilterFrom(from.toISOString().slice(0, 10))
     setFilterTo(today)
@@ -7449,8 +7457,8 @@ function ExpensesSection({ apartments, bookings }: { apartments: Apartment[]; bo
       {/* Filters */}
       <div className="bg-card border border-border rounded-2xl px-4 py-3 flex flex-col gap-3">
         <div className="flex flex-wrap gap-2">
-          {[['1 мес', 1], ['3 мес', 3], ['6 мес', 6], ['Весь год', 12], ['Всё время', 0]].map(([l, m]) => (
-            <button key={l as string} onClick={() => setQuickPeriod(m as number)}
+          {([['1 мес', 1], ['3 мес', 3], ['6 мес', 6], ['Текущий год', 'year'], ['Всё время', 0]] as [string, number | 'year'][]).map(([l, m]) => (
+            <button key={l} onClick={() => setQuickPeriod(m)}
               className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-muted hover:bg-primary hover:text-primary-foreground transition-colors">
               {l}
             </button>
