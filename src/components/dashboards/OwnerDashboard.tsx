@@ -6907,9 +6907,9 @@ function periodRangeLabel(start: string, end: string): string {
     : `${shortDate(sm, sd)} ${sy} — ${shortDate(em, ed)} ${ey}`
 }
 
-// Период, который закрывает конкретный счёт, если он ПЕРВЫЙ в группе квартира+категория и явного
-// периода в нём нет — используем весь календарный месяц даты счёта (лучшего ориентира нет).
-function firstInvoiceFallbackCoverage(e: Expense): { start: string; end: string } {
+// Запасное покрытие для счёта без явного периода — весь календарный месяц даты счёта
+// (лучшего ориентира нет, если не с чем сравнить покрытие с предыдущим счётом той же группы).
+function monthlyFallbackCoverage(e: Expense): { start: string; end: string } {
   const [y, m] = e.expense_date.slice(0, 7).split('-').map(Number)
   const lastDay = new Date(y, m, 0).getDate()
   return { start: `${e.expense_date.slice(0, 7)}-01`, end: `${e.expense_date.slice(0, 7)}-${String(lastDay).padStart(2, '0')}` }
@@ -6942,9 +6942,12 @@ function computeMissingInvoices(expenses: Expense[]): MissingInvoice[] {
 
     // Сортируем по дате счёта (а не по вычисленному покрытию — оно как раз строится ниже и
     // зависит от порядка). Для счёта БЕЗ явного периода не считаем, что он закрывает ровно один
-    // календарный месяц — вместо этого тянем начало покрытия от конца предыдущего счёта этой же
-    // группы. Иначе, например, поквартальный счёт за воду без извлечённого периода создаёт
-    // ложный "пропуск" в двух месяцах внутри того же квартала, которые он на самом деле покрывает.
+    // календарный месяц — сравниваем два кандидата и берём тот, что ШИРЕ: (а) весь календарный
+    // месяц даты счёта, или (б) протяжку от конца предыдущего счёта этой же группы до даты этого
+    // счёта. Просто брать протяжку от предыдущего счёта без сравнения — баг: если счета идут
+    // близко друг к другу, протяжка может схлопнуться до 1 дня и создать ложный "пропуск" сразу
+    // после. А просто брать календарный месяц без сравнения — исходный баг с поквартальными
+    // счетами (см. ниже), где счёт без периода на самом деле покрывает несколько месяцев.
     const sortedByDate = [...list].sort((a, b) => a.expense_date.localeCompare(b.expense_date))
     const coverages: { start: string; end: string; source: Expense }[] = []
     for (const e of sortedByDate) {
@@ -6952,11 +6955,15 @@ function computeMissingInvoices(expenses: Expense[]): MissingInvoice[] {
         coverages.push({ start: e.invoice_period_start, end: e.invoice_period_end, source: e })
         continue
       }
+      const monthCoverage = monthlyFallbackCoverage(e)
       const prev = coverages[coverages.length - 1]
       if (prev) {
-        coverages.push({ start: isoAddDays(prev.end, 1), end: e.expense_date, source: e })
+        const stretchCoverage = { start: isoAddDays(prev.end, 1), end: e.expense_date }
+        const wider = daysBetween(stretchCoverage.start, stretchCoverage.end) > daysBetween(monthCoverage.start, monthCoverage.end)
+          ? stretchCoverage : monthCoverage
+        coverages.push({ ...wider, source: e })
       } else {
-        coverages.push({ ...firstInvoiceFallbackCoverage(e), source: e })
+        coverages.push({ ...monthCoverage, source: e })
       }
     }
     coverages.sort((a, b) => a.start.localeCompare(b.start))
