@@ -6907,13 +6907,9 @@ function periodRangeLabel(start: string, end: string): string {
     : `${shortDate(sm, sd)} ${sy} — ${shortDate(em, ed)} ${ey}`
 }
 
-// Период, который закрывает конкретный счёт: если в счёте указан явный период (кварталные
-// счета за воду и т.п.) — используем его. Если период не указан (частый случай для помесячных
-// счетов вроде интернета) — считаем, что счёт закрывает весь календарный месяц даты счёта.
-function invoiceCoverage(e: Expense): { start: string; end: string } {
-  if (e.invoice_period_start && e.invoice_period_end) {
-    return { start: e.invoice_period_start, end: e.invoice_period_end }
-  }
+// Период, который закрывает конкретный счёт, если он ПЕРВЫЙ в группе квартира+категория и явного
+// периода в нём нет — используем весь календарный месяц даты счёта (лучшего ориентира нет).
+function firstInvoiceFallbackCoverage(e: Expense): { start: string; end: string } {
   const [y, m] = e.expense_date.slice(0, 7).split('-').map(Number)
   const lastDay = new Date(y, m, 0).getDate()
   return { start: `${e.expense_date.slice(0, 7)}-01`, end: `${e.expense_date.slice(0, 7)}-${String(lastDay).padStart(2, '0')}` }
@@ -6944,9 +6940,26 @@ function computeMissingInvoices(expenses: Expense[]): MissingInvoice[] {
     const amounts = list.map(e => e.amount)
     const allSameAmount = amounts.every(a => Math.abs(a - amounts[0]) < 0.005)
 
-    const coverages = list
-      .map(e => ({ ...invoiceCoverage(e), source: e }))
-      .sort((a, b) => a.start.localeCompare(b.start))
+    // Сортируем по дате счёта (а не по вычисленному покрытию — оно как раз строится ниже и
+    // зависит от порядка). Для счёта БЕЗ явного периода не считаем, что он закрывает ровно один
+    // календарный месяц — вместо этого тянем начало покрытия от конца предыдущего счёта этой же
+    // группы. Иначе, например, поквартальный счёт за воду без извлечённого периода создаёт
+    // ложный "пропуск" в двух месяцах внутри того же квартала, которые он на самом деле покрывает.
+    const sortedByDate = [...list].sort((a, b) => a.expense_date.localeCompare(b.expense_date))
+    const coverages: { start: string; end: string; source: Expense }[] = []
+    for (const e of sortedByDate) {
+      if (e.invoice_period_start && e.invoice_period_end) {
+        coverages.push({ start: e.invoice_period_start, end: e.invoice_period_end, source: e })
+        continue
+      }
+      const prev = coverages[coverages.length - 1]
+      if (prev) {
+        coverages.push({ start: isoAddDays(prev.end, 1), end: e.expense_date, source: e })
+      } else {
+        coverages.push({ ...firstInvoiceFallbackCoverage(e), source: e })
+      }
+    }
+    coverages.sort((a, b) => a.start.localeCompare(b.start))
 
     // Сливаем перекрывающиеся/смежные периоды в непрерывные "покрытые" отрезки.
     const merged: { start: string; end: string; source: Expense }[] = []
