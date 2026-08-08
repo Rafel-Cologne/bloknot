@@ -8870,6 +8870,60 @@ function AdminSection() {
   }
   const itemStatusLabel = (s: AgentRunOwnerItem['status']) => s === 'success' ? 'Успешно' : s === 'error' ? 'Ошибка' : 'Пропущено'
 
+  // Схлопываем подряд идущие запуски с идентичным результатом (тот же статус, тот же список
+  // ошибок, те же счётчики и НИ У КОГО из пользователей нет реальной активности за этот запуск)
+  // в одну строку с "×N" вместо N одинаковых строк подряд — актуально для повторяющейся ошибки
+  // токена, которая иначе долбит одной и той же записью каждые 10 минут. Как только что-то
+  // отличается (другая ошибка, есть успешно обработанные письма и т.п.) — группа рвётся.
+  const clusterAgentLogs = (logs: AgentLog[]): AgentLog[][] => {
+    const clusters: AgentLog[][] = []
+    const signature = (l: AgentLog) => {
+      if ((ownersByRun.get(l.id) ?? []).length > 0) return null
+      return JSON.stringify({
+        status: l.status, errors: l.errors, e: l.emails_checked,
+        bc: l.bookings_created, bu: l.bookings_updated, ec: l.expenses_created, sk: l.skipped,
+      })
+    }
+    for (const l of logs) {
+      const sig = signature(l)
+      const lastCluster = clusters[clusters.length - 1]
+      if (sig !== null && lastCluster && signature(lastCluster[0]) === sig) {
+        lastCluster.push(l)
+      } else {
+        clusters.push([l])
+      }
+    }
+    return clusters
+  }
+
+  // Отрисовка одной строки ИЛИ схлопнутой группы одинаковых подряд идущих запусков.
+  const renderAgentLogCluster = (cluster: AgentLog[], defaultOwnersOpen: boolean) => {
+    if (cluster.length === 1) return renderAgentLogRow(cluster[0], defaultOwnersOpen)
+    const newest = cluster[0]
+    const oldest = cluster[cluster.length - 1]
+    return (
+      <div key={newest.id} className="px-4 py-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusBadge(newest.status)}`}>
+            {newest.status === 'success' ? 'ОК' : newest.status === 'partial' ? 'Частично' : 'Ошибка'}
+          </span>
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">×{cluster.length}</span>
+          <span className="text-sm font-medium">
+            {format(parseISO(oldest.run_at), 'd MMM HH:mm', { locale: ru })} – {format(parseISO(newest.run_at), 'HH:mm', { locale: ru })}
+          </span>
+          <span className="text-xs text-muted-foreground ml-auto">
+            📧 {newest.emails_checked} писем
+          </span>
+        </div>
+        {newest.errors && newest.errors.length > 0 && (
+          <div className="mt-1.5 text-xs text-destructive">
+            {newest.errors.length} ошибок (повторялась {cluster.length} раз) — {JSON.stringify(newest.errors[0])}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   // Сегодняшние запуски показываем полностью развёрнутыми сразу, всё остальное — в архиве
   // по датам, свёрнуто по умолчанию (клик по дате открывает список запусков за тот день).
   const todayDateKey = format(new Date(), 'yyyy-MM-dd')
@@ -9174,7 +9228,7 @@ function AdminSection() {
             <>
               {todayAgentLogs.length > 0 ? (
                 <div className="divide-y divide-border">
-                  {todayAgentLogs.map(log => renderAgentLogRow(log, true))}
+                  {clusterAgentLogs(todayAgentLogs).map(cluster => renderAgentLogCluster(cluster, true))}
                 </div>
               ) : (
                 <div className="p-6 text-center text-muted-foreground text-sm">Сегодня агент ещё не запускался</div>
@@ -9206,7 +9260,7 @@ function AdminSection() {
                           </button>
                           {isOpen && (
                             <div className="divide-y divide-border bg-muted/10">
-                              {group.logs.map(log => renderAgentLogRow(log, false))}
+                              {clusterAgentLogs(group.logs).map(cluster => renderAgentLogCluster(cluster, false))}
                             </div>
                           )}
                         </div>
