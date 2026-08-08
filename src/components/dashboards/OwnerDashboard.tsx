@@ -9429,6 +9429,28 @@ function SettingsSection({ userId }: { userId: string }) {
   const [nameSaved, setNameSaved] = useState(false)
   const [nameSaving, setNameSaving] = useState(false)
 
+  // Смена пароля — supabase.auth.updateUser не требует ввода старого пароля, достаточно
+  // активной сессии (тот же вызов, что уже используется в Auth.tsx для восстановления пароля).
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [pwSaving, setPwSaving] = useState(false)
+  const [pwSaved, setPwSaved] = useState(false)
+  const [pwError, setPwError] = useState('')
+
+  const changePassword = async () => {
+    setPwError('')
+    if (newPassword.length < 6) { setPwError('Пароль должен быть не короче 6 символов'); return }
+    if (newPassword !== confirmPassword) { setPwError('Пароли не совпадают'); return }
+    setPwSaving(true)
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+    setPwSaving(false)
+    if (error) { setPwError(error.message); return }
+    setNewPassword('')
+    setConfirmPassword('')
+    setPwSaved(true)
+    setTimeout(() => setPwSaved(false), 2500)
+  }
+
   const { data: profileData } = useQuery({
     queryKey: ['profile', userId],
     queryFn: async () => {
@@ -9529,6 +9551,43 @@ function SettingsSection({ userId }: { userId: string }) {
             className="btn-primary rounded-xl px-4 py-2 text-sm disabled:opacity-50 flex-shrink-0"
           >
             {nameSaving ? 'Сохраняем…' : nameSaved ? '✓ Сохранено' : 'Сохранить'}
+          </button>
+        </div>
+      </div>
+
+      {/* Смена пароля */}
+      <div className="bg-card border border-border rounded-2xl p-6 shadow-[var(--shadow-card)] mb-6">
+        <h3 className="font-semibold mb-1">Смена пароля</h3>
+        <p className="text-sm text-muted-foreground mb-5">Новый пароль — минимум 6 символов</p>
+        <div className="flex flex-col gap-3 max-w-sm">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide block mb-1.5">Новый пароль</label>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={e => { setNewPassword(e.target.value); setPwError(''); setPwSaved(false) }}
+              placeholder="Новый пароль"
+              className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring w-full"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide block mb-1.5">Повторите пароль</label>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={e => { setConfirmPassword(e.target.value); setPwError(''); setPwSaved(false) }}
+              onKeyDown={e => e.key === 'Enter' && changePassword()}
+              placeholder="Повторите пароль"
+              className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring w-full"
+            />
+          </div>
+          {pwError && <p className="text-xs text-destructive">{pwError}</p>}
+          <button
+            onClick={changePassword}
+            disabled={pwSaving || !newPassword || !confirmPassword}
+            className="btn-primary rounded-xl px-4 py-2 text-sm disabled:opacity-50 self-start"
+          >
+            {pwSaving ? 'Сохраняем…' : pwSaved ? '✓ Пароль изменён' : 'Сменить пароль'}
           </button>
         </div>
       </div>
@@ -10102,7 +10161,7 @@ export default function OwnerDashboard() {
                   <button key={m} onClick={() => setAdminViewMode(m)}
                     title="Режим просмотра для администратора"
                     className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${adminViewMode === m ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
-                    {m === 'admin' ? 'Админ' : m === 'owner' ? 'Хозяин' : 'Клинер'}
+                    {m === 'admin' ? 'Админ' : m === 'owner' ? 'Мой кабинет' : 'Клинер'}
                   </button>
                 ))}
               </div>
@@ -10292,7 +10351,7 @@ export default function OwnerDashboard() {
                       {(['admin', 'owner', 'cleaner'] as const).map(m => (
                         <button key={m} onClick={() => { setAdminViewMode(m); setMoreOpen(false) }}
                           className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${adminViewMode === m ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'}`}>
-                          {m === 'admin' ? 'Админ' : m === 'owner' ? 'Хозяин' : 'Клинер'}
+                          {m === 'admin' ? 'Админ' : m === 'owner' ? 'Мой кабинет' : 'Клинер'}
                         </button>
                       ))}
                     </div>
@@ -10384,7 +10443,7 @@ export default function OwnerDashboard() {
                             background: adminViewMode === m ? 'hsl(var(--sidebar-active-bg))' : 'transparent',
                             color: adminViewMode === m ? 'hsl(var(--sidebar-active-fg))' : 'hsl(var(--sidebar-fg))',
                           }}>
-                          {m === 'admin' ? 'Админ' : m === 'owner' ? 'Хозяин' : 'Клинер'}
+                          {m === 'admin' ? 'Админ' : m === 'owner' ? 'Мой кабинет' : 'Клинер'}
                         </button>
                       ))}
                     </div>

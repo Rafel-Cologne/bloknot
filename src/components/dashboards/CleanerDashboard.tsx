@@ -873,6 +873,26 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
   // старыми, пока окно не закроют и не откроют заново.
   const [clientBalanceModalId, setClientBalanceModalId] = useState<string | null>(null)
   const [showCashBreakdown, setShowCashBreakdown] = useState(false)
+  // Смена пароля — supabase.auth.updateUser не требует ввода старого пароля, достаточно
+  // активной сессии (тот же вызов, что уже используется в Auth.tsx для восстановления пароля).
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [pwSaving, setPwSaving] = useState(false)
+  const [pwSaved, setPwSaved] = useState(false)
+  const [pwError, setPwError] = useState('')
+  const changePassword = async () => {
+    setPwError('')
+    if (newPassword.length < 6) { setPwError('Пароль должен быть не короче 6 символов'); return }
+    if (newPassword !== confirmPassword) { setPwError('Пароли не совпадают'); return }
+    setPwSaving(true)
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+    setPwSaving(false)
+    if (error) { setPwError(error.message); return }
+    setNewPassword('')
+    setConfirmPassword('')
+    setPwSaved(true)
+    setTimeout(() => setPwSaved(false), 2500)
+  }
   const [showCashForm, setShowCashForm] = useState(false)
   const [cashDirection, setCashDirection] = useState<'deposit' | 'withdrawal'>('deposit')
   const [cashAmount, setCashAmount] = useState('')
@@ -1922,6 +1942,42 @@ export default function CleanerDashboard({ previewAsAdmin, onExitPreview }: { pr
                   <p className="text-[11px] text-muted-foreground mt-0.5">Касса (наличные)</p>
                 </button>
               </div>
+
+              {/* Временно скрыто по просьбе владельца — смена пароля у уборщицы. Форма и логика
+                  остаются на месте, просто не рендерятся (false &&) — верните `!previewAsAdmin`,
+                  когда решите снова показывать. */}
+              {false && !previewAsAdmin && (
+                <div className="bg-card border border-border rounded-2xl p-5 shadow-sm">
+                  <h3 className="font-semibold mb-1 text-sm">Смена пароля</h3>
+                  <p className="text-xs text-muted-foreground mb-4">Новый пароль — минимум 6 символов</p>
+                  <div className="flex flex-col gap-2.5">
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={e => { setNewPassword(e.target.value); setPwError(''); setPwSaved(false) }}
+                      placeholder="Новый пароль"
+                      className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring w-full"
+                    />
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={e => { setConfirmPassword(e.target.value); setPwError(''); setPwSaved(false) }}
+                      onKeyDown={e => e.key === 'Enter' && changePassword()}
+                      placeholder="Повторите пароль"
+                      className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring w-full"
+                    />
+                    {pwError && <p className="text-xs text-destructive">{pwError}</p>}
+                    <button
+                      onClick={changePassword}
+                      disabled={pwSaving || !newPassword || !confirmPassword}
+                      className="btn-primary rounded-xl px-4 py-2 text-sm disabled:opacity-50"
+                    >
+                      {pwSaving ? 'Сохраняем…' : pwSaved ? '✓ Пароль изменён' : 'Сменить пароль'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <button onClick={() => previewAsAdmin ? onExitPreview?.() : signOut()}
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl bg-secondary text-sm font-semibold text-foreground hover:bg-muted transition-colors">
                 <LogOut size={16} /> {previewAsAdmin ? 'Вернуться в админку' : 'Выйти'}
